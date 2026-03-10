@@ -1,0 +1,21 @@
+{
+    "name": "翻译",
+    "localizedNames": {
+        "en": "Translate"
+    },
+    "icon": "globe",
+    "identifier": "com.openfire.translate",
+    "description": "用 Google 翻译选中文本",
+    "localizedDescriptions": {
+        "en": "Translate selected text using Google Translate"
+    },
+    "order": 40,
+    "action": {
+        "type": "url",
+        "url": "https://translate.google.com/?sl=auto&tl=zh-CN&text={text}"
+    },
+    "filter": {
+        "minLength": 1,
+        "maxLength": 2000
+    }
+}

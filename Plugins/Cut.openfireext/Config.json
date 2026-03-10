@@ -1,0 +1,23 @@
+{
+    "name": "剪切",
+    "localizedNames": {
+        "en": "Cut"
+    },
+    "icon": "scissors",
+    "identifier": "com.openfire.cut",
+    "description": "剪切选中文本",
+    "localizedDescriptions": {
+        "en": "Cut selected text"
+    },
+    "order": 20,
+    "action": {
+        "type": "key-combo",
+        "key": "x",
+        "modifiers": [
+            "command"
+        ]
+    },
+    "filter": {
+        "minLength": 1
+    }
+}

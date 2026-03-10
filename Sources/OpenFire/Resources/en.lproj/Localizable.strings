@@ -1,0 +1,140 @@
+/* ActionExecutor */
+"Copy" = "Copy";
+"Cut" = "Cut";
+"Paste" = "Paste";
+"Search" = "Search";
+"Translate" = "Translate";
+"Dictionary" = "Dictionary";
+"Open URL" = "Open URL";
+
+/* HotkeyManager */
+"Set Hotkey" = "Set Hotkey";
+"Not Set" = "Not Set";
+"Needs to include ⌘/⌥/⌃ modifiers" = "Needs to include ⌘/⌥/⌃ modifiers";
+"Clear Hotkey" = "Clear Hotkey";
+
+/* AppDelegate */
+"Type: %@" = "Type: %@";
+"Install Plugin" = "Install Plugin";
+"Do you want to install plugin '%@'?\n%@" = "Do you want to install plugin '%@'?\n%@";
+"Install" = "Install";
+"Cancel" = "Cancel";
+"Install Succeeded" = "Install Succeeded";
+"Install Failed" = "Install Failed";
+"Plugin '%@' installed successfully." = "Plugin '%@' installed successfully.";
+"Failed to copy plugin to installation directory. Check permissions.\n(%@)" = "Failed to copy plugin to installation directory. Check permissions.\n(%@)";
+"Accessibility Permission Lost" = "Accessibility Permission Lost";
+"OpenFire relies on Accessibility to detect text selection. Please re-check OpenFire in 'System Settings -> Privacy & Security -> Accessibility'." = "OpenFire relies on Accessibility to detect text selection. Please re-check OpenFire in 'System Settings -> Privacy & Security -> Accessibility'.";
+"Open System Settings" = "Open System Settings";
+"Quit" = "Quit";
+"Permission Restored" = "Permission Restored";
+"OpenFire has resumed working." = "OpenFire has resumed working.";
+"OK" = "OK";
+
+/* StatusBarController */
+"✓ Launch at Login" = "✓ Launch at Login";
+"Launch at Login" = "Launch at Login";
+"✅ Enabled" = "✅ Enabled";
+"⏸ Disabled" = "⏸ Disabled";
+"Disable in Current App" = "Disable in Current App";
+"Manage Disabled Apps..." = "Manage Disabled Apps...";
+"Plugin Management" = "Plugin Management";
+"Click to toggle · Drag to reorder" = "Click to toggle · Drag to reorder";
+"Open Plugins Folder" = "Open Plugins Folder";
+"0% (Opaque)" = "0% (Opaque)";
+"100% (Transparent)" = "100% (Transparent)";
+"Ring Opacity" = "Ring Opacity";
+"Menu Hotkey: %@" = "Menu Hotkey: %@";
+"Toggle Hotkey: %@" = "Toggle Hotkey: %@";
+"Quit OpenFire" = "Quit OpenFire";
+"Failed to Set Launch at Login" = "Failed to Set Launch at Login";
+"Set Menu Hotkey" = "Set Menu Hotkey";
+"Set Toggle Hotkey" = "Set Toggle Hotkey";
+"Enable in %@" = "Enable in %@";
+"Disable in %@" = "Disable in %@";
+
+/* PluginOrderWindow */
+"┼ New Custom Plugin" = "┼ New Custom Plugin";
+"Delete Failed" = "Delete Failed";
+
+/* PluginEditorWindow */
+"Click here to record hotkey" = "Click here to record hotkey";
+"(Click to modify)" = "(Click to modify)";
+"%@ (Click to modify)" = "%@ (Click to modify)";
+"Please press key combination..." = "Please press key combination...";
+"New Plugin" = "New Plugin";
+"Edit Plugin" = "Edit Plugin";
+"Name:" = "Name:";
+"e.g.: Google Search" = "e.g.: Google Search";
+"Eng Name:" = "Eng Name:";
+"Optional English Name" = "Optional English Name";
+"Description:" = "Description:";
+"Optional description" = "Optional description";
+"Eng Desc:" = "Eng Desc:";
+"Optional English description" = "Optional English description";
+"Identifier:" = "Identifier:";
+"e.g.: com.openfire.search" = "e.g.: com.openfire.search";
+"Icon:" = "Icon:";
+"Custom..." = "Custom...";
+"Type:" = "Type:";
+"Execute Shell Script" = "Execute Shell Script";
+"Execute AppleScript" = "Execute AppleScript";
+"Simulate Key Combo" = "Simulate Key Combo";
+"Built-in: Copy" = "Built-in: Copy";
+"Built-in: Paste" = "Built-in: Paste";
+"Action Content:" = "Action Content:";
+"Save" = "Save";
+"Restore Default" = "Restore Default";
+"Delete" = "Delete";
+"Custom Image" = "Custom Image";
+"Enter a complete URL\nUse {text} as a placeholder for selected text" = "Enter a complete URL\nUse {text} as a placeholder for selected text";
+"Write Shell script\nSelected text is available via $OPENFIRE_TEXT" = "Write Shell script\nSelected text is available via $OPENFIRE_TEXT";
+"Write AppleScript code snippet" = "Write AppleScript code snippet";
+"Record key combo\n(Click the box on the right and press keyboard)" = "Record key combo\n(Click the box on the right and press keyboard)";
+"Built-in: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)" = "Built-in: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)";
+"Built-in: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)" = "Built-in: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)";
+"Save Failed" = "Save Failed";
+"Name and Identifier cannot be empty." = "Name and Identifier cannot be empty.";
+"URL cannot be empty" = "URL cannot be empty";
+"Script cannot be empty" = "Script cannot be empty";
+"Code cannot be empty" = "Code cannot be empty";
+"Key combo cannot be empty" = "Key combo cannot be empty";
+"Unsupported plugin type for saving" = "Unsupported plugin type for saving";
+"A plugin with this identifier already exists" = "A plugin with this identifier already exists";
+"Failed to write plugin: %@" = "Failed to write plugin: %@";
+"Core Plugin Cannot Be Deleted" = "Core Plugin Cannot Be Deleted";
+"This is a core system plugin and cannot be completely deleted. If you don't want to use it, please click the circle on the left to disable it." = "This is a core system plugin and cannot be completely deleted. If you don't want to use it, please click the circle on the left to disable it.";
+"Delete Built-in Plugin?" = "Delete Built-in Plugin?";
+"Restore Default?" = "Restore Default?";
+"Delete Plugin?" = "Delete Plugin?";
+"Are you sure you want to delete this built-in plugin? It will still exist but will be hidden from the list." = "Are you sure you want to delete this built-in plugin? It will still exist but will be hidden from the list.";
+"Are you sure you want to delete your modifications to this plugin? It will be restored to the built-in default state." = "Are you sure you want to delete your modifications to this plugin? It will be restored to the built-in default state.";
+"Are you sure you want to completely delete this plugin? This action is irreversible." = "Are you sure you want to completely delete this plugin? This action is irreversible.";
+"Confirm Delete" = "Confirm Delete";
+"Delete Failed: %@" = "Delete Failed: %@";
+"Choose Icon" = "Choose Icon";
+"Error" = "Error";
+
+/* OpenFire UI / Other */
+"App Blacklist" = "App Blacklist";
+"The OpenFire radial menu will not appear when selecting text in the following apps:" = "The OpenFire radial menu will not appear when selecting text in the following apps:";
+"Please select the application to disable OpenFire in" = "Please select the application to disable OpenFire in";
+"Clear" = "Clear";
+
+/* Plugins */
+"百度搜索" = "Baidu Search";
+"GitHub 搜索" = "GitHub Search";
+"Google 翻译" = "Google Translate";
+"哔哩哔哩搜索" = "Bilibili Search";
+"淘宝搜索" = "Taobao Search";
+"知乎搜索" = "Zhihu Search";
+"豆瓣读书搜索" = "Douban Book";
+"豆瓣电影搜索" = "Douban Movie";
+
+/* Language Switcher */
+"Language / 语言" = "Language / 语言";
+"Auto (Follow System)" = "Auto (Follow System)";
+"Language Changed" = "Language Changed";
+"The application needs to restart to apply the new language globally." = "The application needs to restart to apply the new language globally.";
+"Restart Now" = "Restart Now";
+"Later" = "Later";

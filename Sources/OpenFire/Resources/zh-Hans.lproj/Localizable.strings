@@ -1,0 +1,130 @@
+/* ActionExecutor */
+"Copy" = "复制";
+"Cut" = "剪切";
+"Paste" = "粘贴";
+"Search" = "搜索";
+"Translate" = "翻译";
+"Dictionary" = "词典";
+"Open URL" = "打开链接";
+
+/* HotkeyManager */
+"Set Hotkey" = "设置快捷键";
+"Not Set" = "未设置";
+"Needs to include ⌘/⌥/⌃ modifiers" = "需要包含 ⌘/⌥/⌃ 修饰键";
+"Clear Hotkey" = "清除快捷键";
+
+/* AppDelegate */
+"Type: %@" = "类型: %@";
+"Install Plugin" = "安装插件";
+"Do you want to install plugin '%@'?\n%@" = "是否安装插件「%@」?\n%@";
+"Install" = "安装";
+"Cancel" = "取消";
+"Install Succeeded" = "安装成功";
+"Install Failed" = "安装失败";
+"Plugin '%@' installed successfully." = "插件「%@」已成功安装并启用。";
+"Failed to copy plugin to installation directory. Check permissions.\n(%@)" = "无法复制插件文件到安装目录，请检查权限。 \n(%@)";
+"Accessibility Permission Lost" = "辅助功能权限已失效";
+"OpenFire relies on Accessibility to detect text selection. Please re-check OpenFire in 'System Settings -> Privacy & Security -> Accessibility'." = "OpenFire 依赖辅助功能来检测文本选择。请在「系统设置 -> 隐私与安全性 -> 辅助功能」中重新勾选 OpenFire。";
+"Open System Settings" = "打开系统设置";
+"Quit" = "退出应用";
+"Permission Restored" = "权限已恢复";
+"OpenFire has resumed working." = "OpenFire 已重新开始工作。";
+"OK" = "确定";
+
+/* StatusBarController */
+"✓ Launch at Login" = "✓ 开机自动启动";
+"Launch at Login" = "开机自动启动";
+"✅ Enabled" = "✅ 已启用";
+"⏸ Disabled" = "⏸ 已禁用";
+"Disable in Current App" = "在当前应用中禁用";
+"Manage Disabled Apps..." = "管理禁用应用...";
+"Plugin Management" = "插件管理";
+"Click to toggle · Drag to reorder" = "点击切换 · 拖拽排序";
+"Open Plugins Folder" = "打开插件目录";
+"0% (Opaque)" = "0% (不透明)";
+"100% (Transparent)" = "100% (全透明)";
+"Ring Opacity" = "圆环透明度";
+"Menu Hotkey: %@" = "菜单快捷键: %@";
+"Toggle Hotkey: %@" = "启用/禁用快捷键: %@";
+"Quit OpenFire" = "退出 OpenFire";
+"Failed to Set Launch at Login" = "开机启动设置失败";
+"Set Menu Hotkey" = "设置菜单快捷键";
+"Set Toggle Hotkey" = "设置启用/禁用快捷键";
+"Enable in %@" = "在 %@ 中恢复启用";
+"Disable in %@" = "在 %@ 中禁用";
+
+/* PluginOrderWindow */
+"┼ New Custom Plugin" = "┼ 新建自定义插件";
+"Delete Failed" = "删除失败";
+
+/* PluginEditorWindow */
+"Click here to record hotkey" = "点击此处录制快捷键";
+"(Click to modify)" = "点击修改)";
+"%@ (Click to modify)" = "%@ (点击修改)";
+"Please press key combination..." = "请按下快捷键...";
+"New Plugin" = "新建插件 (New Plugin)";
+"Edit Plugin" = "编辑插件 (Edit Plugin)";
+"Name:" = "名称:";
+"e.g.: Google Search" = "例如: Google 搜索";
+"Eng Name:" = "英文名 (可选):";
+"Optional English Name" = "选填，切换语言时显示此名";
+"Description:" = "描述:";
+"Optional description" = "选填描述";
+"Eng Desc:" = "英文描述 (可选):";
+"Optional English description" = "选填，切换语言时显示此描述";
+"Identifier:" = "标识符:";
+"e.g.: com.openfire.search" = "例如: com.openfire.search";
+"Icon:" = "图标:";
+"Custom..." = "自定义...";
+"Type:" = "类型:";
+"Execute Shell Script" = "执行 Shell 脚本 (Shell Script)";
+"Execute AppleScript" = "执行 AppleScript";
+"Simulate Key Combo" = "模拟快捷键 (Key Combo)";
+"Built-in: Copy" = "内置：复制 (Copy)";
+"Built-in: Paste" = "内置：粘贴 (Paste)";
+"Action Content:" = "执行内容:";
+"Save" = "保存";
+"Restore Default" = "恢复默认";
+"Delete" = "删除";
+"Custom Image" = "自定义图片";
+"Enter a complete URL\nUse {text} as a placeholder for selected text" = "输入完整的 URL\n使用 {text} 作为选中文本的占位符";
+"Write Shell script\nSelected text is available via $OPENFIRE_TEXT" = "编写 Shell 脚本\n选中文本可通过 $OPENFIRE_TEXT 获取";
+"Write AppleScript code snippet" = "编写 AppleScript 脚本代码片段";
+"Record key combo\n(Click the box on the right and press keyboard)" = "录制快捷键\n(点击右侧框并按下键盘)";
+"Built-in: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)" = "内置：纯复制\n直接将原文本写入剪贴板\n(无需内容配置)";
+"Built-in: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)" = "内置：纯粘贴\n触发系统的 Cmd+V 粘贴操作\n(无需内容配置)";
+"Save Failed" = "保存失败";
+"Name and Identifier cannot be empty." = "名称和标识符不能为空。";
+"URL cannot be empty" = "URL 不能为空";
+"Script cannot be empty" = "脚本不能为空";
+"Code cannot be empty" = "代码不能为空";
+"Key combo cannot be empty" = "快捷键不能为空";
+"Unsupported plugin type for saving" = "不支持保存此类插件";
+"A plugin with this identifier already exists" = "该标识符的插件已存在";
+"Failed to write plugin: %@" = "写入插件失败: %@";
+"Core Plugin Cannot Be Deleted" = "核心插件无法删除";
+"This is a core system plugin and cannot be completely deleted. If you don't want to use it, please click the circle on the left to disable it." = "此为系统核心扩展插件，无法彻底删除。如果不想使用，请在菜单中将其禁用即可。";
+"Delete Built-in Plugin?" = "确认删除内置插件？";
+"Restore Default?" = "确认恢复默认？";
+"Delete Plugin?" = "确认删除插件？";
+"Are you sure you want to delete this built-in plugin? It will still exist but will be hidden from the list." = "确定要删除此内置插件吗？该插件依然会存在，但将从列表中隐藏。";
+"Are you sure you want to delete your modifications to this plugin? It will be restored to the built-in default state." = "确定要删除你对此插件的所有修改吗？它将恢复为系统初始默认状态。";
+"Are you sure you want to completely delete this plugin? This action is irreversible." = "确定要彻底删除该插件吗？此操作不可逆。";
+"Confirm Delete" = "确定删除";
+"Delete Failed: %@" = "删除失败: %@";
+"Choose Icon" = "选择图标";
+"Error" = "错误";
+
+/* OpenFire UI / Other */
+"App Blacklist" = "已禁用的应用 (App Blacklist)";
+"The OpenFire radial menu will not appear when selecting text in the following apps:" = "以下应用中框选文字时，OpenFire 圆环菜单将不会弹出：";
+"Please select the application to disable OpenFire in" = "请选择你要禁用 OpenFire 的应用程序";
+"Clear" = "清除";
+
+/* Language Switcher */
+"Language / 语言" = "Language / 语言";
+"Auto (Follow System)" = "自动 (跟随系统)";
+"Language Changed" = "语言已更改";
+"The application needs to restart to apply the new language globally." = "应用程序需要重新启动，才能在全局应用新的语言设置。";
+"Restart Now" = "立即重启";
+"Later" = "稍后";
