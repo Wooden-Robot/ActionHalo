@@ -136,8 +136,7 @@ final class RadialMenuWindow: NSPanel {
         // Calculate tracking center (mouse position relative to the full window)
         // convertPoint(fromScreen:) converts global coordinates to window base coordinates
         let localScreenPoint = cv.convert(self.convertPoint(fromScreen: currentScreenPoint), from: nil)
-        radialMenuView.trackingCenter = localScreenPoint
-        
+
         // Calculate visual center (clamped so the menu ring stays on screen)
         var vCenter = localScreenPoint
         let paddingHorizontal: CGFloat = 24
@@ -148,7 +147,22 @@ final class RadialMenuWindow: NSPanel {
         if vCenter.x + radius > cv.bounds.width - paddingHorizontal { vCenter.x = cv.bounds.width - paddingHorizontal - radius }
         if vCenter.y - radius < paddingBottom { vCenter.y = paddingBottom + radius }
         if vCenter.y + radius > cv.bounds.height - paddingTop { vCenter.y = cv.bounds.height - paddingTop - radius }
+
+        // Check if we needed to clamp
+        let didClamp = vCenter != localScreenPoint
         
+        if didClamp {
+            // If the menu was clamped to stay on screen, warp the physical mouse cursor
+            // to the new visual center. This ensures the cursor stays exactly in the 
+            // middle of the radial menu, preserving the 1:1 aiming feel.
+            let newGlobalPoint = self.convertPoint(toScreen: cv.convert(vCenter, to: nil))
+            // CGWarpMouseCursorPosition uses standard flipped top-left CG coordinates
+            let cgPoint = CGPoint(x: newGlobalPoint.x, y: screenFrame.minY + screenFrame.height - newGlobalPoint.y)
+            CGWarpMouseCursorPosition(cgPoint)
+        }
+        
+        // Both visual and tracking center are now the clamped position
+        radialMenuView.trackingCenter = vCenter
         radialMenuView.visualCenter = vCenter
         radialMenuView.frame = cv.bounds
         
