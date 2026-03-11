@@ -396,7 +396,7 @@ final class PluginManager {
                 // Transparently replace `system attribute "OPENFIRE_TEXT"` with file-based UTF-8 read
                 // so that CJK characters are handled correctly without users needing to know about the file
                 let fileReadExpr = "read (POSIX file \"\(textFile.path)\") as \u{00AB}class utf8\u{00BB}"
-                var finalSource = appleScriptSource
+                let finalSource = appleScriptSource
                     .replacingOccurrences(of: "(system attribute \"OPENFIRE_TEXT\")", with: "(\(fileReadExpr))")
                     .replacingOccurrences(of: "system attribute \"OPENFIRE_TEXT\"", with: fileReadExpr)
                 
