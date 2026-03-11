@@ -20,7 +20,7 @@ final class PluginManager {
         "com.openfire.open-url"
     ]
     
-    private(set) var plugins: [Plugin] = []
+    var plugins: [Plugin] = []
     private var fileWatchers: [DispatchSourceFileSystemObject] = []
     
     /// User plugins directory
