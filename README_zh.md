@@ -74,10 +74,6 @@ OpenFire 的强大之处在于插件自定义能力。插件以 `.openfireext` �
 
 OpenFire 内置了功能完善的**可视化插件编辑器**，无需再手动编写繁琐的 JSON 配置文件！
 
-<div align="center">
-  <img src="./Assets/editor-demo.png" width="500" alt="插件编辑器" style="border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin: 16px 0;"/>
-</div>
-
 1. 点击 macOS 顶部状态栏的 🔥 OpenFire 图标。
 2. 在下拉菜单中选择 **插件管理...**
 3. 点击界面最下方中间的 `+` 按钮打开编辑器。

@@ -74,10 +74,6 @@ Built into the package, they can be enabled or removed at any time via the "Plug
 
 OpenFire comes with a fully-featured **Visual Plugin Editor** built right into the app. You no longer need to write JSON configurations manually!
 
-<div align="center">
-  <img src="./Assets/editor-demo.png" width="500" alt="Plugin Editor" style="border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin: 16px 0;"/>
-</div>
-
 1. Click the 🔥 OpenFire icon in the macOS Menu Bar.
 2. Select **Plugin Management...**
 3. Click the `+` button at the bottom to open the Plugin Editor.
