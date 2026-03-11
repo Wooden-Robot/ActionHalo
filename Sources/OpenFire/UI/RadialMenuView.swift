@@ -557,7 +557,7 @@ final class RadialMenuView: NSView {
         let distance = sqrt(dx * dx + dy * dy)
         
         // If they click far away or inside the deadzone, dismiss
-        if distance > outerRadius + 150 || distance < 25 {
+        if distance > outerRadius + 150 || distance < 10 {
             onDismissRequested?()
             return
         }
@@ -690,8 +690,8 @@ final class RadialMenuView: NSView {
         let distance = sqrt(dx * dx + dy * dy)
         
         // Deadzone in the center where nothing is selected
-        // Set to 15 so the user has to slide slightly to select, avoiding instant misclicks.
-        if distance < 15 {
+        // Set to 10 so the user has to slide slightly to select, avoiding instant misclicks.
+        if distance < 10 {
             return -1
         }
         
