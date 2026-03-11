@@ -13,6 +13,12 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
     
     private var editorWindow: PluginEditorWindow?
     
+    /// Flag to suppress notification-triggered reload during drag reorder
+    private var isReordering = false
+    
+    /// Throttle auto-scroll during drag to prevent instant jump to top/bottom
+    private var lastAutoScrollTime: TimeInterval = 0
+    
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         setupUI()
@@ -39,7 +45,7 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         tableView.dataSource = self
         tableView.rowHeight = rowHeight
         tableView.registerForDraggedTypes([dragType])
-        tableView.draggingDestinationFeedbackStyle = .gap
+        tableView.draggingDestinationFeedbackStyle = .regular
         tableView.style = .plain
         tableView.backgroundColor = .clear
         tableView.intercellSpacing = NSSize(width: 0, height: 1)
@@ -68,6 +74,9 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
     
     /// Reload with current plugins
     func reloadPlugins() {
+        // During drag reorder, skip reload entirely to preserve scroll position
+        guard !isReordering else { return }
+        
         orderedPlugins = getOrderedPlugins()
         
         // Resize view to fit all plugins (max 10 visible) + Add button
@@ -137,12 +146,13 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         
         let cell = NSView(frame: NSRect(x: 0, y: 0, width: viewWidth, height: rowHeight))
         
-        // Position number
+        // Position number (tagged for in-place update during drag reorder)
         let numLabel = NSTextField(labelWithString: "\(row + 1)")
         numLabel.frame = NSRect(x: 4, y: 5, width: 16, height: 18)
         numLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
         numLabel.textColor = .tertiaryLabelColor
         numLabel.alignment = .right
+        numLabel.tag = 999
         cell.addSubview(numLabel)
         
         // Enabled indicator
@@ -272,25 +282,32 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
     }
     
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
-        let mouseLocation = tableView.convert(info.draggingLocation, from: nil)
-        
-        // Calculate dynamic row based on actual mouse Y position allowing for easier top/bottom drops
-        var dynamicRow = Int(mouseLocation.y / rowHeight)
-        
-        // Make the top and bottom targets massive
-        if mouseLocation.y < rowHeight / 2 {
-            dynamicRow = 0
-        } else if mouseLocation.y > CGFloat(orderedPlugins.count) * rowHeight - (rowHeight / 2) {
-            dynamicRow = orderedPlugins.count
+        // Ensure we always use .above (insert between rows, not onto a row)
+        if dropOperation == .on {
+            tableView.setDropRow(row, dropOperation: .above)
         }
-        
-        // Clamp it
-        dynamicRow = max(0, min(dynamicRow, orderedPlugins.count))
-        
-        if dropOperation != .above || row != dynamicRow {
-            tableView.setDropRow(dynamicRow, dropOperation: .above)
+        // Auto-scroll one row at a time when dragging near the edges (throttled)
+        // Uses direct NSClipView manipulation instead of scrollRowToVisible to avoid
+        // triggering NSTableView layout updates that could cause the menu to close.
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastAutoScrollTime > 0.8, let clipView = tableView.enclosingScrollView?.contentView {
+            let mouseY = tableView.convert(info.draggingLocation, from: nil).y
+            let edgeZone: CGFloat = rowHeight
+            let currentOrigin = clipView.bounds.origin
+            let maxY = max(0, tableView.frame.height - clipView.bounds.height)
+            
+            if mouseY < tableView.visibleRect.minY + edgeZone, currentOrigin.y > 0 {
+                // Scroll up by one row
+                let newY = max(0, currentOrigin.y - rowHeight)
+                clipView.setBoundsOrigin(NSPoint(x: 0, y: newY))
+                lastAutoScrollTime = now
+            } else if mouseY > tableView.visibleRect.maxY - edgeZone, currentOrigin.y < maxY {
+                // Scroll down by one row
+                let newY = min(maxY, currentOrigin.y + rowHeight)
+                clipView.setBoundsOrigin(NSPoint(x: 0, y: newY))
+                lastAutoScrollTime = now
+            }
         }
-        
         return .move
     }
     
@@ -303,19 +320,29 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         let targetRow = sourceRow < row ? row - 1 : row
         orderedPlugins.insert(plugin, at: targetRow)
         
+        // Suppress notification-triggered reload during reorder
+        isReordering = true
+        
         tableView.moveRow(at: sourceRow, to: targetRow)
         
-        // Save scroll position before reload to prevent jump-to-top
-        let savedScrollPosition = tableView.enclosingScrollView?.contentView.bounds.origin ?? .zero
+        // Remember which row was at the top of the visible area
+        let firstVisibleRow = tableView.rows(in: tableView.visibleRect).location
         
-        // Update position numbers
+        // Full reloadData to rebuild position numbers and keep scrollbar intact
         tableView.reloadData()
         
-        // Restore scroll position
-        tableView.enclosingScrollView?.contentView.scroll(to: savedScrollPosition)
-        tableView.enclosingScrollView?.reflectScrolledClipView(tableView.enclosingScrollView!.contentView)
-        
         saveOrder()
+        isReordering = false
+        
+        // Restore scroll position ASYNCHRONOUSLY — reloadData triggers a
+        // deferred layout pass that overrides any synchronous scroll restoration.
+        // By dispatching to the next run loop iteration, we run AFTER that layout.
+        DispatchQueue.main.async {
+            if firstVisibleRow < self.orderedPlugins.count {
+                tableView.scrollRowToVisible(firstVisibleRow)
+            }
+        }
+        
         return true
     }
 }
