@@ -10,8 +10,9 @@ An ultra-smooth, "select-to-pop" circular menu tool for macOS. Similar to PopCli
 
 ## ✨ Core Features
 
-- 🎯 **Esports-level Response Speed**: Bottom-layer hit testing based on `mouseDown` / `mouseDragged` / `mouseUp`. Bid farewell to missed clicks. Once text is selected, the menu pops up instantly. Click and drag to execute functions immediately.
+- 🎯 **Esports-level Response Speed**: Bottom-layer hit testing based on `mouseDown` / `mouseDragged` / `mouseUp`. Bid farewell to missed clicks. Once text is selected, the menu pops up instantly. Click and drag to execute functions immediately with zero-lag hover states that snap instantly to your cursor like GTA V's weapon wheel.
 - 💫 **Native Blur & 60FPS Animations**: Uses `NSVisualEffectView` and `CAShapeLayer` buffer pool. Page flipping, hovering, and clicking animations are buttery smooth with no frame drops.
+- 🎛️ **Highly Customizable UI**: Adjust the radial menu's **Ring Opacity** and **Max Items limit** (6, 8, 12, or 16 items per page) directly from the Menu Bar to perfectly suit your workflow.
 - 🔌 **Hot-pluggable Plugin System**: Supports custom `.openfireext` plugin packages. Features double-click installation, background thread asynchronous loading, and a package management mechanism supporting deletion and disabling.
 - 🛡️ **Smart Trigger Context**: Rewritten Accessibility recognition logic at the foundation. The "paste" function will only pop up within genuinely editable text boxes, eliminating invalid popups on web page background layers.
 - 🚫 **Customizable App Blacklist**: Built-in automatic blacklist management UI. Supports dragging and dropping apps, or browsing via the `+` button to precisely block specific software.

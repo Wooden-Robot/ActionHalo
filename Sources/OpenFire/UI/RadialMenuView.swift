@@ -7,10 +7,20 @@ final class RadialMenuView: NSView {
     // MARK: - Configuration (dynamic based on item count)
     
     private let minArcPerItem: CGFloat = 60
-    private let baseOuterRadius: CGFloat = 120
-    private let baseInnerRadius: CGFloat = 55
-    private let baseIconSize: CGFloat = 22
-    private let gapAngle: CGFloat = 0.04  // Distinct separated blocks for HUD feel
+    private let baseOuterRadius: CGFloat = 130
+    private let baseInnerRadius: CGFloat = 85
+    private let baseIconSize: CGFloat = 26
+    
+    private var gapAngle: CGFloat {
+        let count = max(1, menuItems.count)
+        if count >= 12 {
+            return 0.015 // Very tight gap (~2px) for 12/16 items so it doesn't eat up space
+        } else if count >= 8 {
+            return 0.025
+        } else {
+            return 0.04  // Distinct separated blocks for 6 items HUD feel
+        }
+    }
     
     /// Dynamically computed radii based on item count
     var outerRadius: CGFloat {
@@ -99,7 +109,8 @@ final class RadialMenuView: NSView {
     // MARK: - Game HD Colors
     
     // Base sector is a darker glass panel with sharp edges
-    private let sectorColor = NSColor(white: 0.18, alpha: 0.85)
+    // Make the sector almost completely transparent like GTA V, mostly using the border
+    private let sectorColor = NSColor(white: 0.1, alpha: 0.40)
     
     // Hover is an energetic metallic blue/cyan glow
     private let sectorHoverColor = NSColor(calibratedRed: 0.1, green: 0.6, blue: 0.9, alpha: 0.95)
@@ -189,11 +200,15 @@ final class RadialMenuView: NSView {
         
         // Pre-calculate hit test bounds array for ultra-fast 120Hz swiping
         hitTestBounds.removeAll()
-        var currentStartAngle: CGFloat = 0
+        var currentStartAngle = CGFloat.pi / 2
         for _ in 0..<itemCount {
-            let currentEnd = currentStartAngle + sectorAngle
-            hitTestBounds.append((start: currentStartAngle, end: currentEnd + gapAngle))
-            currentStartAngle = currentEnd + gapAngle
+            let currentEnd = currentStartAngle - sectorAngle
+            
+            // To make hitTest simpler, we normalize these specific drawing angles 
+            // into the 0...2π range where 0 is the top (π/2 in standard trig).
+            // Actually, best to just store the raw Trig angles and do a clean rotation in hitTest
+            hitTestBounds.append((start: currentStartAngle, end: currentEnd))
+            currentStartAngle = currentEnd - gapAngle
         }
         
         // Ensure arrays are large enough (pooling)
@@ -316,8 +331,8 @@ final class RadialMenuView: NSView {
             // Update Icon
             let midAngle = (startAngle + endAngle) / 2
             
-            // Icon placed normally in the center of the arc space
-            let iconRadius = (innerRadius + outerRadius) / 2 + 3
+            // Push the icon slightly outward to make room for the inner label
+            let iconRadius = (innerRadius + outerRadius) / 2 + 8
             let iconCenter = NSPoint(
                 x: center.x + iconRadius * cos(midAngle),
                 y: center.y + iconRadius * sin(midAngle)
@@ -330,8 +345,8 @@ final class RadialMenuView: NSView {
                 height: iconSize
             )
             
-            // Update Number Label to be directly against the inside edge
-            let labelRadius = innerRadius + 10
+            // Update Number Label to be exactly against the inside edge, shifted inward
+            let labelRadius = innerRadius + 12
             let labelCenter = NSPoint(
                 x: center.x + labelRadius * cos(midAngle),
                 y: center.y + labelRadius * sin(midAngle)
@@ -386,15 +401,16 @@ final class RadialMenuView: NSView {
         // Draw or Update center core
         if centerCircleLayer == nil {
             let cc = CAShapeLayer()
-            // Sleek metallic center core
-            cc.fillColor = NSColor(white: 0.05, alpha: 0.9).cgColor
-            cc.strokeColor = NSColor(calibratedRed: 0.1, green: 0.6, blue: 0.9, alpha: 0.5).cgColor
-            cc.lineWidth = 1.5
-            cc.shadowColor = NSColor(calibratedRed: 0.1, green: 0.6, blue: 0.9, alpha: 1.0).cgColor
-            cc.shadowRadius = 10
-            cc.shadowOpacity = 0.4
-            cc.shadowOffset = CGSize(width: 0, height: 0)
-            cc.opacity = Float(self.windowBaseAlpha) // Added opacity
+            // Make the center core completely transparent
+            cc.fillColor = NSColor.clear.cgColor
+            // Keep a subtle border for shape definition
+            cc.strokeColor = NSColor(calibratedRed: 0.1, green: 0.6, blue: 0.9, alpha: 0.3).cgColor
+            cc.lineWidth = 1.0
+            
+            // Remove heavy shadow from the center core
+            cc.shadowRadius = 0
+            cc.shadowOpacity = 0
+            cc.opacity = Float(self.windowBaseAlpha)
             layer?.addSublayer(cc)
             centerCircleLayer = cc
         }
@@ -412,14 +428,21 @@ final class RadialMenuView: NSView {
         // Label
         if centerLabel == nil {
             let cl = CATextLayer()
-            cl.fontSize = 11
-            cl.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-            cl.foregroundColor = NSColor(white: 0.8, alpha: 1.0).cgColor
+            cl.fontSize = 13 // Slightly larger for readability
+            cl.font = NSFont.systemFont(ofSize: 13, weight: .bold) // Bold stands out more
+            cl.foregroundColor = NSColor.white.cgColor
             cl.alignmentMode = .center
             cl.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
             cl.isWrapped = true
             cl.truncationMode = .end
-            cl.opacity = Float(self.windowBaseAlpha) // Added opacity
+            cl.opacity = Float(self.windowBaseAlpha)
+            
+            // Add a strong drop shadow so text is readable against bright backgrounds
+            cl.shadowColor = NSColor.black.cgColor
+            cl.shadowRadius = 3.0
+            cl.shadowOpacity = 0.9
+            cl.shadowOffset = CGSize(width: 0, height: -1)
+            
             layer?.addSublayer(cl)
             centerLabel = cl
         }
@@ -556,8 +579,16 @@ final class RadialMenuView: NSView {
         let dy = point.y - trackingCenter.y
         let distance = sqrt(dx * dx + dy * dy)
         
-        // If they click far away or inside the deadzone, dismiss
-        if distance > outerRadius + 150 || distance < 5 {
+        // If they click far away, dismiss
+        if distance > outerRadius + 150 {
+            onDismissRequested?()
+            return
+        }
+        
+        // Micro-deadzone for dismissal (if user releases exactly where they clicked)
+        // Set to 10 points so a standard stationary click can still act as a cancel 
+        // without ruining the swiping feel.
+        if distance < 10 {
             onDismissRequested?()
             return
         }
@@ -581,8 +612,8 @@ final class RadialMenuView: NSView {
         let label = labelLayers[index]
         
         CATransaction.begin()
-        CATransaction.setAnimationDuration(0.15)
-        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        // Make hover highlight instantaneous for maximum responsiveness (game-feel)
+        CATransaction.setDisableActions(true)
         
         // 1. Sector Fill
         sector.fillColor = sectorHoverColor.cgColor
@@ -609,7 +640,7 @@ final class RadialMenuView: NSView {
         
         // 5. Update center label with item title
         if index < menuItems.count {
-            updateCenterLabel(text: menuItems[index].title, color: .white)
+            updateCenterLabel(text: menuItems[index].title, color: NSColor(calibratedRed: 0.2, green: 0.8, blue: 1.0, alpha: 1.0))
         }
     }
     
@@ -620,8 +651,8 @@ final class RadialMenuView: NSView {
         let label = labelLayers[index]
         
         CATransaction.begin()
-        CATransaction.setAnimationDuration(0.2)
-        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        // Make un-hover highlight instantaneous
+        CATransaction.setDisableActions(true)
         
         // 1. Sector Fill
         sector.fillColor = sectorColor.cgColor
@@ -688,31 +719,45 @@ final class RadialMenuView: NSView {
         let dx = point.x - center.x
         let dy = point.y - center.y
         let distance = sqrt(dx * dx + dy * dy)
-        
-        // Deadzone in the center where nothing is selected
-        // Set to 5 so the user has to slide slightly to select, avoiding instant misclicks.
-        if distance < 5 {
+        // 10-point deadzone! Prevents normal stationary clicks from instantly selecting a sector,
+        // while still feeling extremely responsive.
+        if distance <= 10 {
             return -1
         }
         
         guard hitTestBounds.count > 0 else { return -1 }
         
-        // Calculate angle of the mouse relative to center (0 to 2π)
+        // Convert mouse angle to standard trigonometric angle (0 to 2π, counter-clockwise from right)
         var angle = atan2(dy, dx)
         if angle < 0 {
             angle += 2 * .pi
         }
         
-        // Convert mouse angle to the same coordinate system (clockwise from top)
-        var relativeAngle = CGFloat.pi / 2 - angle
-        if relativeAngle < 0 {
-            relativeAngle += 2 * .pi
-        }
-        
-        // O(1) array lookup loop
+        // hitTestBounds are stored as (start: larger angle, end: smaller angle) in standard trig
+        // going clockwise starting from π/2. Because they can wrap around 0, we need to check both.
+        // Also note that gaps are not included in the bounds, so hovering over a gap returns -1.
         for (i, bounds) in hitTestBounds.enumerated() {
-            if relativeAngle >= bounds.start && relativeAngle < bounds.end {
-                return i
+            var start = bounds.start
+            var end = bounds.end
+            
+            // Normalize everything to positive 0...2π for easier comparison
+            while start < 0 { start += 2 * .pi }
+            while end < 0 { end += 2 * .pi }
+            while start >= 2 * .pi { start -= 2 * .pi }
+            while end >= 2 * .pi { end -= 2 * .pi }
+            
+            if start > end {
+                // Normal case: sector doesn't cross the 0 angle line
+                if angle <= start && angle >= end {
+                    return i
+                }
+            } else {
+                // Wrapping case: sector crosses the 0 angle (e.g. start is 0.1, end is 6.0)
+                // Since start > end is false, it means start wrapped around and is now smaller than end.
+                // It's conceptually standard trig clockwise: 0.1 down to 0, then 2π down to 6.0.
+                if angle <= start || angle >= end {
+                    return i
+                }
             }
         }
         

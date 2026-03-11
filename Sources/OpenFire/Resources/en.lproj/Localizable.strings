@@ -138,3 +138,14 @@
 "The application needs to restart to apply the new language globally." = "The application needs to restart to apply the new language globally.";
 "Restart Now" = "Restart Now";
 "Later" = "Later";
+
+// Max Items
+"Max Items in Menu" = "Max Items in Menu";
+"12 (Default)" = "12 (Default)";
+"6" = "6";
+"8" = "8";
+"16" = "16";
+
+// Pagination
+"Previous" = "Previous";
+"Next" = "Next";

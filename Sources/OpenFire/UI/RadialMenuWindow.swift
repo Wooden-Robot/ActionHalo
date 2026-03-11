@@ -91,26 +91,28 @@ final class RadialMenuWindow: NSPanel {
         
         defer { NSAnimationContext.endGrouping() }
         
-        let pageSize = 8
+        let maxItems = UserDefaults.standard.integer(forKey: "maxRadialMenuItems")
+        let pageSize = maxItems == 0 ? 12 : maxItems
+        
         var pageItems: [RadialMenuItem] = []
         
         if allItems.count <= pageSize {
             pageItems = allItems
         } else {
             let isFirstPage = currentPage == 0
-            let startIndex = currentPage == 0 ? 0 : 7 + (currentPage - 1) * 6
-            let capacity = currentPage == 0 ? 7 : 6
+            let startIndex = currentPage == 0 ? 0 : (pageSize - 1) + (currentPage - 1) * (pageSize - 2)
+            let capacity = currentPage == 0 ? (pageSize - 1) : (pageSize - 2)
             let endIndex = min(startIndex + capacity, allItems.count)
             let isLastPage = endIndex == allItems.count
             
             if !isFirstPage {
-                pageItems.append(RadialMenuItem(title: "上一页", iconName: "arrow.uturn.backward", action: .pagePrev))
+                pageItems.append(RadialMenuItem(title: "Previous".localized, iconName: "arrow.uturn.backward", action: .pagePrev))
             }
             
             pageItems.append(contentsOf: allItems[startIndex..<endIndex])
             
             if !isLastPage {
-                pageItems.append(RadialMenuItem(title: "下一页", iconName: "arrow.uturn.forward", action: .pageNext))
+                pageItems.append(RadialMenuItem(title: "Next".localized, iconName: "arrow.uturn.forward", action: .pageNext))
             }
         }
         
@@ -259,8 +261,8 @@ final class RadialMenuWindow: NSPanel {
         let distance = sqrt(dx * dx + dy * dy)
         
         // Click far away from tracking center -> dismiss
-        // Also click in the absolute deadzone -> dismiss
-        if distance > radialMenuView.outerRadius + 150 || distance < 5 {
+        // Also click in the absolute deadzone -> dismiss (matching the 10-point view deadzone)
+        if distance > radialMenuView.outerRadius + 150 || distance < 10 {
             hideMenu()
         }
     }

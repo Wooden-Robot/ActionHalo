@@ -114,15 +114,22 @@ final class PluginManager {
         // Use UserDefaults custom order if available
         let savedOrder = UserDefaults.standard.stringArray(forKey: "pluginOrder") ?? []
         if !savedOrder.isEmpty {
-            return filtered.sorted { a, b in
+            let sorted = filtered.sorted { a, b in
                 let indexA = savedOrder.firstIndex(of: a.id) ?? Int.max
                 let indexB = savedOrder.firstIndex(of: b.id) ?? Int.max
                 return indexA < indexB
             }
+            let maxItems = UserDefaults.standard.integer(forKey: "maxRadialMenuItems")
+            let limit = maxItems == 0 ? 12 : maxItems
+            return Array(sorted.prefix(limit))
         }
         
         // Fallback to config order
-        return filtered.sorted { $0.order < $1.order }
+        let finalPlugins = filtered.sorted { $0.order < $1.order }
+        
+        let maxItems = UserDefaults.standard.integer(forKey: "maxRadialMenuItems")
+        let limit = maxItems == 0 ? 12 : maxItems
+        return Array(finalPlugins.prefix(limit))
     }
     
     // MARK: - Plugin State

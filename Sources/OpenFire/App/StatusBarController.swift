@@ -129,6 +129,26 @@ final class StatusBarController: NSObject {
         menu.addItem(opacityMenuItem)
         menu.addItem(NSMenuItem.separator())
         
+        // Max Items submenu
+        let maxItemsMenu = NSMenu()
+        let maxItemOptions = [6, 8, 12, 16]
+        let currentMaxItems = UserDefaults.standard.integer(forKey: "maxRadialMenuItems")
+        let activeMaxItems = currentMaxItems == 0 ? 12 : currentMaxItems
+        
+        for limit in maxItemOptions {
+            let title = limit == 12 ? "12 (Default)".localized : "\(limit)".localized
+            let item = NSMenuItem(title: title, action: #selector(setMaxItems(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = limit
+            item.state = (activeMaxItems == limit) ? .on : .off
+            maxItemsMenu.addItem(item)
+        }
+        
+        let maxItemsMenuItem = NSMenuItem(title: "Max Items in Menu".localized, action: nil, keyEquivalent: "")
+        maxItemsMenuItem.submenu = maxItemsMenu
+        menu.addItem(maxItemsMenuItem)
+        menu.addItem(NSMenuItem.separator())
+        
         // Language submenu
         let langMenu = NSMenu()
         let languages: [(String, String)] = [
@@ -252,6 +272,16 @@ final class StatusBarController: NSObject {
         if let opacity = sender.representedObject as? Double {
             UserDefaults.standard.set(opacity, forKey: "ringOpacity")
             rebuildMenu()
+        }
+    }
+    
+    @objc private func setMaxItems(_ sender: NSMenuItem) {
+        if let limit = sender.representedObject as? Int {
+            UserDefaults.standard.set(limit, forKey: "maxRadialMenuItems")
+            UserDefaults.standard.synchronize()
+            rebuildMenu()
+            // Force a reload so the active plugin list is truncated immediately
+            PluginManager.shared.reloadPlugins()
         }
     }
     
