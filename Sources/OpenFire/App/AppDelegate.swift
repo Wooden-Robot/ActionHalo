@@ -12,6 +12,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var globalClickMonitor: Any?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Automatically clear stale accessibility permissions if the app was updated
+        // This prevents the macOS "permission toggle is on but doesn't work" bug for unsigned apps
+        checkAndUpdateAccessibilityState()
+        
         // Hide dock icon (backup, Info.plist should handle this)
         NSApp.setActivationPolicy(.accessory)
         
@@ -402,6 +406,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let monitor = globalClickMonitor {
             NSEvent.removeMonitor(monitor)
             globalClickMonitor = nil
+        }
+    }
+    
+    // MARK: - App Update TCC Reset
+    
+    private func checkAndUpdateAccessibilityState() {
+        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let lastVersion = UserDefaults.standard.string(forKey: "LastRunVersion")
+        
+        // If this is a new version running for the first time
+        if lastVersion != currentVersion {
+            NSLog("[OpenFire] App updated from \(lastVersion ?? "none") to \(currentVersion). Resetting TCC permissions.")
+            
+            // Silently reset the old invalid permission record
+            let task = Process()
+            task.launchPath = "/usr/bin/tccutil"
+            task.arguments = ["reset", "Accessibility", "com.openfire.app"]
+            task.launch()
+            task.waitUntilExit()
+            
+            // Mark the new version as launched
+            UserDefaults.standard.set(currentVersion, forKey: "LastRunVersion")
         }
     }
 }
