@@ -67,6 +67,7 @@ Built into the package, they can be enabled or removed at any time via the "Plug
 - 🔍 Baidu Search / Google Search
 - 📚 NeoDB / Douban Book Search
 - 🎬 Douban Movie Search
+- ✈️ Search in Telegram
 
 ---
 
@@ -79,13 +80,30 @@ OpenFire comes with a fully-featured **Visual Plugin Editor** built right into t
 3. Click the `+` button at the bottom to open the Plugin Editor.
 4. Fill in the details and choose an action type.
 
-### Supported Action Types
-- 🌐 `url`: Open the system browser with `{text}`
-- 🐚 `shell-script`: Execute a Bash script, reading `$OPENFIRE_TEXT`
-- 🍎 `applescript`: Run osascript
+### Supported Action Types (Action `type`)
+- 🌐 `url`: Open the system browser to visit `{text}`
 - ⌨️ `key-combo`: Record system combo shortcuts directly from the UI
 - 📋 `copy`: Copy to clipboard
 - 📝 `paste`: Paste into the current input area
+
+#### Script Extensions (Inline Execution)
+For `shell-script` and `applescript`, you can write the short code block directly into the `script` string field for convenience. When triggered, OpenFire will automatically inject the text selected by the user into an environment variable named `$OPENFIRE_TEXT`.
+
+**Example: Run Shell**
+```json
+"action": {
+  "type": "shell-script",
+  "script": "echo \"Selected: $OPENFIRE_TEXT\" >> ~/Desktop/openfire.log"
+}
+```
+
+**Example: Run AppleScript**
+```json
+"action": {
+  "type": "applescript",
+  "script": "set envText to (system attribute \"OPENFIRE_TEXT\")\ndisplay dialog \"You selected: \" & envText"
+}
+```
 
 ---
 

@@ -19,6 +19,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Hide dock icon (backup, Info.plist should handle this)
         NSApp.setActivationPolicy(.accessory)
         
+        // Create a standard Edit menu so that ⌘C/⌘V/⌘X/⌘A/⌘Z work in text fields (e.g. PluginEditorWindow)
+        // Accessory apps don't have a default menu bar, so keyboard shortcuts won't route without this.
+        let mainMenu = NSMenu()
+        let editMenuItem = NSMenuItem()
+        editMenuItem.submenu = {
+            let editMenu = NSMenu(title: "Edit")
+            editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+            editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+            editMenu.addItem(NSMenuItem.separator())
+            editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+            editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+            editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+            editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+            return editMenu
+        }()
+        mainMenu.addItem(editMenuItem)
+        NSApp.mainMenu = mainMenu
+        
         // Handle pre-launch document opens (LaunchServices passing args directly)
         for arg in CommandLine.arguments.dropFirst() {
             if arg.hasSuffix(".openfireext") {

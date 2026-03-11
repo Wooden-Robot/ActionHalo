@@ -287,50 +287,147 @@ final class PluginManager {
     }
     
     private func executeShellScript(_ plugin: Plugin, action: PluginActionConfig, text: String) {
-        guard let scriptName = action.script else { return }
-        let scriptURL = plugin.directoryURL.appendingPathComponent(scriptName)
+        NSLog("[OpenFire-Debug] Entering executeShellScript for plugin: \(plugin.id)")
+        let scriptContent: String?
         
-        guard FileManager.default.fileExists(atPath: scriptURL.path) else {
-            NSLog("[OpenFire] Script not found: \(scriptURL.path)")
+        if let scriptName = action.script {
+            NSLog("[OpenFire-Debug] Found script file config for Shell Script: \(scriptName)")
+            let scriptURL = plugin.directoryURL.appendingPathComponent(scriptName)
+            if FileManager.default.fileExists(atPath: scriptURL.path) {
+                var enc: String.Encoding = .utf8
+                scriptContent = try? String(contentsOf: scriptURL, usedEncoding: &enc)
+                NSLog("[OpenFire-Debug] Loaded shell script from file: \(scriptURL.path) (encoding: \(enc))")
+            } else {
+                // Support plugins that just stored the script directly in the 'script' string field in JSON
+                NSLog("[OpenFire-Debug] Shell script file not found, using script field as inline text")
+                scriptContent = scriptName
+            }
+        } else if let inline = action.inline {
+            NSLog("[OpenFire-Debug] Found inline action config for Shell Script")
+            scriptContent = inline
+        } else {
+            NSLog("[OpenFire-Debug] Neither inline nor script field found in config!")
             return
         }
         
+        guard let content = scriptContent else {
+            NSLog("[OpenFire-Debug] shell scriptContent is nil, ABORTING!")
+            return
+        }
+        
+        NSLog("[OpenFire-Debug] Shell script content resolved, preparing to run bash...")
+        
         DispatchQueue.global(qos: .userInitiated).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = [scriptURL.path]
-            process.environment = ProcessInfo.processInfo.environment
-            process.environment?["OPENFIRE_TEXT"] = text
-            process.currentDirectoryURL = plugin.directoryURL
+            // Write selected text to a temp file for reliable Unicode/CJK support
+            let textFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
+            try? text.write(to: textFile, atomically: true, encoding: .utf8)
             
             do {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/bash")
+                process.arguments = ["-c", content]
+                process.environment = ProcessInfo.processInfo.environment
+                process.environment?["OPENFIRE_TEXT"] = text
+                process.environment?["OPENFIRE_TEXT_FILE"] = textFile.path
+                process.currentDirectoryURL = plugin.directoryURL
+                
+                let errorPipe = Pipe()
+                process.standardError = errorPipe
+                
+                NSLog("[OpenFire-Debug] Launching bash process...")
                 try process.run()
                 process.waitUntilExit()
+                NSLog("[OpenFire-Debug] bash process finished with exit code: \(process.terminationStatus)")
+                
+                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                if !errorData.isEmpty, let errorStr = String(data: errorData, encoding: .utf8), !errorStr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    NSLog("[OpenFire] Shell script stderr: \(errorStr)")
+                }
             } catch {
-                NSLog("[OpenFire] Failed to execute script: \(error.localizedDescription)")
+                NSLog("[OpenFire] Failed to execute shell script: \(error.localizedDescription)")
             }
+            
+            try? FileManager.default.removeItem(at: textFile)
         }
     }
     
     private func executeAppleScript(_ plugin: Plugin, action: PluginActionConfig, text: String) {
+        NSLog("[OpenFire-Debug] Entering executeAppleScript for plugin: \(plugin.id)")
         var source: String?
         
-        if let inline = action.inline {
-            source = inline.replacingOccurrences(of: "{text}", with: text)
-        } else if let scriptName = action.script {
+        if let scriptName = action.script {
+            NSLog("[OpenFire-Debug] Found script file config: \(scriptName)")
             let scriptURL = plugin.directoryURL.appendingPathComponent(scriptName)
-            source = try? String(contentsOf: scriptURL, encoding: .utf8)
-            source = source?.replacingOccurrences(of: "{text}", with: text)
+            if FileManager.default.fileExists(atPath: scriptURL.path) {
+                var enc: String.Encoding = .utf8
+                let fileSource = try? String(contentsOf: scriptURL, usedEncoding: &enc)
+                source = fileSource?.replacingOccurrences(of: "{text}", with: text)
+                NSLog("[OpenFire-Debug] Loaded script from file: \(scriptURL.path)")
+            } else {
+                // Support inline script stored within 'script' field directly
+                source = scriptName.replacingOccurrences(of: "{text}", with: text)
+                NSLog("[OpenFire-Debug] File not found, using script field as literal inline text")
+            }
+        } else if let inline = action.inline {
+            NSLog("[OpenFire-Debug] Found inline action config")
+            source = inline.replacingOccurrences(of: "{text}", with: text)
+        } else {
+            NSLog("[OpenFire-Debug] Neither inline nor script field found in config!")
         }
         
-        guard let appleScriptSource = source else { return }
+        guard let appleScriptSource = source else {
+            NSLog("[OpenFire-Debug] appleScriptSource is nil, ABORTING!")
+            return
+        }
         
+        NSLog("[OpenFire-Debug] Preparing to execute AppleScript of length: \(appleScriptSource.count)")
+        
+        // Execute via osascript passing a temporary file path
         DispatchQueue.global(qos: .userInitiated).async {
-            var error: NSDictionary?
-            let script = NSAppleScript(source: appleScriptSource)
-            script?.executeAndReturnError(&error)
-            if let error = error {
-                NSLog("[OpenFire] AppleScript error: \(error)")
+            let tempDir = FileManager.default.temporaryDirectory
+            let tempFile = tempDir.appendingPathComponent(UUID().uuidString + ".applescript")
+            // Write selected text to a temp file so AppleScript can read it with proper UTF-8 encoding
+            // This avoids encoding issues with CJK characters via environment variables
+            let textFile = tempDir.appendingPathComponent(UUID().uuidString + ".txt")
+            
+            do {
+                try text.write(to: textFile, atomically: true, encoding: .utf8)
+                
+                // Transparently replace `system attribute "OPENFIRE_TEXT"` with file-based UTF-8 read
+                // so that CJK characters are handled correctly without users needing to know about the file
+                let fileReadExpr = "read (POSIX file \"\(textFile.path)\") as \u{00AB}class utf8\u{00BB}"
+                var finalSource = appleScriptSource
+                    .replacingOccurrences(of: "(system attribute \"OPENFIRE_TEXT\")", with: "(\(fileReadExpr))")
+                    .replacingOccurrences(of: "system attribute \"OPENFIRE_TEXT\"", with: fileReadExpr)
+                
+                try finalSource.write(to: tempFile, atomically: true, encoding: .utf8)
+                NSLog("[OpenFire-Debug] Wrote temp AppleScript file to \(tempFile.path)")
+                
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                process.arguments = [tempFile.path]
+                process.environment = ProcessInfo.processInfo.environment
+                process.environment?["OPENFIRE_TEXT"] = text
+                process.environment?["OPENFIRE_TEXT_FILE"] = textFile.path
+                process.currentDirectoryURL = plugin.directoryURL
+                
+                let errorPipe = Pipe()
+                process.standardError = errorPipe
+                
+                NSLog("[OpenFire-Debug] Launching osascript process...")
+                try process.run()
+                process.waitUntilExit()
+                NSLog("[OpenFire-Debug] osascript process finished with exit code: \(process.terminationStatus)")
+                
+                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                if !errorData.isEmpty, let errorStr = String(data: errorData, encoding: .utf8), !errorStr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    NSLog("[OpenFire] AppleScript stderr: \(errorStr)")
+                }
+                
+                try? FileManager.default.removeItem(at: tempFile)
+                try? FileManager.default.removeItem(at: textFile)
+            } catch {
+                NSLog("[OpenFire] Failed to execute AppleScript via osascript: \(error.localizedDescription)")
             }
         }
     }

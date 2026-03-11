@@ -67,6 +67,7 @@ OpenFire 的强大之处在于插件自定义能力。插件以 `.openfireext` �
 - 🔍 百度搜索 / Google 搜索
 - 📚 NeoDB 搜书 / 豆瓣搜书
 - 🎬 豆瓣搜电影
+- ✈️ Telegram 搜索
 
 ---
 
@@ -81,11 +82,12 @@ OpenFire 内置了功能完善的**可视化插件编辑器**，无需再手动�
 
 ### 支持的扩展类型 (Action `type`)
 - 🌐 `url`: 打开系统浏览器访问 `{text}`
-- 🐚 `shell-script`: 执行 Bash 脚本，读取环境变量 `$OPENFIRE_TEXT`
-- 🍎 `applescript`: 运行 osascript
 - ⌨️ `key-combo`: 直接在 UI 上录制并发送系统快捷键
 - 📋 `copy`: 复制到剪切板
 - 📝 `paste`: 粘贴到当前输入区
+
+#### 脚本类扩展 (直接内联执行)
+对于 `shell-script` 和 `applescript`，你可以为了方便直接将简短的代码写在 `script` 字符串字段内。当触发脚本时，OpenFire 会自动将用户选中的文本注入到名为 `$OPENFIRE_TEXT` 的环境变量中。
 
 ---
 

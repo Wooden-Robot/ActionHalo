@@ -205,7 +205,7 @@ final class PluginEditorWindow: NSWindow {
     private let identifierField = NSTextField()
     private let iconPopUp = NSPopUpButton()
     private let typePopUp = NSPopUpButton()
-    private let contentTextView = NSTextView()
+    private let contentTextView = NSTextView(frame: .zero)
     private let contentViewScroll = NSScrollView()
     private let shortcutField = ShortcutRecorderField()
     private let infoLabel = NSTextField(labelWithString: "")
@@ -347,7 +347,11 @@ final class PluginEditorWindow: NSWindow {
         contentTextView.autoresizingMask = .width
         contentTextView.isVerticallyResizable = true
         contentTextView.isHorizontallyResizable = false
+        contentTextView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        contentTextView.textContainer?.widthTracksTextView = true
         contentTextView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        contentTextView.allowsUndo = true
+        contentTextView.isRichText = false
         contentViewScroll.documentView = contentTextView
         cv.addSubview(contentViewScroll)
         
@@ -511,19 +515,43 @@ final class PluginEditorWindow: NSWindow {
             contentTextView.string = p.config.action.url ?? ""
         case .shellScript:
             typePopUp.selectItem(at: 1)
-            if let inline = p.config.action.inline {
-                contentTextView.string = inline
-            } else if let scriptName = p.config.action.script {
+            var loaded = false
+            if let scriptName = p.config.action.script {
                 let scriptURL = p.directoryURL.appendingPathComponent(scriptName)
-                contentTextView.string = (try? String(contentsOf: scriptURL)) ?? ""
+                let accessed = scriptURL.startAccessingSecurityScopedResource()
+                var enc1: String.Encoding = .utf8
+                if let content = try? String(contentsOf: scriptURL, usedEncoding: &enc1) {
+                    contentTextView.string = content
+                    loaded = true
+                } else if p.config.action.inline == nil {
+                    // Fallback: if there strictly is no such file and no inline, treat the JSON string value itself as the inline script
+                    contentTextView.string = scriptName
+                    loaded = true
+                }
+                if accessed { scriptURL.stopAccessingSecurityScopedResource() }
+            }
+            if !loaded, let inline = p.config.action.inline {
+                contentTextView.string = inline
             }
         case .applescript:
             typePopUp.selectItem(at: 2)
-            if let inline = p.config.action.inline {
-                contentTextView.string = inline
-            } else if let scriptName = p.config.action.script {
+            var loaded = false
+            if let scriptName = p.config.action.script {
                 let scriptURL = p.directoryURL.appendingPathComponent(scriptName)
-                contentTextView.string = (try? String(contentsOf: scriptURL)) ?? ""
+                let accessed = scriptURL.startAccessingSecurityScopedResource()
+                var enc2: String.Encoding = .utf8
+                if let content = try? String(contentsOf: scriptURL, usedEncoding: &enc2) {
+                    contentTextView.string = content
+                    loaded = true
+                } else if p.config.action.inline == nil {
+                    // Fallback: if there strictly is no such file and no inline, treat the JSON string value itself as the inline script
+                    contentTextView.string = scriptName
+                    loaded = true
+                }
+                if accessed { scriptURL.stopAccessingSecurityScopedResource() }
+            }
+            if !loaded, let inline = p.config.action.inline {
+                contentTextView.string = inline
             }
         case .keyCombo:
             typePopUp.selectItem(at: 3)
@@ -553,7 +581,7 @@ final class PluginEditorWindow: NSWindow {
             infoLabel.stringValue = "Write Shell script\nSelected text is available via $OPENFIRE_TEXT".localized
             contentTextView.isEditable = true
         case 2: // AppleScript
-            infoLabel.stringValue = "Write AppleScript code snippet".localized
+            infoLabel.stringValue = "Write AppleScript code snippet\nSelected text: system attribute \"OPENFIRE_TEXT\"".localized
             contentTextView.isEditable = true
         case 3: // Key combo
             infoLabel.stringValue = "Record key combo\n(Click the box on the right and press keyboard)".localized
@@ -611,12 +639,12 @@ final class PluginEditorWindow: NSWindow {
         case 0: // URL
             if content.isEmpty { return showError("URL cannot be empty".localized) }
             actionDict = ["type": "url", "url": content]
-        case 1: // Shell script (inline generated)
+        case 1: // Shell script
             if content.isEmpty { return showError("Script cannot be empty".localized) }
-            actionDict = ["type": "shell-script", "script": "script.sh"] // Will save script alongside
+            actionDict = ["type": "shell-script", "script": "script.sh"] // Reference external file
         case 2: // AppleScript
             if content.isEmpty { return showError("Code cannot be empty".localized) }
-            actionDict = ["type": "applescript", "script": "script.applescript"]
+            actionDict = ["type": "applescript", "script": "script.applescript"] // Reference external file
         case 3: // Key Combo
             if content.isEmpty { return showError("Key combo cannot be empty".localized) }
             let parts = content.components(separatedBy: "+")
@@ -659,9 +687,30 @@ final class PluginEditorWindow: NSWindow {
             configDict["localizedDescriptions"] = descLocales
         }
         
+        // Preserve existing config like filter, order, isDefaultDisabled
+        if let existing = editingPlugin?.config {
+            if let filter = existing.filter {
+                if let encoded = try? JSONEncoder().encode(filter),
+                   let dict = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] {
+                    configDict["filter"] = dict
+                }
+            }
+            if let order = existing.order {
+                configDict["order"] = order
+            }
+            if let isDefaultDisabled = existing.isDefaultDisabled {
+                configDict["isDefaultDisabled"] = isDefaultDisabled
+            }
+        }
+        
         // Create Plugin Bundle
         let pluginsURL = PluginManager.shared.userPluginsURL
-        let bundleURL = pluginsURL.appendingPathComponent("\(id).openfireext")
+        let bundleURL: URL
+        if let p = editingPlugin, p.directoryURL.path.hasPrefix(pluginsURL.path) {
+            bundleURL = p.directoryURL
+        } else {
+            bundleURL = pluginsURL.appendingPathComponent("\(id).openfireext")
+        }
         let editingPluginWasNil = (editingPlugin == nil)
         
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -678,7 +727,16 @@ final class PluginEditorWindow: NSWindow {
                 // Write Config.json
                 let configURL = bundleURL.appendingPathComponent("Config.json")
                 let data = try JSONSerialization.data(withJSONObject: configDict, options: .prettyPrinted)
-                try data.write(to: configURL)
+                try data.write(to: configURL, options: .atomic)
+                
+                // Write Script Files if applicable
+                if typeIndex == 1 {
+                    let scriptURL = bundleURL.appendingPathComponent("script.sh")
+                    try content.write(to: scriptURL, atomically: true, encoding: .utf8)
+                } else if typeIndex == 2 {
+                    let scriptURL = bundleURL.appendingPathComponent("script.applescript")
+                    try content.write(to: scriptURL, atomically: true, encoding: .utf8)
+                }
                 
                 // Handle custom icon image
                 let iconDestURL = bundleURL.appendingPathComponent("icon.png")
@@ -697,18 +755,7 @@ final class PluginEditorWindow: NSWindow {
                     }
                 }
                 
-                // Write scripts if needed
-                if typeIndex == 1 {
-                    let scriptURL = bundleURL.appendingPathComponent("script.sh")
-                    try content.write(to: scriptURL, atomically: true, encoding: .utf8)
-                    // Make executable
-                    var attrs = try FileManager.default.attributesOfItem(atPath: scriptURL.path)
-                    attrs[.posixPermissions] = 0o755
-                    try FileManager.default.setAttributes(attrs, ofItemAtPath: scriptURL.path)
-                } else if typeIndex == 2 {
-                    let scriptURL = bundleURL.appendingPathComponent("script.applescript")
-                    try content.write(to: scriptURL, atomically: true, encoding: .utf8)
-                }
+
                 
                 DispatchQueue.main.async {
                     // Force reload plugins
