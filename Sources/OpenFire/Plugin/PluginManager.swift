@@ -108,7 +108,7 @@ final class PluginManager {
     /// Get plugins that should be shown for the given text and app context
     func availablePlugins(for text: String, appBundleID: String?) -> [Plugin] {
         let filtered = plugins.filter { plugin in
-            plugin.isEnabled && plugin.shouldShow(text: text, appBundleID: appBundleID)
+            plugin.isEnabled
         }
         
         // Use UserDefaults custom order if available

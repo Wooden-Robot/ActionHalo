@@ -279,6 +279,9 @@ final class RadialMenuView: NSView {
             iconLayer.isHidden = false
             labelLayer.isHidden = false
             
+            // Determine base opacity multiplier based on executable state
+            let executableMultiplier: Float = item.isExecutable ? 1.0 : 0.25
+            
             // Clean up old hover state paths/animations just in case
             sectorLayer.removeAllAnimations()
             glowLayer.removeAllAnimations()
@@ -289,7 +292,7 @@ final class RadialMenuView: NSView {
             sectorLayer.fillColor = sectorColor.cgColor
             sectorLayer.strokeColor = borderColor.cgColor
             sectorLayer.lineWidth = 0.5
-            sectorLayer.opacity = Float(self.windowBaseAlpha)
+            sectorLayer.opacity = Float(self.windowBaseAlpha) * executableMultiplier
             
             // Reset Glow
             glowLayer.shadowRadius = 0
@@ -301,9 +304,9 @@ final class RadialMenuView: NSView {
             iconLayer.shadowRadius = 2
             iconLayer.shadowOpacity = 0.6
             iconLayer.shadowColor = NSColor.black.cgColor
-            iconLayer.opacity = Float(self.windowBaseAlpha) * 0.85
+            iconLayer.opacity = Float(self.windowBaseAlpha) * 0.85 * executableMultiplier
             
-            labelLayer.opacity = Float(self.windowBaseAlpha)
+            labelLayer.opacity = Float(self.windowBaseAlpha) * executableMultiplier
             
             // Update Paths
             let sectorPath = createSectorPath(
@@ -749,14 +752,14 @@ final class RadialMenuView: NSView {
             if start > end {
                 // Normal case: sector doesn't cross the 0 angle line
                 if angle <= start && angle >= end {
-                    return i
+                    return menuItems[i].isExecutable ? i : -1
                 }
             } else {
                 // Wrapping case: sector crosses the 0 angle (e.g. start is 0.1, end is 6.0)
                 // Since start > end is false, it means start wrapped around and is now smaller than end.
                 // It's conceptually standard trig clockwise: 0.1 down to 0, then 2π down to 6.0.
                 if angle <= start || angle >= end {
-                    return i
+                    return menuItems[i].isExecutable ? i : -1
                 }
             }
         }

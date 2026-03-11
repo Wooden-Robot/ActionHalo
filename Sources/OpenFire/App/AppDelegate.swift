@@ -79,15 +79,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Quick check via Accessibility API first
         if let text = AccessibilityManager.shared.getSelectedText(), !text.isEmpty {
             let mouseLocation = NSEvent.mouseLocation
+            self.currentSelectedText = text
             showRadialMenu(at: mouseLocation, text: text)
             return
         }
         
         // If Accessibility fails, simulate Cmd+C (async to allow physical hotkeys to be released)
         AccessibilityManager.shared.getSelectedTextViaCopy { [weak self] copiedText in
-            guard let text = copiedText, !text.isEmpty else { return }
+            guard let self = self, let text = copiedText, !text.isEmpty else { return }
             let mouseLocation = NSEvent.mouseLocation
-            self?.showRadialMenu(at: mouseLocation, text: text)
+            self.currentSelectedText = text
+            self.showRadialMenu(at: mouseLocation, text: text)
         }
     }
     
@@ -320,12 +322,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         var items: [RadialMenuItem] = []
         
+        let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
+        
         for plugin in plugins {
+            let isExecutable = plugin.shouldShow(text: currentSelectedText, appBundleID: appBundleID)
+            
             items.append(RadialMenuItem(
                 title: plugin.name,
                 iconName: plugin.iconName,
                 action: .plugin(plugin),
-                customIcon: plugin.customIcon
+                customIcon: plugin.customIcon,
+                isExecutable: isExecutable
             ))
         }
         

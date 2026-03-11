@@ -83,9 +83,9 @@ final class AccessibilityManager {
     // Fallback: Simulate Cmd+C to grab text from apps that refuse to expose accessibility text
     func getSelectedTextViaCopy(completion: @escaping (String?) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
-            // Give the user ~200ms to lift their fingers from the global hotkey
+            // Give the user ~50ms to lift their fingers from the global hotkey
             // so physical modifiers (like Option/Control) don't turn Cmd+C into Option+Cmd+C
-            usleep(200000) 
+            usleep(50000) 
             
             let pasteboard = NSPasteboard.general
             
@@ -106,7 +106,7 @@ final class AccessibilityManager {
             cmdUp?.post(tap: .cghidEventTap)
             
             // Wait for Electron/React apps to detect the event, process the DOM, and write to PB
-            usleep(150000)
+            usleep(50000)
             
             // Read new content
             let newString = pasteboard.string(forType: .string)
@@ -200,6 +200,97 @@ final class AccessibilityManager {
         // return true as a best-effort.
         NSLog("[OpenFire-Debug] Could not get element bounds. Assuming true.")
         return true
+    }
+    
+    /// Check if the element at the specified screen coordinates is purely text (like a webpage paragraph, a text field, or static text label),
+    /// specifically excluding structural elements like Finder rows, cells, or images that get double-clicked.
+    func isTextElement(at point: NSPoint) -> Bool {
+        guard isAccessibilityEnabled else { return false }
+        
+        // 1. Get the globally focused element or the element exactly under the mouse
+        // We use systemWideElement to hit-test the specific point on screen
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return false }
+        let primaryScreenFrame = screens[0].frame
+        let axPoint = CGPoint(x: point.x, y: primaryScreenFrame.height - point.y)
+        
+        var hitElementRaw: AXUIElement?
+        let hitResult = AXUIElementCopyElementAtPosition(systemWideElement, Float(axPoint.x), Float(axPoint.y), &hitElementRaw)
+        
+        guard hitResult == .success, let hitElement = hitElementRaw else { return false }
+        
+        // Hard-block file managers and desktop to prevent file clicking from triggering text selection
+        if let bundleID = getFocusedAppBundleID() {
+            if bundleID == "com.apple.finder" || bundleID == "com.apple.WindowManager" {
+                NSLog("[OpenFire-Debug] Ignoring double click because frontmost app is Finder/Desktop")
+                return false
+            }
+        }
+        
+        // 2. Identify the role
+        var roleValue: AnyObject?
+        let roleResult = AXUIElementCopyAttributeValue(hitElement, kAXRoleAttribute as CFString, &roleValue)
+        guard roleResult == .success, let role = roleValue as? String else { return false }
+        
+        // Allowed roles that represent actual selectable text content
+        let allowedRoles = [
+            kAXStaticTextRole,
+            kAXTextFieldRole,
+            kAXTextAreaRole,
+            "AXWebArea",
+            "AXHeading",
+            "AXParagraph",
+            "AXLink"
+        ]
+        
+        // Strictly forbidden roles (Finder files, Desktop icons, buttons, table cells)
+        let forbiddenRoles = [
+            kAXImageRole,
+            kAXCellRole,
+            kAXRowRole,
+            kAXButtonRole,
+            kAXWindowRole,
+            kAXApplicationRole
+        ]
+        
+        NSLog("[OpenFire-Debug] Double-click hit test detected role: \(role)")
+        
+        if forbiddenRoles.contains(role) {
+            return false
+        }
+        
+        if allowedRoles.contains(role) {
+            // Even if it's "StaticText", check if it's literally just a label inside a button or a row (common in native macOS apps)
+            var parentRaw: AnyObject?
+            if AXUIElementCopyAttributeValue(hitElement, kAXParentAttribute as CFString, &parentRaw) == .success,
+               let parent = parentRaw as! AXUIElement? {
+                var parentRoleRaw: AnyObject?
+                if AXUIElementCopyAttributeValue(parent, kAXRoleAttribute as CFString, &parentRoleRaw) == .success,
+                   let parentRole = parentRoleRaw as? String {
+                    if forbiddenRoles.contains(parentRole) || parentRole == kAXListRole || parentRole == kAXOutlineRole || parentRole == kAXTableRole {
+                        NSLog("[OpenFire-Debug] Blocking allowed role \(role) because its parent is \(parentRole)")
+                        return false
+                    }
+                }
+            }
+            return true
+        }
+        
+        // If it's an unknown group, we default to false to be safe and avoid misfires,
+        // EXCEPT if it's Electron/Chromium (which often wrap text in generic AXGroups).
+        // Let's explicitly check the app ID.
+        if role == "AXGroup" {
+            if let bundleID = getFocusedAppBundleID() {
+                // Electron apps (VSCode, Telegram, Obsidian, Discord) and Chromium use massive AXGroups
+                let electronHeuristics = ["electron", "desktop", "telegram", "discord", "obsidian", "code", "chrome", "edge", "brave"]
+                let lowerID = bundleID.lowercased()
+                if electronHeuristics.contains(where: lowerID.contains) {
+                    return true
+                }
+            }
+        }
+        
+        return false
     }
     
     func getFocusedElement() -> AXUIElement? {

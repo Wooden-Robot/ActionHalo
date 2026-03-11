@@ -12,6 +12,7 @@ final class TextSelectionMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var isMonitoring = false
     private var mouseDownLocation: NSPoint?
+    private var clickCount: Int = 1
     
     // AXObserver state for robust text selection detection
     private var currentObserver: AXObserver?
@@ -53,6 +54,7 @@ final class TextSelectionMonitor {
             
             if type == .leftMouseDown {
                 monitor.mouseDownLocation = NSEvent.mouseLocation
+                monitor.clickCount = Int(event.getIntegerValueField(.mouseEventClickState))
             } else if type == .leftMouseUp {
                 monitor.handleMouseUp()
             }
@@ -137,8 +139,12 @@ final class TextSelectionMonitor {
         // Clean up any pending observers or active tasks
         cleanupPendingTask()
         
-        // If it was a meaningful drag, wait for the accessibility selection to update
-        if distance >= minimumDragDistance {
+        let localClickCount = self.clickCount
+        let isDrag = distance >= minimumDragDistance
+        let isTextElement = AccessibilityManager.shared.isTextElement(at: downLocation)
+        
+        // If it was a meaningful drag, OR a double/triple click specifically on a text element
+        if isDrag || (localClickCount >= 2 && isTextElement) {
             let taskID = UUID()
             self.pendingSelectionTaskID = taskID
             
@@ -203,22 +209,24 @@ final class TextSelectionMonitor {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: workItem)
     }
     
-    // Fallback for non-standard apps (e.g. Electron apps like Telegram) which do not emit kAXSelectedTextChangedNotification
     private func schedulePolling(at mouseLocation: NSPoint, taskID: UUID) {
-        let delays: [TimeInterval] = [0.1, 0.25, 0.4]
-        for delay in delays {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self = self, self.pendingSelectionTaskID == taskID else { return }
-                
-                if let text = AccessibilityManager.shared.getSelectedText(), !text.isEmpty {
-                    NSLog("[OpenFire-Debug] Text found via Polling Fallback at \\(delay)s.")
-                    self.handleSelectionFound(text: text, location: mouseLocation, taskID: taskID)
-                } else if delay == 0.4 {
-                    // Ultimate fallback: Try to copy it manually when the last poll fails
+        // Try native accessibility polling once at 0.1s
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self, self.pendingSelectionTaskID == taskID else { return }
+            
+            if let text = AccessibilityManager.shared.getSelectedText(), !text.isEmpty {
+                NSLog("[OpenFire-Debug] Text found via Polling Fallback at 0.1s.")
+                self.handleSelectionFound(text: text, location: mouseLocation, taskID: taskID)
+            } else {
+                // If native polling fails at 0.1s, immediately fire the Cmd+C fallback for Electron/Qt apps (e.g., Telegram)
+                // This eliminates the previous 0.4s waiting penalty.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                    guard let self = self, self.pendingSelectionTaskID == taskID else { return }
+                    
                     AccessibilityManager.shared.getSelectedTextViaCopy { [weak self] copiedText in
                         guard let self = self, self.pendingSelectionTaskID == taskID else { return }
                         if let text = copiedText, !text.isEmpty {
-                            NSLog("[OpenFire-Debug] Text found via Cmd+C Fallback after 0.4s.")
+                            NSLog("[OpenFire-Debug] Text found via Cmd+C Fallback after 0.15s.")
                             self.handleSelectionFound(text: text, location: mouseLocation, taskID: taskID)
                         } else {
                             self.cleanupPendingTask()

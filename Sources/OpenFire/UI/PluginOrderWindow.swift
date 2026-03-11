@@ -272,8 +272,26 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
     }
     
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
-        if dropOperation == .above { return .move }
-        return []
+        let mouseLocation = tableView.convert(info.draggingLocation, from: nil)
+        
+        // Calculate dynamic row based on actual mouse Y position allowing for easier top/bottom drops
+        var dynamicRow = Int(mouseLocation.y / rowHeight)
+        
+        // Make the top and bottom targets massive
+        if mouseLocation.y < rowHeight / 2 {
+            dynamicRow = 0
+        } else if mouseLocation.y > CGFloat(orderedPlugins.count) * rowHeight - (rowHeight / 2) {
+            dynamicRow = orderedPlugins.count
+        }
+        
+        // Clamp it
+        dynamicRow = max(0, min(dynamicRow, orderedPlugins.count))
+        
+        if dropOperation != .above || row != dynamicRow {
+            tableView.setDropRow(dynamicRow, dropOperation: .above)
+        }
+        
+        return .move
     }
     
     func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {

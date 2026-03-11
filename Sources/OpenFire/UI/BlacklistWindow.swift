@@ -1,4 +1,5 @@
 import Cocoa
+import UniformTypeIdentifiers
 
 /// A dedicated window to manage apps where OpenFire has been disabled.
 final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableViewDataSource {
@@ -103,7 +104,11 @@ final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableVie
             appIcon?.size = NSSize(width: 24, height: 24)
         } else {
             // Generic icon fallback
-            appIcon = NSWorkspace.shared.icon(forFileType: NSFileTypeForHFSTypeCode(OSType(kGenericApplicationIcon)))
+            if #available(macOS 12.0, *) {
+                appIcon = NSWorkspace.shared.icon(for: .application)
+            } else {
+                appIcon = NSWorkspace.shared.icon(forFileType: NSFileTypeForHFSTypeCode(OSType(kGenericApplicationIcon)))
+            }
             appIcon?.size = NSSize(width: 24, height: 24)
         }
         
