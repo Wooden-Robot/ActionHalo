@@ -305,8 +305,16 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         
         tableView.moveRow(at: sourceRow, to: targetRow)
         
+        // Save scroll position before reload to prevent jump-to-top
+        let savedScrollPosition = tableView.enclosingScrollView?.contentView.bounds.origin ?? .zero
+        
         // Update position numbers
         tableView.reloadData()
+        
+        // Restore scroll position
+        tableView.enclosingScrollView?.contentView.scroll(to: savedScrollPosition)
+        tableView.enclosingScrollView?.reflectScrolledClipView(tableView.enclosingScrollView!.contentView)
+        
         saveOrder()
         return true
     }

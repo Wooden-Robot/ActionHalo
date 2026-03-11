@@ -154,6 +154,25 @@ final class AccessibilityManager {
         
         // 3. Verify it's a text input
         let textRoles = [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole, "AXWebArea", "AXGroup", "AXDocument", "AXSearchField"]
+        let forbiddenRoles = [
+            kAXCheckBoxRole,
+            kAXRadioButtonRole,
+            kAXButtonRole,
+            kAXPopUpButtonRole,
+            kAXMenuButtonRole,
+            kAXSliderRole,
+            kAXValueIndicatorRole,
+            kAXColorWellRole,
+            kAXListRole,
+            kAXOutlineRole,
+            kAXTableRole
+        ]
+        
+        if forbiddenRoles.contains(role) {
+            NSLog("[OpenFire-Debug] Focused element is forbidden (role: \(role)), refusing to treat as text input.")
+            return false
+        }
+        
         var isEditableText = false
         
         var isSettable: DarwinBoolean = false

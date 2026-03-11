@@ -42,4 +42,31 @@ final class PluginManagerTests: XCTestCase {
         available = manager.availablePlugins(for: "test", appBundleID: nil)
         XCTAssertEqual(available.count, 16, "Limit should truncate to 16 items")
     }
+    
+    func testAvailablePluginsIgnoresTextMatchButRespectsEnabledState() {
+        let manager = PluginManager.shared
+        manager.plugins.removeAll()
+        
+        let jsonEnabled = "{\"name\": \"Enabled\", \"identifier\": \"com.test.enabled\", \"action\": { \"type\": \"url\", \"url\": \"https://example.com\" }, \"icon\": \"star\", \"order\": 1}"
+        let configEnabled = try! JSONDecoder().decode(PluginConfig.self, from: jsonEnabled.data(using: .utf8)!)
+        let pluginEnabled = Plugin(config: configEnabled, directoryURL: URL(fileURLWithPath: ""))
+        pluginEnabled.isEnabled = true
+        manager.plugins.append(pluginEnabled)
+        
+        let jsonDisabled = "{\"name\": \"Disabled\", \"identifier\": \"com.test.disabled\", \"action\": { \"type\": \"url\", \"url\": \"https://example.com\" }, \"icon\": \"star\", \"order\": 2}"
+        let configDisabled = try! JSONDecoder().decode(PluginConfig.self, from: jsonDisabled.data(using: .utf8)!)
+        let pluginDisabled = Plugin(config: configDisabled, directoryURL: URL(fileURLWithPath: ""))
+        pluginDisabled.isEnabled = false // Explicitly disabled
+        manager.plugins.append(pluginDisabled)
+        
+        // 1. Fetch available plugins
+        let available = manager.availablePlugins(for: "some random text", appBundleID: nil)
+        
+        // 2. Validate
+        XCTAssertEqual(available.count, 1, "Should only return 1 enabled plugin")
+        XCTAssertEqual(available.first?.id, "com.test.enabled", "Disabled plugin should be filtered out entirely")
+        
+        // Note: the `isMatch` filtering on the text string happens *purely* in the UI to gray out matches
+        // which we'll test in RadialMenuItemTests.
+    }
 }
