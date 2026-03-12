@@ -49,6 +49,7 @@
 "Network Connection Lost" = "网络连接已断开。";
 "DNS Lookup Failed" = "DNS 解析失败。";
 "Retry" = "重试";
+"Unexpected server response (%@)." = "服务器响应异常（%@）。";
 "Auto Check Updates" = "自动检查更新";
 "✓ Auto Check Updates" = "✓ 自动检查更新";
 

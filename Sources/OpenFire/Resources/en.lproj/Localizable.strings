@@ -49,6 +49,7 @@
 "Network Connection Lost" = "Network Connection Lost";
 "DNS Lookup Failed" = "DNS Lookup Failed";
 "Retry" = "Retry";
+"Unexpected server response (%@)." = "Unexpected server response (%@).";
 "Auto Check Updates" = "Auto Check Updates";
 "✓ Auto Check Updates" = "✓ Auto Check Updates";
 

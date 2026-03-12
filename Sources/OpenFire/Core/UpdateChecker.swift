@@ -4,7 +4,7 @@ final class UpdateChecker {
     static let shared = UpdateChecker()
     static let autoCheckEnabledKey = "AutoCheckUpdates"
 
-    private let owner = "woodenrobot"
+    private let owner = "Wooden-Robot"
     private let repo = "OpenFire"
     private let lastNotifiedVersionKey = "LastNotifiedVersion"
 
@@ -25,12 +25,24 @@ final class UpdateChecker {
         request.setValue("OpenFire", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
             if let error = error {
                 if showErrors {
                     DispatchQueue.main.async {
                         self.presentUpdateErrorAlert(message: self.userFriendlyErrorMessage(for: error))
+                    }
+                }
+                return
+            }
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
+                if showErrors {
+                    let message = String(
+                        format: "Unexpected server response (%@).".localized,
+                        "\(httpResponse.statusCode)"
+                    )
+                    DispatchQueue.main.async {
+                        self.presentUpdateErrorAlert(message: message)
                     }
                 }
                 return

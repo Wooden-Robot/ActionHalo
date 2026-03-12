@@ -10,3 +10,10 @@
 - Added “Check for Updates...” and “Auto Check Updates” toggle in the menu (default on).
 - Manual checks show “Up to date” and friendlier network error messages with retry.
 - Added UpdateChecker tests.
+ 
+## v0.1.1
+- 修复更新检查请求指向错误仓库导致的解析失败问题。
+- 当服务器响应非 200 时给出更明确的错误提示。
+
+- Fix update check failing due to incorrect repository owner.
+- Show clearer error when server response is not 200.
