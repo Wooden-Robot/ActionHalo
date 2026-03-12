@@ -20,6 +20,11 @@ final class PluginManager {
         "com.openfire.open-url"
     ]
     
+    /// Plugins that intentionally keep their slot even when current selection is not executable.
+    static let reservedPlaceholderPluginIDs: Set<String> = [
+        "com.openfire.open-url"
+    ]
+    
     var plugins: [Plugin] = []
     private var fileWatchers: [DispatchSourceFileSystemObject] = []
     
@@ -108,7 +113,11 @@ final class PluginManager {
     /// Get plugins that should be shown for the given text and app context
     func availablePlugins(for text: String, appBundleID: String?) -> [Plugin] {
         let filtered = plugins.filter { plugin in
-            plugin.isEnabled
+            guard plugin.isEnabled else { return false }
+            if plugin.shouldShow(text: text, appBundleID: appBundleID) {
+                return true
+            }
+            return Self.reservedPlaceholderPluginIDs.contains(plugin.id)
         }
         
         // Use UserDefaults custom order if available

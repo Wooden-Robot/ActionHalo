@@ -10,7 +10,9 @@
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white)](https://developer.apple.com/swift)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
-<img src="./Assets/openfire-demo.png" width="600" alt="OpenFire Demo" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 24px 0;"/>
+<img src="./Assets/demo.gif" width="600" alt="OpenFire Demo 1" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 24px 0 12px;"/>
+
+<img src="./Assets/demo2.gif" width="600" alt="OpenFire Demo 2" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 12px 0 24px;"/>
 
 > OpenFire is heavily inspired by PopClip but massively refactored and extremely optimized in UI, interaction, and performance using native Core Animation and Swift Concurrency.
 
@@ -27,13 +29,16 @@ Bottom-layer hit testing based on `mouseDown` / `mouseDragged` / `mouseUp`. Bid 
 Uses `NSVisualEffectView` and `CAShapeLayer` buffer pool. Page flipping, hovering, and clicking animations are buttery smooth with no frame drops.
 
 🎛️ **Highly Customizable UI**
-Adjust the radial menu's **Ring Opacity** and **Max Items limit** (6, 8, 12, or 16 items per page) directly from the Menu Bar to perfectly suit your workflow.
+Adjust the radial menu's **Ring Opacity** and **Max Items limit** (6, 8, 12, or 16 items per page) directly from the Menu Bar. You can also toggle **GTA Mode** for a heavier weapon-wheel style presentation with a darker HUD-like look.
 
 🔌 **Hot-pluggable Plugin System**
 Supports custom `.openfireext` plugin packages. Features double-click installation, background thread asynchronous loading, and a package management mechanism supporting deletion and disabling.
 
 🧠 **Smart Trigger Context**
-Rewritten Accessibility recognition logic at the foundation. The "paste" function will only pop up within genuinely editable text boxes, eliminating invalid popups on web page background layers.
+Rewritten Accessibility recognition logic at the foundation. The "paste" function only appears inside genuinely editable text fields, and Open URL can reserve a slot without hijacking space from context-matching actions.
+
+✂️ **Cleaner Quick Actions**
+When OpenFire detects an empty editable field, it can show a lightweight `Paste / Clear` capsule near the cursor for faster text entry cleanup without opening the full wheel.
 
 🚫 **Customizable App Blacklist**
 Built-in automatic blacklist management UI. Supports dragging and dropping apps, or browsing via the `+` button to precisely block specific software.
@@ -49,6 +54,17 @@ Built-in automatic blacklist management UI. Supports dragging and dropping apps,
 3. Launch OpenFire.
 4. Open **System Settings → Privacy & Security → Accessibility** and grant permissions to OpenFire (required for text selection detection).
 
+### Menu Bar Controls
+
+OpenFire lives in the macOS menu bar and exposes the main controls there:
+
+- **Ring Opacity**: `0% (Opaque)` to `100% (Transparent)`
+- **GTA Mode**: swaps the wheel into a heavier GTA V-style HUD presentation
+- **Max Items in Menu**: `6 / 8 / 12 / 16`
+- **Plugin Management** and **App Blacklist**
+
+Note: when **GTA Mode** is enabled, the wheel is intentionally rendered fully opaque and the opacity menu is disabled.
+
 ---
 
 ## 🧩 The Plugin Ecosystem
@@ -61,6 +77,8 @@ OpenFire's true power lies in its plugin system. Plugins exist as `.openfireext`
 | **Copy / Cut / Paste** | System clipboard management (intelligently recognizes input box context) |
 | **Search / Translate / Dict** | Jump to Google, invoke macOS native dictionary |
 | **Open Link** | Automatically identifies URLs in selected text and attempts to open them |
+
+Built-in plugins are filtered by current context before pagination, so irrelevant actions do not crowd out actually usable slots.
 
 ### Community Plugins
 Built into the package, they can be enabled or removed at any time via the "Plugin Management" interface:

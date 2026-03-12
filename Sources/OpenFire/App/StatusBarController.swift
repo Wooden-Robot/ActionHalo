@@ -2,6 +2,7 @@ import Cocoa
 
 /// Controls the menu bar status item — plugin management via embedded submenu view
 final class StatusBarController: NSObject {
+    private static let wheelBackdropEnabledKey = "WheelBackdropEnabled"
     
     private var statusItem: NSStatusItem?
     private var isEnabled = true
@@ -123,6 +124,7 @@ final class StatusBarController: NSObject {
         // 100% transparent = 0.0 alpha, 0% transparent (solid) = 1.0 alpha
         let opacities: [(String, Double)] = [("0% (Opaque)".localized, 1.0), ("25%", 0.75), ("50%", 0.50), ("75%", 0.25), ("100% (Transparent)".localized, 0.0)]
         let currentOpacity = UserDefaults.standard.object(forKey: "ringOpacity") as? Double ?? 0.25
+        let backdropEnabled = UserDefaults.standard.object(forKey: Self.wheelBackdropEnabledKey) as? Bool ?? true
         
         for (title, value) in opacities {
             let item = NSMenuItem(title: title, action: #selector(setRingOpacity(_:)), keyEquivalent: "")
@@ -134,7 +136,13 @@ final class StatusBarController: NSObject {
         
         let opacityMenuItem = NSMenuItem(title: "Ring Opacity".localized, action: nil, keyEquivalent: "")
         opacityMenuItem.submenu = opacityMenu
+        opacityMenuItem.isEnabled = !backdropEnabled
         menu.addItem(opacityMenuItem)
+        
+        let backdropTitle = backdropEnabled ? "✓ GTA Mode".localized : "GTA Mode".localized
+        let backdropItem = NSMenuItem(title: backdropTitle, action: #selector(toggleWheelBackdrop), keyEquivalent: "")
+        backdropItem.target = self
+        menu.addItem(backdropItem)
         menu.addItem(NSMenuItem.separator())
         
         // Max Items submenu
@@ -293,10 +301,19 @@ final class StatusBarController: NSObject {
     }
     
     @objc private func setRingOpacity(_ sender: NSMenuItem) {
+        let backdropEnabled = UserDefaults.standard.object(forKey: Self.wheelBackdropEnabledKey) as? Bool ?? true
+        guard !backdropEnabled else { return }
         if let opacity = sender.representedObject as? Double {
             UserDefaults.standard.set(opacity, forKey: "ringOpacity")
             rebuildMenu()
         }
+    }
+    
+    @objc private func toggleWheelBackdrop() {
+        let defaults = UserDefaults.standard
+        let enabled = defaults.object(forKey: Self.wheelBackdropEnabledKey) as? Bool ?? true
+        defaults.set(!enabled, forKey: Self.wheelBackdropEnabledKey)
+        rebuildMenu()
     }
     
     @objc private func setMaxItems(_ sender: NSMenuItem) {

@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var radialMenuWindow: RadialMenuWindow?
     private var isEnabled = true
     private var currentSelectedText: String = ""
+    private var observersRegistered = false
     
     // Global monitor for clicking outside
     private var globalClickMonitor: Any?
@@ -122,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         TextSelectionMonitor.shared.stopMonitoring()
         PluginManager.shared.stopWatchingPluginDirectories()
         HotkeyManager.shared.unregisterHotkeys()
+        unregisterServiceObservers()
     }
     
     // MARK: - Handle file opening (plugin installation)
@@ -232,6 +234,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AccessibilityManager.shared.startWatchdog()
         
         // Listen for text selection events
+        registerServiceObserversIfNeeded()
+    }
+
+    private func registerServiceObserversIfNeeded() {
+        guard !observersRegistered else { return }
+        
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleTextSelection(_:)),
@@ -246,6 +254,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: TextSelectionMonitor.emptyTextInputClickedNotification,
             object: nil
         )
+        
+        observersRegistered = true
+    }
+    
+    private func unregisterServiceObservers() {
+        guard observersRegistered else { return }
+        NotificationCenter.default.removeObserver(self, name: TextSelectionMonitor.textSelectedNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: TextSelectionMonitor.emptyTextInputClickedNotification, object: nil)
+        observersRegistered = false
     }
     
     private func showPermissionLostAlert() {
@@ -346,18 +363,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dismissAllMenus()
         
         var items: [RadialMenuItem] = []
-        
         let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
         
         for plugin in plugins {
-            let isExecutable = plugin.shouldShow(text: currentSelectedText, appBundleID: appBundleID)
-            
             items.append(RadialMenuItem(
                 title: plugin.name,
                 iconName: plugin.iconName,
                 action: .plugin(plugin),
                 customIcon: plugin.customIcon,
-                isExecutable: isExecutable
+                isExecutable: plugin.shouldShow(text: currentSelectedText, appBundleID: appBundleID)
             ))
         }
         

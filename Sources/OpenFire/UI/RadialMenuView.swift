@@ -3,13 +3,21 @@ import QuartzCore
 
 /// The main radial menu view — draws a circular ring with segmented actions
 final class RadialMenuView: NSView {
+    private struct GeometrySignature: Equatable {
+        let itemCount: Int
+        let center: NSPoint
+        let boundsSize: CGSize
+    }
     
     // MARK: - Configuration (dynamic based on item count)
     
     private let minArcPerItem: CGFloat = 60
     private let baseOuterRadius: CGFloat = 130
     private let baseInnerRadius: CGFloat = 85
-    private let baseIconSize: CGFloat = 26
+    private let baseIconSize: CGFloat = 32
+    private let selectionDeadzoneRadius: CGFloat = 16
+    private let centerCoreInset: CGFloat = 10
+    private let outsideDismissPadding: CGFloat = 90
     
     private var gapAngle: CGFloat {
         let count = max(1, menuItems.count)
@@ -94,7 +102,15 @@ final class RadialMenuView: NSView {
     
     private var labelLayers: [CATextLayer] = []
     private var centerLabel: CATextLayer?
+    private var centerSubtitleLabel: CATextLayer?
     private var centerCircleLayer: CAShapeLayer?
+    private var visualEffectMaskLayer = CAShapeLayer()
+    private var lastGeometrySignature: GeometrySignature?
+    private let hoverGlowRadius: CGFloat = 12
+    private var centerLabelText: String = "OpenFire"
+    private var centerLabelColor: NSColor = .white
+    private var centerSubtitleText: String = "HOLD AND RELEASE"
+    private var centerSubtitleColor: NSColor = NSColor(white: 1.0, alpha: 0.42)
     
     // MARK: - Centers
     
@@ -108,25 +124,60 @@ final class RadialMenuView: NSView {
     
     // MARK: - Game HD Colors
     
-    // Base sector is a darker glass panel with sharp edges
-    // Make the sector almost completely transparent like GTA V, mostly using the border
-    private let sectorColor = NSColor(white: 0.1, alpha: 0.40)
+    private var sectorColor: NSColor {
+        isGTAModeEnabled
+            ? NSColor(calibratedWhite: 0.05, alpha: 0.74)
+            : NSColor(calibratedWhite: 0.08, alpha: 0.46)
+    }
     
-    // Hover is an energetic metallic blue/cyan glow
-    private let sectorHoverColor = NSColor(calibratedRed: 0.1, green: 0.6, blue: 0.9, alpha: 0.95)
+    private var sectorHoverColor: NSColor {
+        isGTAModeEnabled
+            ? NSColor(calibratedWhite: 0.88, alpha: 0.96)
+            : NSColor(calibratedRed: 0.58, green: 0.82, blue: 0.96, alpha: 0.90)
+    }
     
-    // Intense glow behind the hovered item
-    private let glowColor = NSColor(calibratedRed: 0.0, green: 0.8, blue: 1.0, alpha: 0.9)
+    private var glowColor: NSColor {
+        isGTAModeEnabled
+            ? NSColor(calibratedWhite: 0.98, alpha: 0.60)
+            : NSColor(calibratedRed: 0.68, green: 0.9, blue: 1.0, alpha: 0.42)
+    }
     
-    // Borders are crisp and stand out
-    private let borderColor = NSColor(white: 1.0, alpha: 0.25)
-    private let borderHoverColor = NSColor(white: 1.0, alpha: 0.6)
+    private var borderColor: NSColor {
+        isGTAModeEnabled
+            ? NSColor(white: 1.0, alpha: 0.14)
+            : NSColor(white: 1.0, alpha: 0.22)
+    }
+    
+    private var borderHoverColor: NSColor {
+        isGTAModeEnabled
+            ? NSColor(white: 1.0, alpha: 0.94)
+            : NSColor(white: 1.0, alpha: 0.62)
+    }
     
     private let iconColor = NSColor.white
     private let labelColor = NSColor(white: 0.9, alpha: 1.0)
+    private var centerHoverLabelColor: NSColor {
+        windowBaseAlpha <= 0.02
+            ? NSColor.white
+            : NSColor(calibratedWhite: 0.99, alpha: 1.0)
+    }
     
     // Store the base window alpha to know what to revert to when un-hovering
     var windowBaseAlpha: CGFloat = 0.25
+    var isGTAModeEnabled: Bool = true
+    
+    private var baseSectorOpacity: Float { Float(windowBaseAlpha) }
+    private var baseIconOpacity: Float { Float(windowBaseAlpha) * 0.85 }
+    private var baseLabelOpacity: Float { Float(windowBaseAlpha) }
+    private var centerCoreOpacity: Float { Float(windowBaseAlpha) }
+    private var centerTextOpacity: Float { Float(windowBaseAlpha) }
+    private var activeSectorOpacity: Float { min(1.0, Float(windowBaseAlpha) + 0.38) }
+    private var activeIconOpacity: Float { min(1.0, Float(windowBaseAlpha) + 0.5) }
+    private var activeCenterTitleOpacity: Float { max(0.92, min(1.0, Float(windowBaseAlpha) + 0.55)) }
+    private var activeCenterSubtitleOpacity: Float {
+        guard isGTAModeEnabled else { return activeCenterTitleOpacity }
+        return max(0.82, min(1.0, Float(windowBaseAlpha) + 0.48))
+    }
     
     // MARK: - Init
     
@@ -183,32 +234,38 @@ final class RadialMenuView: NSView {
             labelLayers.forEach { $0.isHidden = true }
             centerCircleLayer?.isHidden = true
             centerLabel?.isHidden = true
+            centerSubtitleLabel?.isHidden = true
+            centerLabelText = "OpenFire"
+            centerLabelColor = .white
+            centerSubtitleText = "HOLD AND RELEASE"
+            centerSubtitleColor = NSColor(white: 1.0, alpha: 0.42)
             return
         }
         
         // Unhide global elements
         centerCircleLayer?.isHidden = false
         centerLabel?.isHidden = false
+        centerSubtitleLabel?.isHidden = false
         
         let center = visualCenter
         let itemCount = menuItems.count
         let totalGap = gapAngle * CGFloat(itemCount)
         let availableAngle = 2 * .pi - totalGap
         let sectorAngle = availableAngle / CGFloat(itemCount)
+        let geometrySignature = GeometrySignature(itemCount: itemCount, center: center, boundsSize: bounds.size)
+        let needsGeometryRebuild = lastGeometrySignature != geometrySignature
         // Start from top (π/2) and go clockwise
         var startAngle = CGFloat.pi / 2
         
-        // Pre-calculate hit test bounds array for ultra-fast 120Hz swiping
-        hitTestBounds.removeAll()
-        var currentStartAngle = CGFloat.pi / 2
-        for _ in 0..<itemCount {
-            let currentEnd = currentStartAngle - sectorAngle
-            
-            // To make hitTest simpler, we normalize these specific drawing angles 
-            // into the 0...2π range where 0 is the top (π/2 in standard trig).
-            // Actually, best to just store the raw Trig angles and do a clean rotation in hitTest
-            hitTestBounds.append((start: currentStartAngle, end: currentEnd))
-            currentStartAngle = currentEnd - gapAngle
+        if needsGeometryRebuild {
+            // Pre-calculate hit test bounds array for ultra-fast 120Hz swiping
+            hitTestBounds.removeAll(keepingCapacity: true)
+            var currentStartAngle = CGFloat.pi / 2
+            for _ in 0..<itemCount {
+                let currentEnd = currentStartAngle - sectorAngle
+                hitTestBounds.append((start: currentStartAngle, end: currentEnd))
+                currentStartAngle = currentEnd - gapAngle
+            }
         }
         
         // Ensure arrays are large enough (pooling)
@@ -217,27 +274,31 @@ final class RadialMenuView: NSView {
             glowLayer.fillColor = NSColor.clear.cgColor
             glowLayer.strokeColor = NSColor.clear.cgColor
             glowLayer.shadowColor = glowColor.cgColor
-            glowLayer.shadowRadius = 0
+            glowLayer.shadowRadius = hoverGlowRadius
             glowLayer.shadowOpacity = 0
             glowLayer.shadowOffset = .zero
+            glowLayer.shouldRasterize = true
+            glowLayer.rasterizationScale = NSScreen.main?.backingScaleFactor ?? 2.0
             layer?.addSublayer(glowLayer)
             glowLayers.append(glowLayer)
             
             let sectorLayer = CAShapeLayer()
             sectorLayer.fillColor = sectorColor.cgColor
             sectorLayer.strokeColor = borderColor.cgColor
-            sectorLayer.lineWidth = 0.5
-            sectorLayer.opacity = Float(self.windowBaseAlpha) // Added opacity
+            sectorLayer.lineWidth = 1.0
+            sectorLayer.opacity = baseSectorOpacity
+            sectorLayer.shouldRasterize = true
+            sectorLayer.rasterizationScale = NSScreen.main?.backingScaleFactor ?? 2.0
             layer?.addSublayer(sectorLayer)
             sectorLayers.append(sectorLayer)
             
             let iconLayer = CALayer()
             iconLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
             iconLayer.shadowColor = NSColor.black.cgColor
-            iconLayer.shadowRadius = 2
-            iconLayer.shadowOpacity = 0.6
-            iconLayer.shadowOffset = CGSize(width: 0, height: -1)
-            iconLayer.opacity = Float(self.windowBaseAlpha) * 0.85 // Added opacity
+            iconLayer.shadowRadius = 5
+            iconLayer.shadowOpacity = 0.9
+            iconLayer.shadowOffset = .zero
+            iconLayer.opacity = baseIconOpacity
             // Rasterize icon layers so their dynamic alpha mask shadows don't recalculate on every 1.15x scale animation tick
             iconLayer.shouldRasterize = true
             iconLayer.rasterizationScale = NSScreen.main?.backingScaleFactor ?? 2.0
@@ -245,13 +306,14 @@ final class RadialMenuView: NSView {
             iconLayers.append(iconLayer)
             
             let label = CATextLayer()
-            label.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-            label.fontSize = 13
+            label.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .bold)
+            label.fontSize = 10
             label.alignmentMode = .center
             label.anchorPoint = CGPoint(x: 0.5, y: 0.5)
             label.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
-            label.foregroundColor = NSColor.white.withAlphaComponent(0.4).cgColor
-            label.opacity = Float(self.windowBaseAlpha)
+            label.foregroundColor = NSColor.white.withAlphaComponent(0.28).cgColor
+            label.opacity = baseLabelOpacity
+            label.isWrapped = false
             layer?.addSublayer(label)
             labelLayers.append(label)
         }
@@ -264,7 +326,7 @@ final class RadialMenuView: NSView {
             labelLayers[i].isHidden = true
         }
         
-        let combinedMaskPath = CGMutablePath()
+        let combinedMaskPath = needsGeometryRebuild ? CGMutablePath() : nil
         
         for (index, item) in menuItems.enumerated() {
             let endAngle = startAngle - sectorAngle
@@ -291,79 +353,74 @@ final class RadialMenuView: NSView {
             // Re-apply base styles (in case it was left in hover state)
             sectorLayer.fillColor = sectorColor.cgColor
             sectorLayer.strokeColor = borderColor.cgColor
-            sectorLayer.lineWidth = 0.5
-            sectorLayer.opacity = Float(self.windowBaseAlpha) * executableMultiplier
+            sectorLayer.lineWidth = 1.0
+            sectorLayer.opacity = baseSectorOpacity * executableMultiplier
             
             // Reset Glow
-            glowLayer.shadowRadius = 0
             glowLayer.shadowOpacity = 0
             glowLayer.fillColor = NSColor.clear.cgColor
             
             // Reset Icon
             iconLayer.setValue(1.0, forKeyPath: "transform.scale")
-            iconLayer.shadowRadius = 2
-            iconLayer.shadowOpacity = 0.6
+            iconLayer.shadowRadius = 5
+            iconLayer.shadowOpacity = 0.9
             iconLayer.shadowColor = NSColor.black.cgColor
-            iconLayer.opacity = Float(self.windowBaseAlpha) * 0.85 * executableMultiplier
+            iconLayer.opacity = baseIconOpacity * executableMultiplier
             
-            labelLayer.opacity = Float(self.windowBaseAlpha) * executableMultiplier
+            labelLayer.opacity = baseLabelOpacity * executableMultiplier
             
             // Update Paths
-            let sectorPath = createSectorPath(
-                center: center,
-                innerRadius: innerRadius,
-                outerRadius: outerRadius,
-                startAngle: startAngle,
-                endAngle: endAngle
-            )
-            sectorLayer.path = sectorPath.cgPath
-            
-            // Add to combined mask for the glass effect background
-            combinedMaskPath.addPath(sectorPath.cgPath)
-            
-            let glowPath = createSectorPath(
-                center: center,
-                innerRadius: innerRadius - 3,
-                outerRadius: outerRadius + 5,
-                startAngle: startAngle + 0.01,
-                endAngle: endAngle - 0.01
-            )
-            glowLayer.path = glowPath.cgPath
-            glowLayer.shadowPath = glowPath.cgPath // Fixes CA drop-shadow blur stutter
-            
-            // Update Icon
             let midAngle = (startAngle + endAngle) / 2
             
-            // Push the icon slightly outward to make room for the inner label
-            let iconRadius = (innerRadius + outerRadius) / 2 + 8
-            let iconCenter = NSPoint(
-                x: center.x + iconRadius * cos(midAngle),
-                y: center.y + iconRadius * sin(midAngle)
-            )
+            if needsGeometryRebuild {
+                let sectorPath = createSectorPath(
+                    center: center,
+                    innerRadius: innerRadius,
+                    outerRadius: outerRadius,
+                    startAngle: startAngle,
+                    endAngle: endAngle
+                )
+                sectorLayer.path = sectorPath.cgPath
+                combinedMaskPath?.addPath(sectorPath.cgPath)
+                
+                let glowPath = createSectorPath(
+                    center: center,
+                    innerRadius: innerRadius - 3,
+                    outerRadius: outerRadius + 5,
+                    startAngle: startAngle + 0.01,
+                    endAngle: endAngle - 0.01
+                )
+                glowLayer.path = glowPath.cgPath
+                glowLayer.shadowPath = glowPath.cgPath // Fixes CA drop-shadow blur stutter
+                
+                // Icons are the main visual anchor, closer to the center of each slot.
+                let iconRadius = (innerRadius + outerRadius) / 2 + 2
+                let iconCenter = NSPoint(
+                    x: center.x + iconRadius * cos(midAngle),
+                    y: center.y + iconRadius * sin(midAngle)
+                )
+                
+                iconLayer.frame = CGRect(
+                    x: iconCenter.x - iconSize / 2,
+                    y: iconCenter.y - iconSize / 2,
+                    width: iconSize,
+                    height: iconSize
+                )
+                
+                // Slot number reads like a subtle HUD tag near the core.
+                let labelRadius = innerRadius + 7
+                let labelCenter = NSPoint(
+                    x: center.x + labelRadius * cos(midAngle),
+                    y: center.y + labelRadius * sin(midAngle)
+                )
+                
+                labelLayer.bounds = CGRect(x: 0, y: 0, width: 28, height: 12)
+                labelLayer.position = labelCenter
+                labelLayer.transform = CATransform3DMakeRotation(midAngle - .pi / 2, 0, 0, 1)
+            }
             
-            iconLayer.frame = CGRect(
-                x: iconCenter.x - iconSize / 2,
-                y: iconCenter.y - iconSize / 2,
-                width: iconSize,
-                height: iconSize
-            )
-            
-            // Update Number Label to be exactly against the inside edge, shifted inward
-            let labelRadius = innerRadius + 12
-            let labelCenter = NSPoint(
-                x: center.x + labelRadius * cos(midAngle),
-                y: center.y + labelRadius * sin(midAngle)
-            )
-            
-            labelLayer.string = "\(index + 1)"
-            
-            // Set frame size
-            labelLayer.bounds = CGRect(x: 0, y: 0, width: 20, height: 16)
-            // Position using anchorPoint (0.5, 0.5)
-            labelLayer.position = labelCenter
-            
-            // Rotate the text so it aligns radially (bottom of text points to center)
-            labelLayer.transform = CATransform3DMakeRotation(midAngle - .pi / 2, 0, 0, 1)
+            labelLayer.string = String(format: "%02d", index + 1)
+            labelLayer.foregroundColor = NSColor.white.withAlphaComponent(item.isExecutable ? 0.28 : 0.16).cgColor
             
             if let customIcon = item.customIcon {
                 iconLayer.contents = customIcon
@@ -372,8 +429,8 @@ final class RadialMenuView: NSView {
                 // Add a bright white glow shadow so black custom PNGs remain visible
                 // without destroying full-color App Icons
                 iconLayer.shadowColor = NSColor.white.cgColor
-                iconLayer.shadowRadius = 3
-                iconLayer.shadowOpacity = 0.8
+                iconLayer.shadowRadius = 6
+                iconLayer.shadowOpacity = 0.9
                 iconLayer.shadowOffset = .zero
             } else {
                 let cacheKey = item.iconName
@@ -404,79 +461,120 @@ final class RadialMenuView: NSView {
         // Draw or Update center core
         if centerCircleLayer == nil {
             let cc = CAShapeLayer()
-            // Make the center core completely transparent
             cc.fillColor = NSColor.clear.cgColor
-            // Keep a subtle border for shape definition
-            cc.strokeColor = NSColor(calibratedRed: 0.1, green: 0.6, blue: 0.9, alpha: 0.3).cgColor
+            cc.strokeColor = NSColor.clear.cgColor
             cc.lineWidth = 1.0
-            
-            // Remove heavy shadow from the center core
+            cc.shadowColor = NSColor.black.cgColor
             cc.shadowRadius = 0
             cc.shadowOpacity = 0
-            cc.opacity = Float(self.windowBaseAlpha)
+            cc.shadowOffset = .zero
+            cc.opacity = centerCoreOpacity
             layer?.addSublayer(cc)
             centerCircleLayer = cc
         }
+        centerCircleLayer?.fillColor = (isGTAModeEnabled ? NSColor(calibratedWhite: 0.04, alpha: 0.92) : NSColor(calibratedWhite: 0.08, alpha: 0.32)).cgColor
+        centerCircleLayer?.strokeColor = (isGTAModeEnabled ? NSColor(calibratedWhite: 1.0, alpha: 0.16) : NSColor(calibratedWhite: 1.0, alpha: 0.10)).cgColor
+        centerCircleLayer?.shadowRadius = isGTAModeEnabled ? 18 : 6
+        centerCircleLayer?.shadowOpacity = isGTAModeEnabled ? 0.45 : 0.12
         
-        let circleEdge: CGFloat = 4 // Very tight gap
-        let circlePath = NSBezierPath(ovalIn: CGRect(
-            x: center.x - innerRadius + circleEdge,
-            y: center.y - innerRadius + circleEdge,
-            width: (innerRadius - circleEdge) * 2,
-            height: (innerRadius - circleEdge) * 2
-        ))
-        centerCircleLayer?.path = circlePath.cgPath
-        centerCircleLayer?.shadowPath = circlePath.cgPath // Precompute core shadow to prevent lag
+        var circlePath: NSBezierPath?
+        if needsGeometryRebuild {
+            let circleEdge: CGFloat = centerCoreInset
+            circlePath = NSBezierPath(ovalIn: CGRect(
+                x: center.x - innerRadius + circleEdge,
+                y: center.y - innerRadius + circleEdge,
+                width: (innerRadius - circleEdge) * 2,
+                height: (innerRadius - circleEdge) * 2
+            ))
+            centerCircleLayer?.path = circlePath?.cgPath
+            centerCircleLayer?.shadowPath = circlePath?.cgPath // Precompute core shadow to prevent lag
+        }
         
         // Label
         if centerLabel == nil {
             let cl = CATextLayer()
-            cl.fontSize = 13 // Slightly larger for readability
-            cl.font = NSFont.systemFont(ofSize: 13, weight: .bold) // Bold stands out more
+            cl.fontSize = 15
+            cl.font = NSFont.systemFont(ofSize: 15, weight: .heavy)
             cl.foregroundColor = NSColor.white.cgColor
             cl.alignmentMode = .center
             cl.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
             cl.isWrapped = true
             cl.truncationMode = .end
-            cl.opacity = Float(self.windowBaseAlpha)
+            cl.opacity = centerTextOpacity
             
             // Add a strong drop shadow so text is readable against bright backgrounds
             cl.shadowColor = NSColor.black.cgColor
-            cl.shadowRadius = 3.0
-            cl.shadowOpacity = 0.9
-            cl.shadowOffset = CGSize(width: 0, height: -1)
+            cl.shadowRadius = 8.0
+            cl.shadowOpacity = 0.95
+            cl.shadowOffset = .zero
             
             layer?.addSublayer(cl)
             centerLabel = cl
         }
         
-        let labelEdge: CGFloat = 4
-        centerLabel?.frame = CGRect(
-            x: center.x - innerRadius + labelEdge,
-            y: center.y - 18,
-            width: (innerRadius - labelEdge) * 2,
-            height: 28
-        )
-        centerLabel?.string = "OpenFire"
-        
-        // Add center core to the combined mask
-        combinedMaskPath.addPath(circlePath.cgPath)
-        
-        // Apply the exact mask to the underlying visual effect view
-        if let visualEffectView = self.superview?.subviews.first(where: { $0 is NSVisualEffectView }) as? NSVisualEffectView {
-            let maskLayer = CAShapeLayer()
-            // The combined path is calculated in the coordinate space of RadialMenuView (centered at visualCenter).
-            // We need to translate it to the coordinate space of the visualEffectView
-            // However, RadialMenuWindow sets radialMenuView.frame = cv.bounds and the visual center relative to that,
-            // while it sets visualEffectView.frame to be a tightly wrapped box around vCenter.
-            // Let's offset the path to match the visualEffectView coordinate space.
-            let radius = outerRadius + 15  // Same math as RadialMenuWindow
-            var transform = CGAffineTransform(translationX: -(visualCenter.x - radius), y: -(visualCenter.y - radius))
-            if let translatedPath = combinedMaskPath.copy(using: &transform) {
-                maskLayer.path = translatedPath
-            }
-            visualEffectView.layer?.mask = maskLayer
+        if centerSubtitleLabel == nil {
+            let subtitle = CATextLayer()
+            subtitle.fontSize = 10
+            subtitle.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
+            subtitle.foregroundColor = NSColor(white: 1.0, alpha: 0.42).cgColor
+            subtitle.alignmentMode = .center
+            subtitle.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+            subtitle.isWrapped = false
+            subtitle.opacity = centerTextOpacity
+            subtitle.truncationMode = .end
+            subtitle.shadowColor = NSColor.black.cgColor
+            subtitle.shadowRadius = 6.0
+            subtitle.shadowOpacity = 0.9
+            subtitle.shadowOffset = .zero
+            layer?.addSublayer(subtitle)
+            centerSubtitleLabel = subtitle
         }
+        
+        if needsGeometryRebuild {
+            let labelEdge: CGFloat = 4
+            centerLabel?.frame = CGRect(
+                x: center.x - innerRadius + labelEdge,
+                y: center.y - 20,
+                width: (innerRadius - labelEdge) * 2,
+                height: 36
+            )
+            centerSubtitleLabel?.frame = CGRect(
+                x: center.x - innerRadius + labelEdge,
+                y: center.y + 12,
+                width: (innerRadius - labelEdge) * 2,
+                height: 14
+            )
+        }
+        centerLabel?.string = "OpenFire"
+        centerLabel?.foregroundColor = NSColor.white.cgColor
+        centerLabel?.opacity = centerTextOpacity
+        centerLabelText = "OpenFire"
+        centerLabelColor = .white
+        centerSubtitleLabel?.string = isGTAModeEnabled ? "HOLD AND RELEASE" : ""
+        centerSubtitleLabel?.foregroundColor = NSColor(white: 1.0, alpha: isGTAModeEnabled ? 0.42 : 0.0).cgColor
+        centerSubtitleLabel?.opacity = centerTextOpacity
+        centerSubtitleText = isGTAModeEnabled ? "HOLD AND RELEASE" : ""
+        centerSubtitleColor = NSColor(white: 1.0, alpha: isGTAModeEnabled ? 0.42 : 0.0)
+        centerCircleLayer?.opacity = centerCoreOpacity
+        
+        if needsGeometryRebuild {
+            if let circlePath {
+                combinedMaskPath?.addPath(circlePath.cgPath)
+            }
+            
+            // Apply the exact mask to the underlying visual effect view
+            if let visualEffectView = self.superview?.subviews.first(where: { $0 is NSVisualEffectView }) as? NSVisualEffectView {
+                // The combined path is calculated in the coordinate space of RadialMenuView (centered at visualCenter).
+                let radius = outerRadius + 15  // Same math as RadialMenuWindow
+                var transform = CGAffineTransform(translationX: -(visualCenter.x - radius), y: -(visualCenter.y - radius))
+                if let translatedPath = combinedMaskPath?.copy(using: &transform) {
+                    visualEffectMaskLayer.path = translatedPath
+                }
+                visualEffectView.layer?.mask = visualEffectMaskLayer
+            }
+        }
+        
+        lastGeometrySignature = geometrySignature
     }
     
     // MARK: - Sector Path
@@ -518,17 +616,13 @@ final class RadialMenuView: NSView {
                 unhoverSector(at: hoveredIndex)
             }
             
-            // Play haptic tick when entering a new valid sector
-            if newIndex >= 0 && newIndex < sectorLayers.count {
-                NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
-            }
-            
             // Hover new
             if newIndex >= 0 && newIndex < sectorLayers.count {
                 hoverSector(at: newIndex)
             } else {
                 // Reset center label when not hovering any sector
-                updateCenterLabel(text: "OpenFire", color: NSColor(white: 0.5, alpha: 1.0))
+                updateCenterLabel(text: "OpenFire", color: .white)
+                updateCenterSubtitle(text: isGTAModeEnabled ? "HOLD AND RELEASE" : "", color: NSColor(white: 1.0, alpha: isGTAModeEnabled ? 0.42 : 0.0))
             }
             
             hoveredIndex = newIndex
@@ -541,7 +635,8 @@ final class RadialMenuView: NSView {
             unhoverSector(at: hoveredIndex)
         }
         hoveredIndex = -1
-        updateCenterLabel(text: "OpenFire", color: NSColor(white: 0.5, alpha: 1.0))
+        updateCenterLabel(text: "OpenFire", color: .white)
+        updateCenterSubtitle(text: isGTAModeEnabled ? "HOLD AND RELEASE" : "", color: NSColor(white: 1.0, alpha: isGTAModeEnabled ? 0.42 : 0.0))
     }
     
     override var acceptsFirstResponder: Bool { true }
@@ -580,10 +675,12 @@ final class RadialMenuView: NSView {
         
         let dx = point.x - trackingCenter.x
         let dy = point.y - trackingCenter.y
-        let distance = sqrt(dx * dx + dy * dy)
+        let distanceSquared = dx * dx + dy * dy
+        let dismissRadius = outerRadius + outsideDismissPadding
+        let deadzoneSquared = selectionDeadzoneRadius * selectionDeadzoneRadius
         
         // If they click far away, dismiss
-        if distance > outerRadius + 150 {
+        if distanceSquared > dismissRadius * dismissRadius {
             onDismissRequested?()
             return
         }
@@ -591,7 +688,7 @@ final class RadialMenuView: NSView {
         // Micro-deadzone for dismissal (if user releases exactly where they clicked)
         // Set to 10 points so a standard stationary click can still act as a cancel 
         // without ruining the swiping feel.
-        if distance < 10 {
+        if distanceSquared < deadzoneSquared {
             onDismissRequested?()
             return
         }
@@ -621,29 +718,27 @@ final class RadialMenuView: NSView {
         // 1. Sector Fill
         sector.fillColor = sectorHoverColor.cgColor
         
-        // 2. Sector Stroke (thicker and brighter for game feel)
         sector.strokeColor = borderHoverColor.cgColor
-        sector.lineWidth = 2.0
+        sector.lineWidth = isGTAModeEnabled ? 2.0 : 1.0
+
+        // Keep glow cheap: opacity/fill are much lighter than animating blur geometry.
+        glow.shadowOpacity = isGTAModeEnabled ? 1.0 : 0.55
+        glow.fillColor = glowColor.withAlphaComponent(isGTAModeEnabled ? 0.36 : 0.18).cgColor
         
-        // 3. Glow effect (intense neon)
-        glow.shadowRadius = 15
-        glow.shadowOpacity = 1.0
-        glow.shadowColor = glowColor.cgColor
-        glow.fillColor = glowColor.withAlphaComponent(0.25).cgColor
-        
-        // 4. Icon scale & opacity
-        icon.setValue(1.15, forKeyPath: "transform.scale")
-        icon.opacity = 1.0
-        sector.opacity = 1.0
-        label.opacity = 1.0
-        centerCircleLayer?.opacity = 1.0
-        centerLabel?.opacity = 1.0
+        icon.setValue(1.22, forKeyPath: "transform.scale")
+        icon.opacity = activeIconOpacity
+        sector.opacity = activeSectorOpacity
+        label.opacity = activeSectorOpacity
+        centerLabel?.opacity = activeCenterTitleOpacity
+        centerSubtitleLabel?.opacity = activeCenterSubtitleOpacity
         
         CATransaction.commit()
         
         // 5. Update center label with item title
         if index < menuItems.count {
-            updateCenterLabel(text: menuItems[index].title, color: NSColor(calibratedRed: 0.2, green: 0.8, blue: 1.0, alpha: 1.0))
+            let item = menuItems[index]
+            updateCenterLabel(text: item.title, color: centerHoverLabelColor)
+            updateCenterSubtitle(text: centerSubtitle(for: item, index: index), color: centerSubtitleColor(for: item))
         }
     }
     
@@ -660,27 +755,20 @@ final class RadialMenuView: NSView {
         // 1. Sector Fill
         sector.fillColor = sectorColor.cgColor
         
-        // 2. Sector Stroke
         sector.strokeColor = borderColor.cgColor
-        sector.lineWidth = 0.5
+        sector.lineWidth = 1.0
         
-        // 3. Remove Glow
-        glow.shadowRadius = 0
         glow.shadowOpacity = 0
         glow.fillColor = NSColor.clear.cgColor
         
-        // 4. Icon scale & opacity back
         icon.setValue(1.0, forKeyPath: "transform.scale")
-        icon.opacity = Float(self.windowBaseAlpha) * 0.85
-        sector.opacity = Float(self.windowBaseAlpha)
-        label.opacity = Float(self.windowBaseAlpha)
+        icon.opacity = baseIconOpacity
+        sector.opacity = baseSectorOpacity
+        label.opacity = baseLabelOpacity
+        centerLabel?.opacity = centerTextOpacity
+        centerSubtitleLabel?.opacity = centerTextOpacity
         
         CATransaction.commit()
-        
-        // 5. Restore center circle & label opacity unconditionally
-        // (If we immediately hover another sector, hoverSector will reset them to 1.0)
-        centerCircleLayer?.opacity = Float(self.windowBaseAlpha)
-        centerLabel?.opacity = Float(self.windowBaseAlpha)
     }
     
     private func flashSector(at index: Int, completion: @escaping () -> Void) {
@@ -688,7 +776,8 @@ final class RadialMenuView: NSView {
         
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.05)
-        sector.fillColor = NSColor(calibratedRed: 0.6, green: 0.8, blue: 1.0, alpha: 1.0).cgColor
+        sector.fillColor = NSColor(calibratedWhite: 1.0, alpha: 1.0).cgColor
+        sector.strokeColor = NSColor.white.cgColor
         CATransaction.commit()
         
         // Execute the action IMMEDIATELY for responsiveness. Do not rely on CATransaction 
@@ -705,6 +794,9 @@ final class RadialMenuView: NSView {
     
     private func updateCenterLabel(text: String, color: NSColor) {
         guard let cl = centerLabel else { return }
+        guard centerLabelText != text || centerLabelColor != color else { return }
+        centerLabelText = text
+        centerLabelColor = color
         
         // Disable implicit fade animation to make text change instantly
         // A cross-fade during fast swiping makes it feel choppy/laggy to the user
@@ -715,16 +807,61 @@ final class RadialMenuView: NSView {
         CATransaction.commit()
     }
     
+    private func updateCenterSubtitle(text: String, color: NSColor) {
+        guard let subtitle = centerSubtitleLabel else { return }
+        guard centerSubtitleText != text || centerSubtitleColor != color else { return }
+        centerSubtitleText = text
+        centerSubtitleColor = color
+        
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        subtitle.string = text
+        subtitle.foregroundColor = color.cgColor
+        CATransaction.commit()
+    }
+    
+    private func centerSubtitle(for item: RadialMenuItem, index: Int) -> String {
+        guard isGTAModeEnabled else { return "" }
+        let slot = String(format: "%02d", index + 1)
+        
+        switch item.action {
+        case .pageNext:
+            return "PAGE CONTROL"
+        case .pagePrev:
+            return "PAGE CONTROL"
+        default:
+            if !item.isExecutable {
+                return "SLOT \(slot)  LOCKED"
+            }
+            return "SLOT \(slot)  READY"
+        }
+    }
+    
+    private func centerSubtitleColor(for item: RadialMenuItem) -> NSColor {
+        guard isGTAModeEnabled else {
+            return NSColor(white: 1.0, alpha: 0.0)
+        }
+        switch item.action {
+        case .pageNext, .pagePrev:
+            return NSColor(white: 1.0, alpha: 0.5)
+        default:
+            return item.isExecutable
+                ? NSColor(white: 1.0, alpha: 0.65)
+                : NSColor(calibratedRed: 1.0, green: 0.82, blue: 0.82, alpha: 0.6)
+        }
+    }
+    
     // MARK: - Hit Testing
     
     private func hitTestSector(at point: NSPoint) -> Int {
         let center = trackingCenter
         let dx = point.x - center.x
         let dy = point.y - center.y
-        let distance = sqrt(dx * dx + dy * dy)
+        let distanceSquared = dx * dx + dy * dy
+        let deadzoneSquared = selectionDeadzoneRadius * selectionDeadzoneRadius
         // 10-point deadzone! Prevents normal stationary clicks from instantly selecting a sector,
         // while still feeling extremely responsive.
-        if distance <= 10 {
+        if distanceSquared <= deadzoneSquared {
             return -1
         }
         

@@ -69,4 +69,44 @@ final class PluginManagerTests: XCTestCase {
         // Note: the `isMatch` filtering on the text string happens *purely* in the UI to gray out matches
         // which we'll test in RadialMenuItemTests.
     }
+    
+    func testAvailablePluginsRespectsPluginFilters() {
+        let manager = PluginManager.shared
+        manager.plugins.removeAll()
+        
+        let matchingJSON = #"{"name":"Match","identifier":"com.test.match","action":{"type":"url","url":"https://example.com"},"icon":"star","order":1,"filter":{"regex":"^https://","apps":["com.apple.Safari"]}}"#
+        let nonMatchingJSON = #"{"name":"NoMatch","identifier":"com.test.nomatch","action":{"type":"url","url":"https://example.com"},"icon":"star","order":2,"filter":{"regex":"^[0-9]+$"}}"#
+        
+        let matchingConfig = try! JSONDecoder().decode(PluginConfig.self, from: Data(matchingJSON.utf8))
+        let nonMatchingConfig = try! JSONDecoder().decode(PluginConfig.self, from: Data(nonMatchingJSON.utf8))
+        
+        let matchingPlugin = Plugin(config: matchingConfig, directoryURL: URL(fileURLWithPath: ""))
+        let nonMatchingPlugin = Plugin(config: nonMatchingConfig, directoryURL: URL(fileURLWithPath: ""))
+        
+        manager.plugins = [matchingPlugin, nonMatchingPlugin]
+        
+        let available = manager.availablePlugins(for: "https://openai.com", appBundleID: "com.apple.Safari")
+        
+        XCTAssertEqual(available.map(\.id), ["com.test.match"])
+    }
+    
+    func testAvailablePluginsKeepsReservedOpenURLPlaceholder() {
+        let manager = PluginManager.shared
+        manager.plugins.removeAll()
+        
+        let openURLJSON = #"{"name":"Open URL","identifier":"com.openfire.open-url","action":{"type":"url","url":"{text}"},"icon":"link","order":70,"filter":{"minLength":5,"regex":"^(https?://|www\\.)[^ ]+"}}"#
+        let normalJSON = #"{"name":"Search","identifier":"com.test.search","action":{"type":"url","url":"https://example.com?q={text}"},"icon":"magnifyingglass","order":10}"#
+        
+        let openURLConfig = try! JSONDecoder().decode(PluginConfig.self, from: Data(openURLJSON.utf8))
+        let normalConfig = try! JSONDecoder().decode(PluginConfig.self, from: Data(normalJSON.utf8))
+        
+        manager.plugins = [
+            Plugin(config: normalConfig, directoryURL: URL(fileURLWithPath: "")),
+            Plugin(config: openURLConfig, directoryURL: URL(fileURLWithPath: ""))
+        ]
+        
+        let available = manager.availablePlugins(for: "plain text", appBundleID: nil)
+        
+        XCTAssertEqual(available.map(\.id), ["com.test.search", "com.openfire.open-url"])
+    }
 }

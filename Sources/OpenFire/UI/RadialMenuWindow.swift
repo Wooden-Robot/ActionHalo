@@ -2,8 +2,10 @@ import Cocoa
 
 /// A floating, borderless panel that hosts the radial menu
 final class RadialMenuWindow: NSPanel {
+    private static let wheelBackdropEnabledKey = "WheelBackdropEnabled"
     
     private let radialMenuView: RadialMenuView
+    private let backdropView = NSView(frame: .zero)
     
     var onItemSelected: ((RadialMenuItem) -> Void)?
     
@@ -12,6 +14,10 @@ final class RadialMenuWindow: NSPanel {
     private var currentPage: Int = 0
     private var currentSelectedText: String = ""
     private var currentScreenPoint: NSPoint = .zero
+    private var lastScreenFrame: NSRect = .zero
+    private let dismissDeadzoneRadius: CGFloat = 16
+    private let outsideDismissPadding: CGFloat = 90
+    private let compactWindowPadding: CGFloat = 28
     
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         radialMenuView = RadialMenuView(frame: .zero)
@@ -34,16 +40,29 @@ final class RadialMenuWindow: NSPanel {
         self.isReleasedWhenClosed = false
         self.acceptsMouseMovedEvents = true
         
+        backdropView.wantsLayer = true
+        backdropView.alphaValue = 0
+        let backdropLayer = CAGradientLayer()
+        backdropLayer.colors = [
+            NSColor(calibratedWhite: 0.02, alpha: 0.62).cgColor,
+            NSColor(calibratedWhite: 0.02, alpha: 0.42).cgColor,
+            NSColor(calibratedWhite: 0.02, alpha: 0.62).cgColor
+        ]
+        backdropLayer.locations = [0.0, 0.5, 1.0]
+        backdropLayer.startPoint = CGPoint(x: 0.5, y: 1.0)
+        backdropLayer.endPoint = CGPoint(x: 0.5, y: 0.0)
+        backdropView.layer = backdropLayer
+        
         // Forward item selection or handle pagination
         radialMenuView.onItemSelected = { [weak self] item in
             guard let self = self else { return }
             switch item.action {
             case .pageNext:
                 self.currentPage += 1
-                self.renderCurrentPage()
+                self.renderCurrentPage(allowCursorWarp: false)
             case .pagePrev:
                 self.currentPage -= 1
-                self.renderCurrentPage()
+                self.renderCurrentPage(allowCursorWarp: false)
             default:
                 self.onItemSelected?(item)
             }
@@ -65,27 +84,39 @@ final class RadialMenuWindow: NSPanel {
         self.currentPage = 0
         
         // Read opacity FIRST so views receive right alpha on creation
-        let targetAlpha = UserDefaults.standard.object(forKey: "ringOpacity") as? Double ?? 0.25
+        let backdropEnabled = UserDefaults.standard.object(forKey: Self.wheelBackdropEnabledKey) as? Bool ?? true
+        let targetAlpha = backdropEnabled ? 1.0 : (UserDefaults.standard.object(forKey: "ringOpacity") as? Double ?? 0.25)
         radialMenuView.windowBaseAlpha = CGFloat(targetAlpha)
+        radialMenuView.isGTAModeEnabled = backdropEnabled
+        let backdropTargetAlpha = backdropEnabled ? max(0.18, min(CGFloat(targetAlpha) * 1.9, 0.72)) : 0
         
         // Show with animation first time
         setupDismissMonitors()
-        alphaValue = 0
+        alphaValue = backdropEnabled ? 0 : 1
+        backdropView.alphaValue = 0
         orderFront(nil)
         
-        renderCurrentPage()
+        renderCurrentPage(allowCursorWarp: true)
         
         AnimationHelper.showAnimation(for: radialMenuView)
         
-        // The WINDOW itself fully fades in to 1.0, and the views inside manage their own transparency
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.3
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            self.animator().alphaValue = 1.0
-        })
+        if backdropEnabled {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.16
+                self.backdropView.animator().alphaValue = backdropTargetAlpha
+            })
+            
+            // Only fade the full-screen window in GTA mode; otherwise a full-screen panel fade
+            // can read as a brief flash even though the background is mostly transparent.
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.3
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                self.animator().alphaValue = 1.0
+            })
+        }
     }
     
-    private func renderCurrentPage() {
+    private func renderCurrentPage(allowCursorWarp: Bool) {
         NSAnimationContext.beginGrouping()
         NSAnimationContext.current.duration = 0.0
         
@@ -125,23 +156,53 @@ final class RadialMenuWindow: NSPanel {
         // Find screen
         let screen = NSScreen.screens.first(where: { $0.frame.contains(currentScreenPoint) }) ?? NSScreen.main
         guard let screenFrame = screen?.frame else { return }
+        let useFullscreenWindow = radialMenuView.isGTAModeEnabled
         
-        // Make the window cover the entire screen
-        self.setFrame(screenFrame, display: true)
+        let targetWindowFrame: NSRect
+        if useFullscreenWindow {
+            targetWindowFrame = screenFrame
+        } else {
+            let compactSize = NSSize(width: menuSize + compactWindowPadding * 2, height: menuSize + compactWindowPadding * 2)
+            var compactOrigin = NSPoint(
+                x: currentScreenPoint.x - radius - compactWindowPadding,
+                y: currentScreenPoint.y - radius - compactWindowPadding
+            )
+            compactOrigin.x = max(screenFrame.minX, min(compactOrigin.x, screenFrame.maxX - compactSize.width))
+            compactOrigin.y = max(screenFrame.minY, min(compactOrigin.y, screenFrame.maxY - compactSize.height))
+            targetWindowFrame = NSRect(origin: compactOrigin, size: compactSize)
+        }
         
-        let cv = contentView ?? NSView(frame: NSRect(origin: .zero, size: screenFrame.size))
-        cv.frame = NSRect(origin: .zero, size: screenFrame.size)
+        if lastScreenFrame != targetWindowFrame {
+            self.setFrame(targetWindowFrame, display: true)
+            lastScreenFrame = targetWindowFrame
+        }
+        
+        let windowContentSize = targetWindowFrame.size
+        let cv = contentView ?? NSView(frame: NSRect(origin: .zero, size: windowContentSize))
+        if cv.frame != NSRect(origin: .zero, size: windowContentSize) {
+            cv.frame = NSRect(origin: .zero, size: windowContentSize)
+        }
         cv.wantsLayer = true
-        
+        backdropView.frame = cv.bounds
+        (backdropView.layer as? CAGradientLayer)?.frame = backdropView.bounds
+        backdropView.isHidden = !useFullscreenWindow
+
         // Calculate tracking center (mouse position relative to the full window)
-        // convertPoint(fromScreen:) converts global coordinates to window base coordinates
-        let localScreenPoint = cv.convert(self.convertPoint(fromScreen: currentScreenPoint), from: nil)
+        let localScreenPoint: NSPoint
+        if useFullscreenWindow {
+            localScreenPoint = cv.convert(self.convertPoint(fromScreen: currentScreenPoint), from: nil)
+        } else {
+            localScreenPoint = NSPoint(
+                x: currentScreenPoint.x - targetWindowFrame.minX,
+                y: currentScreenPoint.y - targetWindowFrame.minY
+            )
+        }
 
         // Calculate visual center (clamped so the menu ring stays on screen)
         var vCenter = localScreenPoint
         let paddingHorizontal: CGFloat = 24
         let paddingBottom: CGFloat = 24
-        let paddingTop: CGFloat = 50
+        let paddingTop: CGFloat = useFullscreenWindow ? 50 : 24
         
         if vCenter.x - radius < paddingHorizontal { vCenter.x = paddingHorizontal + radius }
         if vCenter.x + radius > cv.bounds.width - paddingHorizontal { vCenter.x = cv.bounds.width - paddingHorizontal - radius }
@@ -151,11 +212,16 @@ final class RadialMenuWindow: NSPanel {
         // Check if we needed to clamp
         let didClamp = vCenter != localScreenPoint
         
-        if didClamp {
+        if didClamp && allowCursorWarp {
             // If the menu was clamped to stay on screen, warp the physical mouse cursor
             // to the new visual center. This ensures the cursor stays exactly in the 
             // middle of the radial menu, preserving the 1:1 aiming feel.
-            let newGlobalPoint = self.convertPoint(toScreen: cv.convert(vCenter, to: nil))
+            let newGlobalPoint: NSPoint
+            if useFullscreenWindow {
+                newGlobalPoint = self.convertPoint(toScreen: cv.convert(vCenter, to: nil))
+            } else {
+                newGlobalPoint = NSPoint(x: targetWindowFrame.minX + vCenter.x, y: targetWindowFrame.minY + vCenter.y)
+            }
             // CGWarpMouseCursorPosition uses standard flipped top-left CG coordinates
             let cgPoint = CGPoint(x: newGlobalPoint.x, y: screenFrame.minY + screenFrame.height - newGlobalPoint.y)
             CGWarpMouseCursorPosition(cgPoint)
@@ -174,23 +240,30 @@ final class RadialMenuWindow: NSPanel {
             rmLayer.position = vCenter
         }
         
+        if backdropView.superview == nil {
+            cv.addSubview(backdropView)
+        }
+        
         // Visual effect background for frosted glass look
         var visualEffect = cv.subviews.first(where: { $0 is NSVisualEffectView }) as? NSVisualEffectView
         let visualFrame = NSRect(x: vCenter.x - radius, y: vCenter.y - radius, width: menuSize, height: menuSize)
         
         if visualEffect == nil {
             visualEffect = NSVisualEffectView(frame: visualFrame)
-            visualEffect?.material = .hudWindow
+            visualEffect?.material = radialMenuView.isGTAModeEnabled ? .hudWindow : .popover
             visualEffect?.state = .active
-            visualEffect?.blendingMode = .behindWindow
+            visualEffect?.blendingMode = radialMenuView.isGTAModeEnabled ? .behindWindow : .withinWindow
             visualEffect?.wantsLayer = true
         } else {
             visualEffect?.frame = visualFrame
+            visualEffect?.material = radialMenuView.isGTAModeEnabled ? .hudWindow : .popover
+            visualEffect?.blendingMode = radialMenuView.isGTAModeEnabled ? .behindWindow : .withinWindow
         }
         
         visualEffect?.layer?.cornerRadius = radius
         visualEffect?.layer?.masksToBounds = true
         visualEffect?.alphaValue = radialMenuView.windowBaseAlpha
+        self.hasShadow = radialMenuView.isGTAModeEnabled
         
         // *The visual effect mask will now be dynamically applied by RadialMenuView.buildMenu()*
         
@@ -202,22 +275,35 @@ final class RadialMenuWindow: NSPanel {
             cv.addSubview(radialMenuView)
         }
         
-        self.contentView = cv
+        if self.contentView !== cv {
+            self.contentView = cv
+        }
         
         // Build the visual layers
         radialMenuView.buildMenu()
     }
     
     func hideMenu(completion: (() -> Void)? = nil) {
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.2
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            self.animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
-            self?.tearDownDismissMonitors()
-            self?.orderOut(nil)
+        if radialMenuView.isGTAModeEnabled {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.12
+                self.backdropView.animator().alphaValue = 0
+            })
+            
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.2
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                self.animator().alphaValue = 0
+            }, completionHandler: { [weak self] in
+                self?.tearDownDismissMonitors()
+                self?.orderOut(nil)
+                completion?()
+            })
+        } else {
+            tearDownDismissMonitors()
+            orderOut(nil)
             completion?()
-        })
+        }
     }
     
     // MARK: - Screen positioning
@@ -272,11 +358,13 @@ final class RadialMenuWindow: NSPanel {
         let center = radialMenuView.trackingCenter
         let dx = localPoint.x - center.x
         let dy = localPoint.y - center.y
-        let distance = sqrt(dx * dx + dy * dy)
+        let distanceSquared = dx * dx + dy * dy
+        let dismissRadius = radialMenuView.outerRadius + outsideDismissPadding
+        let deadzoneSquared = dismissDeadzoneRadius * dismissDeadzoneRadius
         
         // Click far away from tracking center -> dismiss
         // Also click in the absolute deadzone -> dismiss (matching the 10-point view deadzone)
-        if distance > radialMenuView.outerRadius + 150 || distance < 10 {
+        if distanceSquared > dismissRadius * dismissRadius || distanceSquared < deadzoneSquared {
             hideMenu()
         }
     }

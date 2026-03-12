@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0
+- 修复插件过滤未在管理层生效，避免不匹配插件占用菜单名额。
+- 修复 Accessibility 权限恢复后重复注册通知的问题。
+- 修复停止监听时未清理挂起观察器/任务的问题。
+- 改进复制兜底逻辑，完整恢复原有剪贴板内容。
+
+- Fix plugin filtering so non-matching plugins no longer consume menu slots.
+- Fix duplicate notification registration after Accessibility permission recovery.
+- Fix pending observer/task cleanup when stopping selection monitoring.
+- Preserve full clipboard contents when using the copy-based selection fallback.
+
 ## v0.1.2
 - 调整 Telegram 搜索插件图标为纸飞机。
 

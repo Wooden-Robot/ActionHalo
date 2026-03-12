@@ -66,6 +66,8 @@
 "0% (Opaque)" = "0% (Opaque)";
 "100% (Transparent)" = "100% (Transparent)";
 "Ring Opacity" = "Ring Opacity";
+"GTA Mode" = "GTA Mode";
+"✓ GTA Mode" = "✓ GTA Mode";
 "Menu Hotkey: %@" = "Menu Hotkey: %@";
 "Toggle Hotkey: %@" = "Toggle Hotkey: %@";
 "Quit OpenFire" = "Quit OpenFire";

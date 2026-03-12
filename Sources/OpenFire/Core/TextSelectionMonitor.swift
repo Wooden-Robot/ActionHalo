@@ -90,6 +90,8 @@ final class TextSelectionMonitor {
     func stopMonitoring() {
         guard isMonitoring else { return }
         
+        cleanupPendingTask()
+        
         if let eventTap = eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: false)
         }

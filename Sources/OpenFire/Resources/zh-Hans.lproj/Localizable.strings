@@ -66,6 +66,8 @@
 "0% (Opaque)" = "0% (不透明)";
 "100% (Transparent)" = "100% (全透明)";
 "Ring Opacity" = "圆环透明度";
+"GTA Mode" = "GTA 氛围";
+"✓ GTA Mode" = "✓ GTA 氛围";
 "Menu Hotkey: %@" = "菜单快捷键: %@";
 "Toggle Hotkey: %@" = "启用/禁用快捷键: %@";
 "Quit OpenFire" = "退出 OpenFire";

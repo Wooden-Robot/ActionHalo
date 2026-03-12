@@ -88,9 +88,8 @@ final class AccessibilityManager {
             usleep(50000) 
             
             let pasteboard = NSPasteboard.general
+            let snapshot = Self.capturePasteboardSnapshot(from: pasteboard)
             
-            // Save current pasteboard contents
-            let oldString = pasteboard.string(forType: .string)
             pasteboard.clearContents()
             
             // Simulate Cmd+C via CGEvent
@@ -112,12 +111,7 @@ final class AccessibilityManager {
             let newString = pasteboard.string(forType: .string)
             
             // Restore old content so we don't unexpectedly blow away the user's clipboard
-            if let old = oldString {
-                pasteboard.clearContents()
-                pasteboard.setString(old, forType: .string)
-            } else {
-                pasteboard.clearContents()
-            }
+            Self.restorePasteboardSnapshot(snapshot, to: pasteboard)
             
             let trimmed = newString?.trimmingCharacters(in: .whitespacesAndNewlines)
             let result = (trimmed?.isEmpty == false) ? trimmed : nil
@@ -126,6 +120,34 @@ final class AccessibilityManager {
                 completion(result)
             }
         }
+    }
+
+    private static func capturePasteboardSnapshot(from pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
+        (pasteboard.pasteboardItems ?? []).map { item in
+            var snapshot: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    snapshot[type] = data
+                }
+            }
+            return snapshot
+        }
+    }
+    
+    private static func restorePasteboardSnapshot(_ snapshot: [[NSPasteboard.PasteboardType: Data]], to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        
+        guard !snapshot.isEmpty else { return }
+        
+        let restoredItems = snapshot.map { itemSnapshot -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for (type, data) in itemSnapshot {
+                item.setData(data, forType: type)
+            }
+            return item
+        }
+        
+        pasteboard.writeObjects(restoredItems)
     }
     
     /// Check if the element at the specified screen coordinates is a text input field

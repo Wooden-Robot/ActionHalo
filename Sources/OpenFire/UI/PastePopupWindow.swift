@@ -1,72 +1,15 @@
 import Cocoa
 
-/// A button that changes its background color on hover
-final class HoverButton: NSButton {
-    
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        setup()
-    }
-    
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        setup()
-    }
-    
-    private func setup() {
-        self.isBordered = false
-        self.wantsLayer = true
-        self.layer?.cornerRadius = 8
-        self.layer?.backgroundColor = NSColor.clear.cgColor
-        
-        let trackingArea = NSTrackingArea(
-            rect: self.bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp, .activeAlways],
-            owner: self,
-            userInfo: nil
-        )
-        self.addTrackingArea(trackingArea)
-    }
-    
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea = self.trackingAreas.first {
-            self.removeTrackingArea(trackingArea)
-        }
-        let trackingArea = NSTrackingArea(
-            rect: self.bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp, .activeAlways],
-            owner: self,
-            userInfo: nil
-        )
-        self.addTrackingArea(trackingArea)
-    }
-    
-    override func mouseEntered(with event: NSEvent) {
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.1
-            self.layer?.backgroundColor = NSColor.textColor.withAlphaComponent(0.1).cgColor
-        }
-    }
-    
-    override func mouseExited(with event: NSEvent) {
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.1
-            self.layer?.backgroundColor = NSColor.clear.cgColor
-        }
-    }
-}
-
 /// A minimal, floating "Paste" popup that appears near the cursor
 final class PastePopupWindow: NSPanel {
     
     var onPasteClicked: (() -> Void)?
     var onClearClicked: (() -> Void)?
     
-    private let popupWidth: CGFloat = 120
-    private let popupHeight: CGFloat = 30
-    private var pasteButton: HoverButton!
-    private var clearButton: HoverButton!
+    private let popupWidth: CGFloat = 152
+    private let popupHeight: CGFloat = 36
+    private var pasteButton: CapsuleActionButton!
+    private var clearButton: CapsuleActionButton!
     
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(
@@ -92,46 +35,48 @@ final class PastePopupWindow: NSPanel {
     private func setupUI() {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: popupWidth, height: popupHeight))
         container.wantsLayer = true
-        container.layer?.cornerRadius = 15 // Capsule shape
+        container.layer?.cornerRadius = popupHeight / 2
         container.layer?.masksToBounds = true
-        
-        // Use a solid color instead of visual effect to guarantee visibility
-        container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+
+        container.layer?.backgroundColor = NSColor(calibratedWhite: 0.10, alpha: 0.92).cgColor
         container.layer?.borderWidth = 1
-        container.layer?.borderColor = NSColor.separatorColor.cgColor
+        container.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
         
         let stackView = NSStackView()
         stackView.orientation = .horizontal
-        stackView.spacing = 0
-        stackView.distribution = .fillProportionally
+        stackView.spacing = 6
+        stackView.distribution = .fillEqually
         
-        pasteButton = HoverButton()
+        pasteButton = CapsuleActionButton()
+        pasteButton.style = .accent
         pasteButton.title = "Paste".localized
-        pasteButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        pasteButton.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         pasteButton.target = self
         pasteButton.action = #selector(pasteAction)
+        pasteButton.imageHugsTitle = true
+        pasteButton.contentTintColor = NSColor(calibratedRed: 0.84, green: 0.94, blue: 1.0, alpha: 1.0)
         
         if let icon = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Paste") {
-            let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
+            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
             pasteButton.image = icon.withSymbolConfiguration(config)
-            pasteButton.imagePosition = .imageLeft
         }
-        
+
         let separator = NSView()
         separator.wantsLayer = true
-        separator.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        separator.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
         separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
         
-        clearButton = HoverButton()
+        clearButton = CapsuleActionButton()
+        clearButton.style = .destructive
         clearButton.title = "Clear".localized
-        clearButton.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        clearButton.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         clearButton.target = self
         clearButton.action = #selector(clearAction)
+        clearButton.imageHugsTitle = true
         
         if let icon = NSImage(systemSymbolName: "trash", accessibilityDescription: "Clear") {
-            let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
+            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
             clearButton.image = icon.withSymbolConfiguration(config)
-            clearButton.imagePosition = .imageLeft
         }
         
         stackView.addArrangedSubview(pasteButton)
@@ -142,12 +87,12 @@ final class PastePopupWindow: NSPanel {
         
         stackView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            stackView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            stackView.topAnchor.constraint(equalTo: container.topAnchor),
-            stackView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            separator.topAnchor.constraint(equalTo: stackView.topAnchor, constant: 4),
-            separator.bottomAnchor.constraint(equalTo: stackView.bottomAnchor, constant: -4)
+            stackView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
+            stackView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
+            stackView.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
+            stackView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -4),
+            separator.topAnchor.constraint(equalTo: stackView.topAnchor, constant: 3),
+            separator.bottomAnchor.constraint(equalTo: stackView.bottomAnchor, constant: -3)
         ])
         
         self.contentView = container
