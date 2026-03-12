@@ -31,6 +31,27 @@
 "OpenFire has resumed working." = "OpenFire has resumed working.";
 "OK" = "OK";
 
+/* UpdateChecker */
+"New Version Available" = "New Version Available";
+"A newer version (%@) is available. You are using %@." = "A newer version (%@) is available. You are using %@.";
+"Download Update" = "Download Update";
+"Later" = "Later";
+"Check for Updates..." = "Check for Updates...";
+"Up to Date" = "Up to Date";
+"You're running the latest version (%@)." = "You're running the latest version (%@).";
+"Update Check Failed" = "Update Check Failed";
+"No data received." = "No data received.";
+"Failed to parse update information." = "Failed to parse update information.";
+"No Internet Connection" = "No Internet Connection";
+"Request Timed Out" = "Request Timed Out";
+"Server Not Found" = "Server Not Found";
+"Unable to Connect to Server" = "Unable to Connect to Server";
+"Network Connection Lost" = "Network Connection Lost";
+"DNS Lookup Failed" = "DNS Lookup Failed";
+"Retry" = "Retry";
+"Auto Check Updates" = "Auto Check Updates";
+"✓ Auto Check Updates" = "✓ Auto Check Updates";
+
 /* StatusBarController */
 "✓ Launch at Login" = "✓ Launch at Login";
 "Launch at Login" = "Launch at Login";

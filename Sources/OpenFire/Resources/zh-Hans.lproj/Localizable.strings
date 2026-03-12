@@ -31,6 +31,27 @@
 "OpenFire has resumed working." = "OpenFire 已重新开始工作。";
 "OK" = "确定";
 
+/* UpdateChecker */
+"New Version Available" = "发现新版本";
+"A newer version (%@) is available. You are using %@." = "有新版本（%@），当前版本为 %@。";
+"Download Update" = "立即下载";
+"Later" = "稍后";
+"Check for Updates..." = "检查更新...";
+"Up to Date" = "已是最新版本";
+"You're running the latest version (%@)." = "当前已是最新版本（%@）。";
+"Update Check Failed" = "检查更新失败";
+"No data received." = "未收到数据。";
+"Failed to parse update information." = "解析更新信息失败。";
+"No Internet Connection" = "网络未连接。";
+"Request Timed Out" = "请求超时。";
+"Server Not Found" = "无法找到服务器。";
+"Unable to Connect to Server" = "无法连接到服务器。";
+"Network Connection Lost" = "网络连接已断开。";
+"DNS Lookup Failed" = "DNS 解析失败。";
+"Retry" = "重试";
+"Auto Check Updates" = "自动检查更新";
+"✓ Auto Check Updates" = "✓ 自动检查更新";
+
 /* StatusBarController */
 "✓ Launch at Login" = "✓ 开机自动启动";
 "Launch at Login" = "开机自动启动";

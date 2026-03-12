@@ -58,6 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBarController.onEnabledChanged = { [weak self] enabled in
             self?.setEnabled(enabled)
         }
+
+        // Check for updates in the background after the UI is ready.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if UpdateChecker.shared.isAutoCheckEnabled() {
+                UpdateChecker.shared.checkForUpdates()
+            }
+        }
         
         // Check accessibility permission
         if !AccessibilityManager.shared.ensureAccessibilityPermission() {

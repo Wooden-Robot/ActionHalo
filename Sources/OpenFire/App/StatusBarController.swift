@@ -57,6 +57,14 @@ final class StatusBarController: NSObject {
         launchItem.target = self
         menu.addItem(launchItem)
         menu.addItem(NSMenuItem.separator())
+
+        // Auto Check Updates toggle (placed below Launch at Login)
+        let autoCheckEnabled = UpdateChecker.shared.isAutoCheckEnabled()
+        let autoCheckTitle = autoCheckEnabled ? "✓ Auto Check Updates".localized : "Auto Check Updates".localized
+        let autoCheckItem = NSMenuItem(title: autoCheckTitle, action: #selector(toggleAutoCheckUpdates), keyEquivalent: "")
+        autoCheckItem.target = self
+        menu.addItem(autoCheckItem)
+        menu.addItem(NSMenuItem.separator())
         
         // Enable/Disable
         let toggleItem = NSMenuItem(
@@ -188,6 +196,11 @@ final class StatusBarController: NSObject {
         toggleHotkeyItem.target = self
         menu.addItem(toggleHotkeyItem)
         
+        // Check for Updates
+        let checkUpdatesItem = NSMenuItem(title: "Check for Updates...".localized, action: #selector(checkForUpdates), keyEquivalent: "")
+        checkUpdatesItem.target = self
+        menu.addItem(checkUpdatesItem)
+        
         menu.addItem(NSMenuItem.separator())
         
         // Quit
@@ -260,6 +273,17 @@ final class StatusBarController: NSObject {
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
         }
+    }
+
+    @objc private func checkForUpdates() {
+        UpdateChecker.shared.checkForUpdates(showUpToDate: true, showErrors: true)
+    }
+
+    @objc private func toggleAutoCheckUpdates() {
+        let defaults = UserDefaults.standard
+        let enabled = UpdateChecker.shared.isAutoCheckEnabled()
+        defaults.set(!enabled, forKey: UpdateChecker.autoCheckEnabledKey)
+        rebuildMenu()
     }
     
     @objc private func openPluginsFolder() {
