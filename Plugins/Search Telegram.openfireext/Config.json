@@ -2,7 +2,7 @@
   "identifier": "com.openfire.plugin.search-telegram",
   "name": "Search in Telegram",
   "description": "Search the selected text in Telegram",
-  "icon": "magnifyingglass",
+  "icon": "paperplane",
   "isDefaultDisabled": true,
   "action": {
     "type": "applescript",

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.2
+- 调整 Telegram 搜索插件图标为纸飞机。
+
+- Update Telegram search plugin icon to a paper plane.
+
 ## v0.1.1
 - 修复更新检查请求指向错误仓库导致的解析失败问题。
 - 当服务器响应非 200 时给出更明确的错误提示。
