@@ -116,6 +116,12 @@ For `shell-script` and `applescript`, you can write the short code block directl
 
 ---
 
+## 📒 Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
+---
+
 ## 📄 License
 
 OpenFire is released under the [MIT License](LICENSE).

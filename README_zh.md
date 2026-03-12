@@ -100,6 +100,12 @@ OpenFire 内置了功能完善的**可视化插件编辑器**，无需再手动�
 
 ---
 
+## 📒 更新日志
+
+请查看 [CHANGELOG.md](CHANGELOG.md)。
+
+---
+
 ## 📄 开源协议
 
 OpenFire 采用 [MIT License](LICENSE) 协议开源。
