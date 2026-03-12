@@ -17,6 +17,7 @@ final class TextSelectionMonitor {
     // AXObserver state for robust text selection detection
     private var currentObserver: AXObserver?
     private var observerRunLoopSource: CFRunLoopSource?
+    private var observedElement: AXUIElement?
     private var observationTimeout: DispatchWorkItem?
     
     // Polling fallback state for non-standard apps (e.g. Telegram, Electron apps)
@@ -194,6 +195,7 @@ final class TextSelectionMonitor {
         
         self.currentObserver = observer
         self.observerRunLoopSource = AXObserverGetRunLoopSource(observer)
+        self.observedElement = focusedElement
         
         if let source = self.observerRunLoopSource {
             CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
@@ -264,12 +266,16 @@ final class TextSelectionMonitor {
         observationTimeout?.cancel()
         observationTimeout = nil
         
-        guard currentObserver != nil else { return }
+        guard let observer = currentObserver else { return }
+        if let element = observedElement {
+            AXObserverRemoveNotification(observer, element, kAXSelectedTextChangedNotification as CFString)
+        }
         if let source = observerRunLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
         
         currentObserver = nil
+        observedElement = nil
         observerRunLoopSource = nil
     }
     

@@ -15,7 +15,7 @@ final class ActionExecutor {
         case .cut:
             simulateKeyCombo(key: .x, modifiers: .maskCommand)
         case .paste:
-            simulateKeyCombo(key: .p, modifiers: .maskCommand)
+            simulateKeyCombo(key: .v, modifiers: .maskCommand)
         case .search:
             searchGoogle(text)
         case .translate:

@@ -449,11 +449,11 @@ final class PluginManager {
         }
         
         // Map key string to virtual key code
-        let keyCode = keyCodeForString(keyString)
+        guard let keyCode = keyCodeForString(keyString) else { return }
         ActionExecutor.shared.simulateKeyCombo(key: keyCode, modifiers: modifierFlags)
     }
     
-    private func keyCodeForString(_ key: String) -> CGKeyCode {
+    private func keyCodeForString(_ key: String) -> CGKeyCode? {
         let mapping: [String: CGKeyCode] = [
             "a": 0x00, "b": 0x0B, "c": 0x08, "d": 0x02, "e": 0x0E,
             "f": 0x03, "g": 0x05, "h": 0x04, "i": 0x22, "j": 0x26,
@@ -476,7 +476,7 @@ final class PluginManager {
         }
         
         NSLog("[OpenFire] Warning: Could not find virtual key code mapping for string '\(key)'")
-        return 0x00 // Default fallback to 'A'
+        return nil
     }
     
     // MARK: - Plugin Installation
