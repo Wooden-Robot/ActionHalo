@@ -11,6 +11,7 @@ final class StatusBarController: NSObject {
     private var pluginListView: PluginListMenuView?
     private var excludeAppItem: NSMenuItem?
     private var blacklistWindow: BlacklistWindow?
+    private var diagnosticsWindow: DiagnosticsWindow?
     
     var onEnabledChanged: ((Bool) -> Void)?
     
@@ -91,6 +92,10 @@ final class StatusBarController: NSObject {
         let manageExcludeItem = NSMenuItem(title: "Manage Disabled Apps...".localized, action: #selector(openBlacklistWindow), keyEquivalent: "")
         manageExcludeItem.target = self
         menu.addItem(manageExcludeItem)
+
+        let diagnosticsItem = NSMenuItem(title: "Diagnostics...".localized, action: #selector(openDiagnosticsWindow), keyEquivalent: "")
+        diagnosticsItem.target = self
+        menu.addItem(diagnosticsItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -438,6 +443,14 @@ final class StatusBarController: NSObject {
             blacklistWindow = BlacklistWindow()
         }
         blacklistWindow?.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func openDiagnosticsWindow() {
+        if diagnosticsWindow == nil {
+            diagnosticsWindow = DiagnosticsWindow()
+        }
+        diagnosticsWindow?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 

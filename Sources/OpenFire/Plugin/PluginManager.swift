@@ -134,20 +134,11 @@ final class PluginManager {
     
     /// Get plugins that should be shown for the given text and app context
     func availablePlugins(for text: String, appBundleID: String?) -> [Plugin] {
-        let filtered = plugins.filter(\.isEnabled)
-        
-        // Use UserDefaults custom order if available
-        let savedOrder = UserDefaults.standard.stringArray(forKey: "pluginOrder") ?? []
-        if !savedOrder.isEmpty {
-            return filtered.sorted { a, b in
-                let indexA = savedOrder.firstIndex(of: a.id) ?? Int.max
-                let indexB = savedOrder.firstIndex(of: b.id) ?? Int.max
-                return indexA < indexB
-            }
-        }
-        
-        // Fallback to config order
-        return filtered.sorted { $0.order < $1.order }
+        orderedPlugins().filter(\.isEnabled)
+    }
+
+    func visibilityDiagnostics(for text: String, appBundleID: String?) -> [PluginVisibilityDiagnostic] {
+        orderedPlugins().map { $0.visibilityDiagnostic(text: text, appBundleID: appBundleID) }
     }
     
     // MARK: - Plugin State
@@ -246,6 +237,19 @@ final class PluginManager {
                 plugin.isEnabled = !disabledPlugins.contains(plugin.id)
             }
         }
+    }
+
+    private func orderedPlugins() -> [Plugin] {
+        let savedOrder = UserDefaults.standard.stringArray(forKey: "pluginOrder") ?? []
+        if !savedOrder.isEmpty {
+            return plugins.sorted { a, b in
+                let indexA = savedOrder.firstIndex(of: a.id) ?? Int.max
+                let indexB = savedOrder.firstIndex(of: b.id) ?? Int.max
+                return indexA < indexB
+            }
+        }
+
+        return plugins.sorted { $0.order < $1.order }
     }
     
     func deletePlugin(_ plugin: Plugin) throws {

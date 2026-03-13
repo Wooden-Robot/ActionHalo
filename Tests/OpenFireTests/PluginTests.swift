@@ -195,6 +195,57 @@ final class PluginTests: XCTestCase {
         XCTAssertNotNil(plugin.executionTrustFingerprint)
     }
 
+    func testVisibilityDiagnosticExplainsWhyPluginIsHidden() throws {
+        let json = """
+        {
+            "name": "Scoped",
+            "identifier": "com.test.hidden-reasons",
+            "filter": {
+                "minLength": 5,
+                "regex": "^https://",
+                "apps": ["com.apple.Safari"]
+            },
+            "action": { "type": "copy" }
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(PluginConfig.self, from: json)
+        let plugin = Plugin(config: config, directoryURL: URL(fileURLWithPath: "/"))
+        plugin.isEnabled = false
+
+        let diagnostic = plugin.visibilityDiagnostic(text: "abc", appBundleID: "com.apple.TextEdit")
+
+        XCTAssertFalse(diagnostic.isVisible)
+        XCTAssertEqual(diagnostic.reasons.count, 4)
+        XCTAssertTrue(diagnostic.reasons.contains(.disabled))
+        XCTAssertTrue(diagnostic.reasons.contains(.textTooShort(min: 5, actual: 3)))
+        XCTAssertTrue(diagnostic.reasons.contains(.regexNoMatch("^https://")))
+        XCTAssertTrue(diagnostic.reasons.contains(.appNotAllowed(current: "com.apple.TextEdit", allowed: ["com.apple.Safari"])))
+    }
+
+    func testVisibilityDiagnosticIsVisibleWhenPluginMatchesContext() throws {
+        let json = """
+        {
+            "name": "Visible",
+            "identifier": "com.test.visible",
+            "filter": {
+                "minLength": 3,
+                "regex": "^https://",
+                "apps": ["com.apple.Safari"]
+            },
+            "action": { "type": "copy" }
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(PluginConfig.self, from: json)
+        let plugin = Plugin(config: config, directoryURL: URL(fileURLWithPath: "/"))
+
+        let diagnostic = plugin.visibilityDiagnostic(text: "https://openai.com", appBundleID: "com.apple.Safari")
+
+        XCTAssertTrue(diagnostic.isVisible)
+        XCTAssertTrue(diagnostic.reasons.isEmpty)
+    }
+
     func testExecutionTrustFingerprintChangesWhenScriptContentChanges() throws {
         let bundleURL = try makePluginBundle(
             identifier: "com.test.fingerprint",

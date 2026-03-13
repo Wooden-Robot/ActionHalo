@@ -44,6 +44,25 @@ struct PluginConfig: Codable {
     var isDefaultDisabled: Bool?
 }
 
+enum PluginVisibilityReason: Equatable {
+    case disabled
+    case textTooShort(min: Int, actual: Int)
+    case textTooLong(max: Int, actual: Int)
+    case invalidRegex(String)
+    case regexNoMatch(String)
+    case appNotAllowed(current: String?, allowed: [String])
+    case appExcluded(String)
+}
+
+struct PluginVisibilityDiagnostic {
+    let plugin: Plugin
+    let reasons: [PluginVisibilityReason]
+
+    var isVisible: Bool {
+        reasons.isEmpty
+    }
+}
+
 /// Represents a loaded plugin with its configuration and resources
 final class Plugin: Identifiable {
     let id: String
@@ -158,27 +177,53 @@ final class Plugin: Identifiable {
 
     /// Check if this plugin should be shown for the given context
     func shouldShow(text: String, appBundleID: String?) -> Bool {
-        guard let filter = config.filter else { return true }
-        
-        // Check text length
-        if let min = filter.minLength, text.count < min { return false }
-        if let max = filter.maxLength, text.count > max { return false }
-        
-        // Check regex
-        if let pattern = filter.regex {
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return false }
-            let range = NSRange(text.startIndex..<text.endIndex, in: text)
-            if regex.firstMatch(in: text, options: [], range: range) == nil { return false }
+        visibilityDiagnostic(text: text, appBundleID: appBundleID).isVisible
+    }
+
+    func visibilityDiagnostic(text: String, appBundleID: String?) -> PluginVisibilityDiagnostic {
+        var reasons: [PluginVisibilityReason] = []
+
+        if !isEnabled {
+            reasons.append(.disabled)
         }
-        
-        // Check app filters
-        if let allowedApps = filter.apps, !allowedApps.isEmpty {
-            guard let bundleID = appBundleID, allowedApps.contains(bundleID) else { return false }
+
+        if let filter = config.filter {
+            if let min = filter.minLength, text.count < min {
+                reasons.append(.textTooShort(min: min, actual: text.count))
+            }
+            if let max = filter.maxLength, text.count > max {
+                reasons.append(.textTooLong(max: max, actual: text.count))
+            }
+
+            if let pattern = filter.regex {
+                if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+                    let range = NSRange(text.startIndex..<text.endIndex, in: text)
+                    if regex.firstMatch(in: text, options: [], range: range) == nil {
+                        reasons.append(.regexNoMatch(pattern))
+                    }
+                } else {
+                    reasons.append(.invalidRegex(pattern))
+                }
+            }
+
+            if let allowedApps = filter.apps, !allowedApps.isEmpty {
+                if let bundleID = appBundleID {
+                    if !allowedApps.contains(bundleID) {
+                        reasons.append(.appNotAllowed(current: bundleID, allowed: allowedApps))
+                    }
+                } else {
+                    reasons.append(.appNotAllowed(current: nil, allowed: allowedApps))
+                }
+            }
+
+            if let excludedApps = filter.excludeApps,
+               !excludedApps.isEmpty,
+               let bundleID = appBundleID,
+               excludedApps.contains(bundleID) {
+                reasons.append(.appExcluded(bundleID))
+            }
         }
-        if let excludedApps = filter.excludeApps, !excludedApps.isEmpty {
-            if let bundleID = appBundleID, excludedApps.contains(bundleID) { return false }
-        }
-        
-        return true
+
+        return PluginVisibilityDiagnostic(plugin: self, reasons: reasons)
     }
 }
