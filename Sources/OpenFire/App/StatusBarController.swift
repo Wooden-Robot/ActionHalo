@@ -99,7 +99,7 @@ final class StatusBarController: NSObject {
         let pluginSubmenu = NSMenu()
         
         // Create a custom view menu item for the interactive plugin list
-        let listView = PluginListMenuView(frame: NSRect(x: 0, y: 0, width: 220, height: 200))
+        let listView = PluginListMenuView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
         listView.reloadPlugins()
         pluginListView = listView
         

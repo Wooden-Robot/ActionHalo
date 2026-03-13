@@ -8,8 +8,14 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
     private var orderedPlugins: [Plugin] = []
     private let dragType = NSPasteboard.PasteboardType("com.openfire.plugin-row")
     private let rowHeight: CGFloat = 28
-    private let viewWidth: CGFloat = 220
+    private let viewWidth: CGFloat = 300
     private let buttonHeight: CGFloat = 36
+    private let iconLeadingX: CGFloat = 42
+    private let nameLeadingX: CGFloat = 68
+    private let actionButtonSize: CGFloat = 24
+    private let actionButtonSpacing: CGFloat = 6
+    private let dragHandleWidth: CGFloat = 16
+    private let trailingPadding: CGFloat = 8
     
     private var editorWindow: PluginEditorWindow?
     
@@ -134,6 +140,54 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         NSApp.activate(ignoringOtherApps: true)
         editorWindow = editor
     }
+
+    @objc private func showTrustStatus(_ sender: NSButton) {
+        let row = tableView.row(for: sender)
+        guard row >= 0 && row < orderedPlugins.count else { return }
+        let plugin = orderedPlugins[row]
+        let isTrusted = PluginManager.shared.isExecutionTrusted(for: plugin)
+
+        let alert = NSAlert()
+        alert.messageText = "Plugin Trust".localized
+        alert.informativeText = String(
+            format: "Plugin '%@' uses script execution.\n\nCurrent status: %@\nLocation: %@".localized,
+            plugin.name,
+            isTrusted ? "Trusted".localized : "Not Trusted".localized,
+            plugin.directoryURL.path
+        )
+        alert.alertStyle = .informational
+
+        if isTrusted {
+            alert.addButton(withTitle: "Revoke Trust".localized)
+            alert.addButton(withTitle: "OK".localized)
+        } else {
+            alert.addButton(withTitle: "OK".localized)
+        }
+
+        let response = alert.runModal()
+        if isTrusted, response == .alertFirstButtonReturn {
+            PluginManager.shared.setExecutionTrusted(false, for: plugin)
+            tableView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0))
+        }
+    }
+
+    private func styleTrustButton(_ button: NSButton, trusted: Bool) {
+        button.wantsLayer = true
+        button.isBordered = false
+        button.bezelStyle = .inline
+        button.layer?.cornerRadius = 7
+        button.layer?.masksToBounds = false
+
+        let tint = trusted ? NSColor.systemGreen : NSColor.systemOrange
+        button.contentTintColor = tint
+        button.layer?.backgroundColor = tint.withAlphaComponent(trusted ? 0.16 : 0.22).cgColor
+        button.layer?.borderWidth = 1
+        button.layer?.borderColor = tint.withAlphaComponent(trusted ? 0.28 : 0.4).cgColor
+        button.layer?.shadowColor = tint.cgColor
+        button.layer?.shadowOpacity = trusted ? 0.18 : 0.28
+        button.layer?.shadowRadius = trusted ? 4 : 6
+        button.layer?.shadowOffset = .zero
+    }
     
     // MARK: - NSTableViewDataSource
     
@@ -163,7 +217,7 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         cell.addSubview(indicator)
         
         // Icon
-        let iconView = NSImageView(frame: NSRect(x: 42, y: 3, width: 22, height: 22))
+        let iconView = NSImageView(frame: NSRect(x: iconLeadingX, y: 3, width: 22, height: 22))
         let customIconPath = plugin.directoryURL.appendingPathComponent("icon.png")
         
         if FileManager.default.fileExists(atPath: customIconPath.path), let img = NSImage(contentsOf: customIconPath) {
@@ -178,19 +232,29 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         }
         cell.addSubview(iconView)
         let showDeleteButton = !PluginManager.coreDefaultPluginIDs.contains(plugin.id)
+        let showsTrustButton = plugin.requiresExecutionTrust
+        let actionButtonCount = 1 + (showDeleteButton ? 1 : 0) + (showsTrustButton ? 1 : 0)
+        let actionAreaWidth =
+            CGFloat(actionButtonCount) * actionButtonSize +
+            CGFloat(max(0, actionButtonCount - 1)) * actionButtonSpacing +
+            dragHandleWidth +
+            trailingPadding
         
         // Name
         let nameField = NSTextField(labelWithString: plugin.name)
-        // Shorter width to make room for buttons if delete button is shown
-        let nameWidth = showDeleteButton ? viewWidth - 140 : viewWidth - 110
-        nameField.frame = NSRect(x: 68, y: 5, width: nameWidth, height: 18)
+        let nameWidth = max(70, viewWidth - nameLeadingX - actionAreaWidth - 10)
+        nameField.frame = NSRect(x: nameLeadingX, y: 5, width: nameWidth, height: 18)
         nameField.font = NSFont.systemFont(ofSize: 13)
         nameField.textColor = plugin.isEnabled ? .labelColor : .tertiaryLabelColor
         cell.addSubview(nameField)
-        
+
+        let handleX = viewWidth - trailingPadding - dragHandleWidth
+        let editX = handleX - actionButtonSpacing - actionButtonSize
+        var actionX = editX - actionButtonSpacing - actionButtonSize
+
         if showDeleteButton {
             // Delete Button (Trash)
-            let deleteBtn = NSButton(frame: NSRect(x: viewWidth - 68, y: 2, width: 24, height: 24))
+            let deleteBtn = NSButton(frame: NSRect(x: actionX, y: 2, width: 24, height: 24))
             deleteBtn.bezelStyle = .inline
             deleteBtn.isBordered = false
             deleteBtn.title = ""
@@ -201,10 +265,26 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
             deleteBtn.target = self
             deleteBtn.action = #selector(deletePluginClicked(_:))
             cell.addSubview(deleteBtn)
+            actionX -= actionButtonSize + actionButtonSpacing
+        }
+
+        if showsTrustButton {
+            let trustBtn = NSButton(frame: NSRect(x: actionX, y: 2, width: 24, height: 24))
+            trustBtn.title = ""
+            let trusted = PluginManager.shared.isExecutionTrusted(for: plugin)
+            let symbolName = trusted ? "checkmark.shield" : "exclamationmark.shield"
+            if let trustImg = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Plugin Trust".localized) {
+                trustBtn.image = trustImg.withSymbolConfiguration(.init(pointSize: 13, weight: .bold))
+            }
+            styleTrustButton(trustBtn, trusted: trusted)
+            trustBtn.target = self
+            trustBtn.action = #selector(showTrustStatus(_:))
+            trustBtn.toolTip = trusted ? "Trusted script plugin".localized : "Script plugin needs trust before running".localized
+            cell.addSubview(trustBtn)
         }
         
         // Edit Button (Pencil)
-        let editBtn = NSButton(frame: NSRect(x: viewWidth - 44, y: 2, width: 24, height: 24))
+        let editBtn = NSButton(frame: NSRect(x: editX, y: 2, width: 24, height: 24))
         editBtn.bezelStyle = .inline
         editBtn.isBordered = false
         editBtn.title = ""
@@ -217,7 +297,7 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         
         // Drag handle hint
         let handle = NSTextField(labelWithString: "⋮⋮")
-        handle.frame = NSRect(x: viewWidth - 20, y: 5, width: 16, height: 18)
+        handle.frame = NSRect(x: handleX, y: 5, width: dragHandleWidth, height: 18)
         handle.font = NSFont.systemFont(ofSize: 10)
         handle.textColor = .quaternaryLabelColor
         cell.addSubview(handle)

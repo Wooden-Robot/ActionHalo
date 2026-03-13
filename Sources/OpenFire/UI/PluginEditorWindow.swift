@@ -209,6 +209,11 @@ final class PluginEditorWindow: NSWindow {
     private let contentViewScroll = NSScrollView()
     private let shortcutField = ShortcutRecorderField()
     private let infoLabel = NSTextField(labelWithString: "")
+    private let riskLabel = NSTextField(labelWithString: "")
+    private let statusLabel = NSTextField(labelWithString: "")
+    private var riskLabelHeightConstraint: NSLayoutConstraint?
+    private var statusLabelHeightConstraint: NSLayoutConstraint?
+    private var contentViewMinHeightConstraint: NSLayoutConstraint?
     
     private var customIconURL: URL?
     
@@ -217,7 +222,7 @@ final class PluginEditorWindow: NSWindow {
         self.editingPlugin = plugin
         
         let width: CGFloat = 400
-        let height: CGFloat = 500
+        let height: CGFloat = 620
         
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
@@ -337,13 +342,35 @@ final class PluginEditorWindow: NSWindow {
         infoLabel.translatesAutoresizingMaskIntoConstraints = false
         infoLabel.font = NSFont.systemFont(ofSize: 10)
         infoLabel.textColor = .secondaryLabelColor
-        infoLabel.alignment = .right
+        infoLabel.alignment = .left
         infoLabel.lineBreakMode = .byWordWrapping
         cv.addSubview(infoLabel)
+
+        riskLabel.translatesAutoresizingMaskIntoConstraints = false
+        riskLabel.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        riskLabel.textColor = .systemOrange
+        riskLabel.alignment = .left
+        riskLabel.lineBreakMode = .byWordWrapping
+        riskLabel.isHidden = true
+        cv.addSubview(riskLabel)
+        riskLabelHeightConstraint = riskLabel.heightAnchor.constraint(equalToConstant: 0)
+        riskLabelHeightConstraint?.isActive = true
+
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.font = NSFont.systemFont(ofSize: 10)
+        statusLabel.textColor = .tertiaryLabelColor
+        statusLabel.alignment = .left
+        statusLabel.lineBreakMode = .byTruncatingMiddle
+        statusLabel.isHidden = true
+        cv.addSubview(statusLabel)
+        statusLabelHeightConstraint = statusLabel.heightAnchor.constraint(equalToConstant: 0)
+        statusLabelHeightConstraint?.isActive = true
         
         contentViewScroll.translatesAutoresizingMaskIntoConstraints = false
         contentViewScroll.hasVerticalScroller = true
         contentViewScroll.borderType = .bezelBorder
+        contentViewMinHeightConstraint = contentViewScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 220)
+        contentViewMinHeightConstraint?.isActive = true
         
         contentTextView.autoresizingMask = .width
         contentTextView.isVerticallyResizable = true
@@ -445,10 +472,18 @@ final class PluginEditorWindow: NSWindow {
             contentLabel.leadingAnchor.constraint(equalTo: cv.leadingAnchor, constant: 20),
             
             infoLabel.topAnchor.constraint(equalTo: contentLabel.bottomAnchor, constant: 4),
-            infoLabel.leadingAnchor.constraint(equalTo: cv.leadingAnchor, constant: 20),
-            infoLabel.trailingAnchor.constraint(equalTo: contentLabel.trailingAnchor),
+            infoLabel.leadingAnchor.constraint(equalTo: contentViewScroll.leadingAnchor),
+            infoLabel.trailingAnchor.constraint(equalTo: contentViewScroll.trailingAnchor),
+
+            riskLabel.topAnchor.constraint(equalTo: infoLabel.bottomAnchor, constant: 4),
+            riskLabel.leadingAnchor.constraint(equalTo: contentViewScroll.leadingAnchor),
+            riskLabel.trailingAnchor.constraint(equalTo: contentViewScroll.trailingAnchor),
+
+            statusLabel.topAnchor.constraint(equalTo: riskLabel.bottomAnchor, constant: 4),
+            statusLabel.leadingAnchor.constraint(equalTo: contentViewScroll.leadingAnchor),
+            statusLabel.trailingAnchor.constraint(equalTo: contentViewScroll.trailingAnchor),
             
-            contentViewScroll.topAnchor.constraint(equalTo: typePopUp.bottomAnchor, constant: 20),
+            contentViewScroll.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 8),
             contentViewScroll.leadingAnchor.constraint(equalTo: contentLabel.trailingAnchor, constant: spacing),
             contentViewScroll.trailingAnchor.constraint(equalTo: cv.trailingAnchor, constant: -20),
             
@@ -576,33 +611,73 @@ final class PluginEditorWindow: NSWindow {
         let index = typePopUp.indexOfSelectedItem
         contentViewScroll.isHidden = false
         shortcutField.isHidden = true
+        riskLabel.isHidden = true
+        riskLabel.stringValue = ""
+        riskLabelHeightConstraint?.constant = 0
+        statusLabel.isHidden = true
+        statusLabel.stringValue = ""
+        statusLabelHeightConstraint?.constant = 0
+
+        let scriptRiskMessage = editingPlugin?.requiresExecutionTrust == true
+            ? "Scripts can run commands on your Mac. Only keep this plugin if you trust its source. Saving changes will require trust again on next run.".localized
+            : "Scripts can run commands on your Mac. Only create or install them if you trust their source.".localized
+        let scriptStatus = editingPlugin.map {
+            String(
+                format: "Trust status: %@\nSource: %@".localized,
+                PluginManager.shared.isExecutionTrusted(for: $0) ? "Trusted".localized : "Not Trusted".localized,
+                $0.directoryURL.path
+            )
+        }
         
         switch index {
         case 0: // URL
             infoLabel.stringValue = "Enter a complete URL\nUse {text} as a placeholder for selected text".localized
+            contentViewMinHeightConstraint?.constant = 220
             contentTextView.isEditable = true
         case 1: // Shell
             infoLabel.stringValue = "Write Shell script\nSelected text is available via $OPENFIRE_TEXT".localized
+            riskLabel.stringValue = scriptRiskMessage
+            riskLabel.isHidden = false
+            riskLabelHeightConstraint?.constant = 34
+            if let scriptStatus {
+                statusLabel.stringValue = scriptStatus
+                statusLabel.isHidden = false
+                statusLabelHeightConstraint?.constant = 28
+            }
+            contentViewMinHeightConstraint?.constant = 250
             contentTextView.isEditable = true
         case 2: // AppleScript
-            infoLabel.stringValue = "Write AppleScript code snippet\nSelected text: system attribute \"OPENFIRE_TEXT\"".localized
+            infoLabel.stringValue = "Write AppleScript code snippet\nSelected text is available via system attribute \"OPENFIRE_TEXT\"".localized
+            riskLabel.stringValue = scriptRiskMessage
+            riskLabel.isHidden = false
+            riskLabelHeightConstraint?.constant = 34
+            if let scriptStatus {
+                statusLabel.stringValue = scriptStatus
+                statusLabel.isHidden = false
+                statusLabelHeightConstraint?.constant = 28
+            }
+            contentViewMinHeightConstraint?.constant = 250
             contentTextView.isEditable = true
         case 3: // Key combo
             infoLabel.stringValue = "Record key combo\n(Click the box on the right and press keyboard)".localized
+            contentViewMinHeightConstraint?.constant = 44
             contentViewScroll.isHidden = true
             shortcutField.isHidden = false
         case 4: // Copy
             infoLabel.stringValue = "Built-in: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)".localized
+            contentViewMinHeightConstraint?.constant = 44
             contentTextView.isEditable = false
             contentTextView.string = ""
             contentViewScroll.isHidden = true
         case 5: // Paste
             infoLabel.stringValue = "Built-in: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)".localized
+            contentViewMinHeightConstraint?.constant = 44
             contentTextView.isEditable = false
             contentTextView.string = ""
             contentViewScroll.isHidden = true
         case 6: // Reveal in Finder
             infoLabel.stringValue = "Built-in: Reveal in Finder\nOpens the selected file path in Finder\n(Supports /, ~, and file:// paths)".localized
+            contentViewMinHeightConstraint?.constant = 44
             contentTextView.isEditable = false
             contentTextView.string = ""
             contentViewScroll.isHidden = true

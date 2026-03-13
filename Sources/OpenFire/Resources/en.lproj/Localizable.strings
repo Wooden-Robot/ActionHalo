@@ -89,6 +89,14 @@
 /* PluginOrderWindow */
 "┼ New Custom Plugin" = "┼ New Custom Plugin";
 "Delete Failed" = "Delete Failed";
+"Plugin Trust" = "Plugin Trust";
+"Plugin '%@' uses script execution.\n\nCurrent status: %@\nLocation: %@" = "Plugin '%@' uses script execution.\n\nCurrent status: %@\nLocation: %@";
+"Trust status: %@\nSource: %@" = "Trust status: %@\nSource: %@";
+"Trusted" = "Trusted";
+"Not Trusted" = "Not Trusted";
+"Revoke Trust" = "Revoke Trust";
+"Trusted script plugin" = "Trusted script plugin";
+"Script plugin needs trust before running" = "Script plugin needs trust before running";
 
 /* PluginEditorWindow */
 "Click here to record hotkey" = "Click here to record hotkey";
@@ -124,6 +132,9 @@
 "Enter a complete URL\nUse {text} as a placeholder for selected text" = "Enter a complete URL\nUse {text} as a placeholder for selected text";
 "Write Shell script\nSelected text is available via $OPENFIRE_TEXT" = "Write Shell script\nSelected text is available via $OPENFIRE_TEXT";
 "Write AppleScript code snippet" = "Write AppleScript code snippet";
+"Write AppleScript code snippet\nSelected text is available via system attribute \"OPENFIRE_TEXT\"" = "Write AppleScript code snippet\nSelected text is available via system attribute \"OPENFIRE_TEXT\"";
+"Scripts can run commands on your Mac. Only create or install them if you trust their source." = "Scripts can run commands on your Mac. Only create or install them if you trust their source.";
+"Scripts can run commands on your Mac. Only keep this plugin if you trust its source. Saving changes will require trust again on next run." = "Scripts can run commands on your Mac. Only keep this plugin if you trust its source. Saving changes will require trust again on next run.";
 "Record key combo\n(Click the box on the right and press keyboard)" = "Record key combo\n(Click the box on the right and press keyboard)";
 "Built-in: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)" = "Built-in: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)";
 "Built-in: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)" = "Built-in: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)";
