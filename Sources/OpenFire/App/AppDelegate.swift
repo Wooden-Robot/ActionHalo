@@ -421,26 +421,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupGlobalClickMonitor()
     }
     
-    private func dismissAllMenus() {
+    private func dismissAllMenus(completion: (() -> Void)? = nil) {
         NSLog("[OpenFire-Debug] dismissAllMenus called")
-        radialMenuWindow?.hideMenu()
+        let window = radialMenuWindow
         radialMenuWindow = nil
         pastePopupWindow?.hidePopup()
         pastePopupWindow = nil
         removeGlobalClickMonitor()
+        window?.hideMenu(completion: completion)
+        if window == nil {
+            completion?()
+        }
     }
     
     private func handleMenuAction(_ item: RadialMenuItem, text: String) {
         switch item.action {
         case .builtIn(let action):
             ActionExecutor.shared.execute(action: action, text: text)
+            dismissAllMenus()
         case .plugin(let plugin):
-            PluginManager.shared.executePlugin(plugin, with: text)
+            if plugin.requiresExecutionTrust {
+                dismissAllMenus {
+                    PluginManager.shared.executePlugin(plugin, with: text)
+                }
+            } else {
+                PluginManager.shared.executePlugin(plugin, with: text)
+                dismissAllMenus()
+            }
         default:
+            dismissAllMenus()
             break
         }
-
-        dismissAllMenus()
     }
     
     // MARK: - Global Click Monitor
