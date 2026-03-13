@@ -22,6 +22,14 @@
 "Cancel" = "取消";
 "Install Succeeded" = "安装成功";
 "Install Failed" = "安装失败";
+"Warning: this plugin can execute scripts on your Mac. OpenFire will require explicit trust before the first run, and again after plugin changes." = "警告：这个插件可以在你的 Mac 上执行脚本。OpenFire 会在首次运行前要求明确授权，并在插件内容变更后再次确认。";
+"Trust Plugin Before Running" = "运行前信任插件";
+"Plugin '%@' can execute scripts on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes." = "插件“%@”可以在你的 Mac 上执行脚本。\n\n类型：%@\n位置：%@\n\n只有在你信任该插件来源时才允许执行。插件发生变更后，OpenFire 会再次请求确认。";
+"Trust and Run" = "信任并运行";
+"Menu Hotkey and Toggle Hotkey cannot use the same shortcut." = "菜单热键和开关热键不能使用同一个快捷键。";
+"Failed to register Menu Hotkey (%@). It may conflict with another shortcut." = "菜单热键（%@）注册失败，可能与其他快捷键冲突。";
+"Failed to register Toggle Hotkey (%@). It may conflict with another shortcut." = "开关热键（%@）注册失败，可能与其他快捷键冲突。";
+"Hotkey Registration Failed" = "热键注册失败";
 "Plugin '%@' installed successfully." = "插件「%@」已成功安装并启用。";
 "Failed to copy plugin to installation directory. Check permissions.\n(%@)" = "无法复制插件文件到安装目录，请检查权限。 \n(%@)";
 "Accessibility Permission Lost" = "辅助功能权限已失效";

@@ -1,4 +1,5 @@
 import Cocoa
+import CryptoKit
 
 /// Represents a single plugin action type and its execution parameters
 enum PluginActionType: String, Codable {
@@ -116,6 +117,44 @@ final class Plugin: Identifiable {
     
     /// Sort order (lower = earlier, default 100)
     var order: Int { config.order ?? 100 }
+
+    var requiresExecutionTrust: Bool {
+        switch config.action.type {
+        case .shellScript, .applescript:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var executionTrustFingerprint: String? {
+        guard requiresExecutionTrust else { return nil }
+
+        var hasher = SHA256()
+
+        let configURL = directoryURL.appendingPathComponent("Config.json")
+        if let data = try? Data(contentsOf: configURL) {
+            hasher.update(data: data)
+        } else {
+            hasher.update(data: Data(id.utf8))
+        }
+
+        if let scriptRef = config.action.script {
+            let scriptURL = directoryURL.appendingPathComponent(scriptRef)
+            if let data = try? Data(contentsOf: scriptURL) {
+                hasher.update(data: data)
+            } else {
+                hasher.update(data: Data(scriptRef.utf8))
+            }
+        }
+
+        if let inline = config.action.inline {
+            hasher.update(data: Data(inline.utf8))
+        }
+
+        let digest = hasher.finalize()
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
 
     /// Check if this plugin should be shown for the given context
     func shouldShow(text: String, appBundleID: String?) -> Bool {

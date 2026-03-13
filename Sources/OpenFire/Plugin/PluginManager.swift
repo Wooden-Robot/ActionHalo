@@ -8,6 +8,7 @@ final class PluginManager {
     
     /// Notification posted when plugins are reloaded
     static let pluginsReloadedNotification = Notification.Name("OpenFirePluginsReloaded")
+    static let trustedPluginFingerprintsKey = "trustedPluginFingerprints"
     
     /// The 7 core default plugins that can never be deleted
     static let coreDefaultPluginIDs: Set<String> = [
@@ -28,6 +29,7 @@ final class PluginManager {
     
     var plugins: [Plugin] = []
     private var fileWatchers: [DispatchSourceFileSystemObject] = []
+    private var pendingReloadWorkItem: DispatchWorkItem?
     
     /// User plugins directory
     var userPluginsURL: URL {
@@ -117,6 +119,16 @@ final class PluginManager {
     func reloadPlugins() {
         loadAllPlugins()
     }
+
+    private func scheduleReloadPlugins(after delay: TimeInterval = 0.2) {
+        pendingReloadWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.loadAllPlugins()
+        }
+        pendingReloadWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
     
     // MARK: - Filtering
     
@@ -146,6 +158,59 @@ final class PluginManager {
             savePluginStates()
             NotificationCenter.default.post(name: PluginManager.pluginsReloadedNotification, object: self)
         }
+    }
+
+    func isExecutionTrusted(for plugin: Plugin) -> Bool {
+        guard plugin.requiresExecutionTrust, let fingerprint = plugin.executionTrustFingerprint else { return true }
+        let trusted = UserDefaults.standard.dictionary(forKey: Self.trustedPluginFingerprintsKey) as? [String: String] ?? [:]
+        return trusted[plugin.id] == fingerprint
+    }
+
+    func setExecutionTrusted(_ trusted: Bool, for plugin: Plugin) {
+        guard plugin.requiresExecutionTrust else { return }
+
+        var stored = UserDefaults.standard.dictionary(forKey: Self.trustedPluginFingerprintsKey) as? [String: String] ?? [:]
+        if trusted, let fingerprint = plugin.executionTrustFingerprint {
+            stored[plugin.id] = fingerprint
+        } else {
+            stored.removeValue(forKey: plugin.id)
+        }
+        UserDefaults.standard.set(stored, forKey: Self.trustedPluginFingerprintsKey)
+    }
+
+    @discardableResult
+    func confirmExecutionTrustIfNeeded(for plugin: Plugin) -> Bool {
+        guard plugin.requiresExecutionTrust else { return true }
+        guard !isExecutionTrusted(for: plugin) else { return true }
+
+        let prompt: () -> Bool = {
+            let alert = NSAlert()
+            alert.messageText = "Trust Plugin Before Running".localized
+            alert.informativeText = String(
+                format: "Plugin '%@' can execute scripts on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes.".localized,
+                plugin.name,
+                plugin.config.action.type.rawValue,
+                plugin.directoryURL.path
+            )
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Trust and Run".localized)
+            alert.addButton(withTitle: "Cancel".localized)
+
+            NSApp.activate(ignoringOtherApps: true)
+            let trusted = alert.runModal() == .alertFirstButtonReturn
+            self.setExecutionTrusted(trusted, for: plugin)
+            return trusted
+        }
+
+        if Thread.isMainThread {
+            return prompt()
+        }
+
+        var result = false
+        DispatchQueue.main.sync {
+            result = prompt()
+        }
+        return result
     }
     
     private func savePluginStates() {
@@ -220,6 +285,8 @@ final class PluginManager {
     }
     
     func stopWatchingPluginDirectories() {
+        pendingReloadWorkItem?.cancel()
+        pendingReloadWorkItem = nil
         for watcher in fileWatchers {
             watcher.cancel()
         }
@@ -244,7 +311,7 @@ final class PluginManager {
         
         source.setEventHandler { [weak self] in
             NSLog("[OpenFire] Plugin directory changed, reloading...")
-            self?.reloadPlugins()
+            self?.scheduleReloadPlugins()
         }
         
         source.setCancelHandler {
@@ -267,8 +334,10 @@ final class PluginManager {
         case .url:
             executeURLAction(action, text: text)
         case .shellScript:
+            guard confirmExecutionTrustIfNeeded(for: plugin) else { return }
             executeShellScript(plugin, action: action, text: text)
         case .applescript:
+            guard confirmExecutionTrustIfNeeded(for: plugin) else { return }
             executeAppleScript(plugin, action: action, text: text)
         case .keyCombo:
             executeKeyCombo(action)

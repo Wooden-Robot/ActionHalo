@@ -22,6 +22,14 @@
 "Cancel" = "Cancel";
 "Install Succeeded" = "Install Succeeded";
 "Install Failed" = "Install Failed";
+"Warning: this plugin can execute scripts on your Mac. OpenFire will require explicit trust before the first run, and again after plugin changes." = "Warning: this plugin can execute scripts on your Mac. OpenFire will require explicit trust before the first run, and again after plugin changes.";
+"Trust Plugin Before Running" = "Trust Plugin Before Running";
+"Plugin '%@' can execute scripts on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes." = "Plugin '%@' can execute scripts on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes.";
+"Trust and Run" = "Trust and Run";
+"Menu Hotkey and Toggle Hotkey cannot use the same shortcut." = "Menu Hotkey and Toggle Hotkey cannot use the same shortcut.";
+"Failed to register Menu Hotkey (%@). It may conflict with another shortcut." = "Failed to register Menu Hotkey (%@). It may conflict with another shortcut.";
+"Failed to register Toggle Hotkey (%@). It may conflict with another shortcut." = "Failed to register Toggle Hotkey (%@). It may conflict with another shortcut.";
+"Hotkey Registration Failed" = "Hotkey Registration Failed";
 "Plugin '%@' installed successfully." = "Plugin '%@' installed successfully.";
 "Failed to copy plugin to installation directory. Check permissions.\n(%@)" = "Failed to copy plugin to installation directory. Check permissions.\n(%@)";
 "Accessibility Permission Lost" = "Accessibility Permission Lost";

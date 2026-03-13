@@ -2,6 +2,15 @@ import XCTest
 @testable import OpenFire
 
 final class PluginTests: XCTestCase {
+    private var temporaryDirectories: [URL] = []
+
+    override func tearDown() {
+        for url in temporaryDirectories {
+            try? FileManager.default.removeItem(at: url)
+        }
+        temporaryDirectories.removeAll()
+        super.tearDown()
+    }
     
     // MARK: - Decoding Tests
     
@@ -168,5 +177,57 @@ final class PluginTests: XCTestCase {
         XCTAssertFalse(plugin.shouldShow(text: "toolong", appBundleID: "com.apple.Safari"))
         XCTAssertFalse(plugin.shouldShow(text: "test", appBundleID: "com.apple.finder"))
         XCTAssertFalse(plugin.shouldShow(text: "test", appBundleID: nil))
+    }
+
+    func testScriptPluginRequiresExecutionTrust() throws {
+        let json = """
+        {
+            "name": "Shell",
+            "identifier": "com.test.shell",
+            "action": { "type": "shell-script", "script": "script.sh" }
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(PluginConfig.self, from: json)
+        let plugin = Plugin(config: config, directoryURL: URL(fileURLWithPath: "/tmp/plugin"))
+
+        XCTAssertTrue(plugin.requiresExecutionTrust)
+        XCTAssertNotNil(plugin.executionTrustFingerprint)
+    }
+
+    func testExecutionTrustFingerprintChangesWhenScriptContentChanges() throws {
+        let bundleURL = try makePluginBundle(
+            identifier: "com.test.fingerprint",
+            actionType: "shell-script",
+            scriptName: "script.sh",
+            scriptContent: "echo first"
+        )
+
+        let pluginA = try XCTUnwrap(PluginLoader.load(from: bundleURL))
+        let fingerprintA = try XCTUnwrap(pluginA.executionTrustFingerprint)
+
+        try "echo second".write(to: bundleURL.appendingPathComponent("script.sh"), atomically: true, encoding: .utf8)
+
+        let pluginB = try XCTUnwrap(PluginLoader.load(from: bundleURL))
+        let fingerprintB = try XCTUnwrap(pluginB.executionTrustFingerprint)
+
+        XCTAssertNotEqual(fingerprintA, fingerprintB)
+    }
+
+    private func makePluginBundle(identifier: String, actionType: String, scriptName: String, scriptContent: String) throws -> URL {
+        let bundleURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".openfireext")
+        temporaryDirectories.append(bundleURL)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        let config = """
+        {
+            "name": "Temp Plugin",
+            "identifier": "\(identifier)",
+            "action": { "type": "\(actionType)", "script": "\(scriptName)" }
+        }
+        """
+        try config.write(to: bundleURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+        try scriptContent.write(to: bundleURL.appendingPathComponent(scriptName), atomically: true, encoding: .utf8)
+        return bundleURL
     }
 }

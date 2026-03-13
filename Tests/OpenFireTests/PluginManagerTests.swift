@@ -2,6 +2,7 @@ import XCTest
 @testable import OpenFire
 
 final class PluginManagerTests: XCTestCase {
+    private var temporaryDirectories: [URL] = []
     
     override func setUp() {
         super.setUp()
@@ -9,6 +10,10 @@ final class PluginManagerTests: XCTestCase {
     }
     
     override func tearDown() {
+        for url in temporaryDirectories {
+            try? FileManager.default.removeItem(at: url)
+        }
+        temporaryDirectories.removeAll()
         UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
         super.tearDown()
     }
@@ -162,6 +167,25 @@ final class PluginManagerTests: XCTestCase {
         XCTAssertEqual(merged.first?.directoryURL.path, "/tmp/oldest")
     }
 
+    func testExecutionTrustTracksCurrentFingerprint() throws {
+        let manager = PluginManager.shared
+        let bundleURL = try makeScriptPluginBundle(
+            identifier: "com.test.trust",
+            scriptContent: "echo first"
+        )
+
+        let pluginA = try XCTUnwrap(PluginLoader.load(from: bundleURL))
+        XCTAssertFalse(manager.isExecutionTrusted(for: pluginA))
+
+        manager.setExecutionTrusted(true, for: pluginA)
+        XCTAssertTrue(manager.isExecutionTrusted(for: pluginA))
+
+        try "echo second".write(to: bundleURL.appendingPathComponent("script.sh"), atomically: true, encoding: .utf8)
+        let pluginB = try XCTUnwrap(PluginLoader.load(from: bundleURL))
+
+        XCTAssertFalse(manager.isExecutionTrusted(for: pluginB))
+    }
+
     private func makePlugin(name: String, identifier: String, order: Int, directory: String) -> Plugin {
         let json = """
         {
@@ -175,5 +199,23 @@ final class PluginManagerTests: XCTestCase {
 
         let config = try! JSONDecoder().decode(PluginConfig.self, from: Data(json.utf8))
         return Plugin(config: config, directoryURL: URL(fileURLWithPath: directory))
+    }
+
+    private func makeScriptPluginBundle(identifier: String, scriptContent: String) throws -> URL {
+        let bundleURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".openfireext")
+        temporaryDirectories.append(bundleURL)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        let config = """
+        {
+            "name": "Script Plugin",
+            "identifier": "\(identifier)",
+            "action": { "type": "shell-script", "script": "script.sh" }
+        }
+        """
+
+        try config.write(to: bundleURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+        try scriptContent.write(to: bundleURL.appendingPathComponent("script.sh"), atomically: true, encoding: .utf8)
+        return bundleURL
     }
 }
