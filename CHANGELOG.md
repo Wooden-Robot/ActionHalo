@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.3.0
+- 修复多屏场景下的 Accessibility 坐标换算，降低副屏和非主屏上的文本命中误判。
+- 为插件目录热重载加入防抖，减少连续文件变更时的重复扫描和预热卡顿。
+- 改进全局热键注册失败处理，遇到重复快捷键或系统冲突时直接提示，而不是静默失效。
+- 为脚本插件建立执行信任模型：安装时提示风险、首次运行前确认、脚本内容变化后自动重新要求信任，并支持在插件管理里查看或撤销信任。
+- 修复 GTA 氛围模式下脚本插件信任弹窗无法点击的问题，改为先收起菜单再弹确认框。
+- 优化插件管理和编辑器界面：调整操作按钮布局，增强信任徽章视觉状态，修复长提示文案遮挡，并显著增大执行内容输入区高度。
+- 新增诊断窗口，可查看当前前台应用、焦点元素、选中文本状态、最近一次文本获取来源与失败原因，以及每个插件当前为何可见或不可用。
+- 持久化 OpenFire 全局启用状态，并新增“当前应用插件管理”窗口，支持按应用禁用特定插件且在重启后保留。
+- 补充并扩展单元测试，覆盖多屏坐标换算、脚本插件信任、按应用插件覆盖和诊断相关行为。
+
+- Fixed Accessibility coordinate conversion across multiple displays to reduce false hits on secondary and non-primary screens.
+- Added debounce to plugin directory hot reloads to avoid repeated rescans and prewarm stalls during bursts of file changes.
+- Improved global hotkey registration failure handling so duplicate shortcuts and system conflicts surface clear alerts instead of failing silently.
+- Added an execution trust model for script plugins, including install-time warnings, first-run confirmation, automatic re-approval after plugin changes, and trust inspection or revocation from plugin management.
+- Fixed script-plugin trust prompts being unclickable in GTA mode by dismissing the menu before presenting the confirmation dialog.
+- Refined plugin management and editor UI by reworking action button layout, strengthening trust badge states, fixing clipped long warnings, and giving action-content editors much more vertical space.
+- Added a diagnostics window that shows the current frontmost app, focused element, selected-text status, latest text acquisition source and failure reason, and why each plugin is currently visible or unavailable.
+- Persisted the global OpenFire enabled state and added a “manage plugins in current app” window so app-specific plugin disables survive relaunches.
+- Expanded unit test coverage for multi-display coordinates, script-plugin trust, per-app plugin overrides, and diagnostics-related behavior.
+
 ## v0.2.2
 - 新增“打开文件位置”内置插件：当选中文本是文件路径时，可直接在 Finder 中打开对应位置，支持 `/`、`~`、带引号路径和 `file://` 路径。
 - 调整插件菜单策略：只要插件处于启用状态，就始终保留占位；条件不满足时改为灰态不可执行，同时恢复多页分页行为。
