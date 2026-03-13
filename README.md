@@ -2,7 +2,7 @@
 
 # OpenFire 🔥
 
-**An ultra-smooth, "select-to-pop" circular menu tool for macOS.**
+**An ultra-smooth circular menu tool for macOS with both click-to-execute and press-drag-release execution after selection.**
 
 [**English**](./README.md) • [简体中文](./README_zh.md)
 
@@ -23,7 +23,12 @@
 ## ✨ Features That Wow
 
 🚀 **Esports-level Response Speed**
-Bottom-layer hit testing based on `mouseDown` / `mouseDragged` / `mouseUp`. Bid farewell to missed clicks. Once text is selected, the menu pops up instantly. Click and drag to execute functions immediately with zero-lag hover states that snap instantly to your cursor like GTA V's weapon wheel.
+Bottom-layer hit testing based on `mouseDown` / `mouseDragged` / `mouseUp`. Bid farewell to missed clicks. In both workflows, the wheel is triggered only after you finish the text selection and release the mouse button. From there, OpenFire supports two distinct execution styles:
+
+- **Release, then click to execute**: select text, release to open the wheel, then click the action you want.
+- **Release, press, drag, then release to execute**: select text, release to open the wheel, immediately press again, drag across to the target slice, then release to fire that action.
+
+The hover state tracks your cursor with near-zero latency, so the second mode feels closer to a GTA V weapon wheel than a traditional context menu.
 
 💫 **Native Blur & 60FPS Animations**
 Uses `NSVisualEffectView` and `CAShapeLayer` buffer pool. Page flipping, hovering, and clicking animations are buttery smooth with no frame drops.
@@ -35,10 +40,10 @@ Adjust the radial menu's **Ring Opacity** and **Max Items limit** (6, 8, 12, or 
 Supports custom `.openfireext` plugin packages. Features double-click installation, background thread asynchronous loading, and a package management mechanism supporting deletion and disabling.
 
 🧠 **Smart Trigger Context**
-Rewritten Accessibility recognition logic at the foundation. The "paste" function only appears inside genuinely editable text fields, and Open URL can reserve a slot without hijacking space from context-matching actions.
+Rewritten Accessibility recognition logic at the foundation. Text-selection actions stay focused on the selected content itself, while input-only actions such as paste are routed into editable-field shortcuts instead of polluting the main wheel.
 
 ✂️ **Cleaner Quick Actions**
-When OpenFire detects an empty editable field, it can show a lightweight `Paste / Clear` capsule near the cursor for faster text entry cleanup without opening the full wheel.
+When OpenFire detects an empty editable field, it can show a lightweight `Paste / Clear` capsule near the cursor for faster text entry cleanup without opening the full wheel. This is also where the built-in `Paste` action now lives by default.
 
 🚫 **Customizable App Blacklist**
 Built-in automatic blacklist management UI. Supports dragging and dropping apps, or browsing via the `+` button to precisely block specific software.
@@ -53,6 +58,17 @@ Built-in automatic blacklist management UI. Supports dragging and dropping apps,
 2. Open the downloaded file and drag the **OpenFire** app into your `Applications` folder.
 3. Launch OpenFire.
 4. Open **System Settings → Privacy & Security → Accessibility** and grant permissions to OpenFire (required for text selection detection).
+
+### How Triggering Works
+
+The shared rule is simple: **the wheel appears only after text selection is completed and the mouse button is released**.
+
+After that trigger point, there are two ways to finish the action:
+
+1. **Select, release, then click**: finish the selection, let the wheel pop up, then click a slice to execute it immediately.
+2. **Select, release, press, drag, then release**: finish the selection, let the wheel pop up, press down again right away, drag into the slice you want, then release to execute it.
+
+The second mode is the signature interaction: after the wheel appears, you can use a press-drag-release motion instead of a simple click.
 
 ### Menu Bar Controls
 
@@ -74,18 +90,24 @@ OpenFire's true power lies in its plugin system. Plugins exist as `.openfireext`
 ### Pre-installed Plugins
 | 🔌 Plugin | 📝 Description |
 | :--- | :--- |
-| **Copy / Cut / Paste** | System clipboard management (intelligently recognizes input box context) |
-| **Search / Translate / Dict** | Jump to Google, invoke macOS native dictionary |
-| **Open Link** | Automatically identifies URLs in selected text and attempts to open them |
+| **Copy / Cut** | Core clipboard actions for the selected text itself. |
+| **Search / Translate / Dict** | Everyday text actions for web search, translation, and the macOS Dictionary app. |
+| **Open Link / Reveal in Finder** | Context-aware built-ins for URLs and file paths. They stay visible and become executable only when the current selection matches. |
 
-Built-in plugins are filtered by current context before pagination, so irrelevant actions do not crowd out actually usable slots.
+These default built-ins are part of OpenFire itself. They can be enabled, disabled, reordered, and also edited from the menu bar. Editing a built-in plugin creates your own override on top of the bundled default.
+Enabled plugins keep their slot in the wheel. If the current selection does not match a plugin's context, the action stays visible but disabled instead of disappearing before pagination.
+The built-in `Paste` action is handled separately through the empty-input `Paste / Clear` popup rather than appearing in the text-selection wheel.
 
 ### Community Plugins
 Built into the package, they can be enabled or removed at any time via the "Plugin Management" interface:
-- 🔍 Baidu Search / Google Search
-- 📚 NeoDB / Douban Book Search
-- 🎬 Douban Movie Search
-- ✈️ Search in Telegram
+- 🔍 [Baidu Search](./Plugins/BaiduSearch.openfireext/Config.json) / [Google Search](./Plugins/GoogleSearch.openfireext/Config.json): search the selected text on the web.
+- 🧑‍💻 [GitHub Search](./Plugins/GitHubSearch.openfireext/Config.json): search the selected text on GitHub.
+- 📚 [NeoDB Book Search](./Plugins/NeoDBBook.openfireext/Config.json) / [Douban Book Search](./Plugins/DoubanBook.openfireext/Config.json): look up books directly from the current selection.
+- 🎬 [Douban Movie Search](./Plugins/DoubanMovie.openfireext/Config.json): search selected movie titles on Douban.
+- ✈️ [Search in Telegram](./Plugins/Search%20Telegram.openfireext/Config.json): send the selected text into Telegram search.
+- 📂 [Reveal in Finder](./Plugins/RevealPath.openfireext/Config.json): when the selection is a file path, open its location in Finder.
+- 🖥️ [Run Shell](./Plugins/Run%20Shell.openfireext/Config.json): a default-disabled script plugin that runs a bundled shell script with the selected text.
+- 💻 [Run in iTerm2](./Plugins/Run%20in%20iTerm2.openfireext/Config.json): a default-disabled plugin that sends the selected text to iTerm2 as a shell command.
 
 ---
 
@@ -100,9 +122,12 @@ OpenFire comes with a fully-featured **Visual Plugin Editor** built right into t
 
 ### Supported Action Types (Action `type`)
 - 🌐 `url`: Open the system browser to visit `{text}`
+- 🐚 `shell-script`: Run a bundled shell script with the selected text injected via environment variables
+- 🍎 `applescript`: Run a bundled AppleScript with the selected text passed in by OpenFire
 - ⌨️ `key-combo`: Record system combo shortcuts directly from the UI
 - 📋 `copy`: Copy to clipboard
 - 📝 `paste`: Paste into the current input area
+- 📂 `reveal-path`: Open the selected file path in Finder
 
 #### Script Extensions
 For `shell-script` and `applescript`, the standard plugin layout is to point `action.script` at a bundled script file inside the `.openfireext` package. OpenFire also supports inline script text in the same `script` field for short snippets. When triggered, the selected text is injected into `$OPENFIRE_TEXT` and `OPENFIRE_TEXT_FILE`.

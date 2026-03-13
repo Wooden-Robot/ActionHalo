@@ -2,6 +2,7 @@ import Cocoa
 
 /// Main application delegate — orchestrates all components
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    static let radialMenuExcludedPluginIDs: Set<String> = ["com.openfire.builtin.paste"]
     
     private let statusBarController = StatusBarController()
     private var radialMenuWindow: RadialMenuWindow?
@@ -371,7 +372,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showRadialMenu(at point: NSPoint, text: String) {
         let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
         let availablePlugins = PluginManager.shared.availablePlugins(for: text, appBundleID: appBundleID)
-        showRadialMenu(at: point, plugins: availablePlugins)
+        showRadialMenu(at: point, plugins: Self.radialMenuPlugins(from: availablePlugins))
+    }
+
+    static func radialMenuPlugins(from plugins: [Plugin]) -> [Plugin] {
+        plugins.filter { !radialMenuExcludedPluginIDs.contains($0.id) }
     }
     
     private func showRadialMenu(at point: NSPoint, plugins: [Plugin]) {
