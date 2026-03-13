@@ -8,6 +8,7 @@ enum PluginActionType: String, Codable {
     case keyCombo = "key-combo"
     case copy = "copy"
     case paste = "paste"
+    case revealPath = "reveal-path"
 }
 
 struct PluginActionConfig: Codable {
@@ -115,7 +116,7 @@ final class Plugin: Identifiable {
     
     /// Sort order (lower = earlier, default 100)
     var order: Int { config.order ?? 100 }
-    
+
     /// Check if this plugin should be shown for the given context
     func shouldShow(text: String, appBundleID: String?) -> Bool {
         guard let filter = config.filter else { return true }

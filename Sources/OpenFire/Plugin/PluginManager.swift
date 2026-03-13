@@ -17,7 +17,8 @@ final class PluginManager {
         "com.openfire.translate",
         "com.openfire.search", 
         "com.openfire.dictionary",
-        "com.openfire.open-url"
+        "com.openfire.open-url",
+        "com.openfire.reveal-path"
     ]
     
     /// Plugins that intentionally keep their slot even when current selection is not executable.
@@ -49,6 +50,20 @@ final class PluginManager {
     }
     
     private init() {}
+
+    static func mergePluginsPreservingExisting(user: [Plugin], builtIn: [Plugin]) -> [Plugin] {
+        var merged: [String: Plugin] = [:]
+
+        for plugin in user where merged[plugin.id] == nil {
+            merged[plugin.id] = plugin
+        }
+
+        for plugin in builtIn where merged[plugin.id] == nil {
+            merged[plugin.id] = plugin
+        }
+
+        return Array(merged.values)
+    }
     
     // MARK: - Loading
     
@@ -62,15 +77,10 @@ final class PluginManager {
             // Load user plugins
             let user = PluginLoader.scanDirectory(self.userPluginsURL)
             
-            // Merge: User plugins override built-in plugins with the same ID
-            var mergedPlugins: [String: Plugin] = [:]
-            
-            for p in builtIn {
-                mergedPlugins[p.id] = p
-            }
-            for p in user {
-                mergedPlugins[p.id] = p
-            }
+            // Merge deterministically: preserve existing user plugins and keep older duplicates.
+            var mergedPlugins = Dictionary(
+                uniqueKeysWithValues: Self.mergePluginsPreservingExisting(user: user, builtIn: builtIn).map { ($0.id, $0) }
+            )
             
             // Filter out softly deleted bundled plugins
             let deletedBuiltIns = UserDefaults.standard.stringArray(forKey: "deletedBuiltInPlugins") ?? []
@@ -112,33 +122,20 @@ final class PluginManager {
     
     /// Get plugins that should be shown for the given text and app context
     func availablePlugins(for text: String, appBundleID: String?) -> [Plugin] {
-        let filtered = plugins.filter { plugin in
-            guard plugin.isEnabled else { return false }
-            if plugin.shouldShow(text: text, appBundleID: appBundleID) {
-                return true
-            }
-            return Self.reservedPlaceholderPluginIDs.contains(plugin.id)
-        }
+        let filtered = plugins.filter(\.isEnabled)
         
         // Use UserDefaults custom order if available
         let savedOrder = UserDefaults.standard.stringArray(forKey: "pluginOrder") ?? []
         if !savedOrder.isEmpty {
-            let sorted = filtered.sorted { a, b in
+            return filtered.sorted { a, b in
                 let indexA = savedOrder.firstIndex(of: a.id) ?? Int.max
                 let indexB = savedOrder.firstIndex(of: b.id) ?? Int.max
                 return indexA < indexB
             }
-            let maxItems = UserDefaults.standard.integer(forKey: "maxRadialMenuItems")
-            let limit = maxItems == 0 ? 12 : maxItems
-            return Array(sorted.prefix(limit))
         }
         
         // Fallback to config order
-        let finalPlugins = filtered.sorted { $0.order < $1.order }
-        
-        let maxItems = UserDefaults.standard.integer(forKey: "maxRadialMenuItems")
-        let limit = maxItems == 0 ? 12 : maxItems
-        return Array(finalPlugins.prefix(limit))
+        return filtered.sorted { $0.order < $1.order }
     }
     
     // MARK: - Plugin State
@@ -280,6 +277,8 @@ final class PluginManager {
             NSPasteboard.general.setString(text, forType: .string)
         case .paste:
             ActionExecutor.shared.simulateKeyCombo(key: 0x09, modifiers: .maskCommand) // Cmd+V
+        case .revealPath:
+            ActionExecutor.revealPathInFinder(text)
         }
     }
     

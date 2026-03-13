@@ -6,6 +6,7 @@
 "Translate" = "翻译";
 "Dictionary" = "词典";
 "Open URL" = "打开链接";
+"Reveal in Finder" = "在 Finder 中显示";
 
 /* HotkeyManager */
 "Set Hotkey" = "设置快捷键";
@@ -106,6 +107,7 @@
 "Simulate Key Combo" = "模拟快捷键 (Key Combo)";
 "Built-in: Copy" = "内置：复制 (Copy)";
 "Built-in: Paste" = "内置：粘贴 (Paste)";
+"Built-in: Reveal in Finder" = "内置：在 Finder 中显示";
 "Action Content:" = "执行内容:";
 "Save" = "保存";
 "Restore Default" = "恢复默认";
@@ -117,6 +119,7 @@
 "Record key combo\n(Click the box on the right and press keyboard)" = "录制快捷键\n(点击右侧框并按下键盘)";
 "Built-in: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)" = "内置：纯复制\n直接将原文本写入剪贴板\n(无需内容配置)";
 "Built-in: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)" = "内置：纯粘贴\n触发系统的 Cmd+V 粘贴操作\n(无需内容配置)";
+"Built-in: Reveal in Finder\nOpens the selected file path in Finder\n(Supports /, ~, and file:// paths)" = "内置：在 Finder 中显示\n在 Finder 中打开所选文件路径的位置\n(支持 /、~ 和 file:// 路径)";
 "Save Failed" = "保存失败";
 "Name and Identifier cannot be empty." = "名称和标识符不能为空。";
 "URL cannot be empty" = "URL 不能为空";

@@ -130,4 +130,43 @@ final class PluginTests: XCTestCase {
         XCTAssertTrue(plugin.shouldShow(text: "https://github.com", appBundleID: nil as String?))
         XCTAssertTrue(plugin.shouldShow(text: "just some text", appBundleID: nil as String?))
     }
+
+    func testDecodeRevealPathPluginJSON() throws {
+        let json = """
+        {
+            "name": "Reveal Path",
+            "identifier": "com.test.reveal",
+            "action": { "type": "reveal-path" }
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(PluginConfig.self, from: json)
+
+        XCTAssertEqual(config.action.type, .revealPath)
+    }
+
+    func testPluginRespectsLengthAndAppFilters() throws {
+        let json = """
+        {
+            "name": "Scoped",
+            "identifier": "com.test.scoped",
+            "filter": {
+                "minLength": 3,
+                "maxLength": 5,
+                "apps": ["com.apple.Safari"],
+                "excludeApps": ["com.apple.finder"]
+            },
+            "action": { "type": "copy" }
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(PluginConfig.self, from: json)
+        let plugin = Plugin(config: config, directoryURL: URL(fileURLWithPath: "/"))
+
+        XCTAssertFalse(plugin.shouldShow(text: "hi", appBundleID: "com.apple.Safari"))
+        XCTAssertTrue(plugin.shouldShow(text: "hello", appBundleID: "com.apple.Safari"))
+        XCTAssertFalse(plugin.shouldShow(text: "toolong", appBundleID: "com.apple.Safari"))
+        XCTAssertFalse(plugin.shouldShow(text: "test", appBundleID: "com.apple.finder"))
+        XCTAssertFalse(plugin.shouldShow(text: "test", appBundleID: nil))
+    }
 }

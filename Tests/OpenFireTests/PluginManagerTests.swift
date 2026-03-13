@@ -27,20 +27,21 @@ final class PluginManagerTests: XCTestCase {
             manager.plugins.append(plugin)
         }
         
-        // 1. Test Default Limit (12)
+        // The plugin manager should return all enabled plugins.
+        // Actual page-size truncation happens inside RadialMenuWindow pagination.
         UserDefaults.standard.set(0, forKey: "maxRadialMenuItems")
         var available = manager.availablePlugins(for: "test", appBundleID: nil)
-        XCTAssertEqual(available.count, 12, "Default undefined limit should truncate to 12 items")
+        XCTAssertEqual(available.count, 20, "PluginManager should not pre-truncate plugin lists")
         
-        // 2. Test Limit 6
+        // Changing page-size settings should not affect the source plugin list length.
         UserDefaults.standard.set(6, forKey: "maxRadialMenuItems")
         available = manager.availablePlugins(for: "test", appBundleID: nil)
-        XCTAssertEqual(available.count, 6, "Limit should truncate to 6 items")
+        XCTAssertEqual(available.count, 20, "Page-size settings should not truncate the manager output")
         
-        // 3. Test Limit 16
+        // Pagination still consumes the full ordered list.
         UserDefaults.standard.set(16, forKey: "maxRadialMenuItems")
         available = manager.availablePlugins(for: "test", appBundleID: nil)
-        XCTAssertEqual(available.count, 16, "Limit should truncate to 16 items")
+        XCTAssertEqual(available.count, 20, "Larger page-size settings should also preserve the full list")
     }
     
     func testAvailablePluginsIgnoresTextMatchButRespectsEnabledState() {
@@ -70,7 +71,7 @@ final class PluginManagerTests: XCTestCase {
         // which we'll test in RadialMenuItemTests.
     }
     
-    func testAvailablePluginsRespectsPluginFilters() {
+    func testAvailablePluginsKeepsEnabledPluginsEvenWhenFilterDoesNotMatch() {
         let manager = PluginManager.shared
         manager.plugins.removeAll()
         
@@ -87,26 +88,92 @@ final class PluginManagerTests: XCTestCase {
         
         let available = manager.availablePlugins(for: "https://openai.com", appBundleID: "com.apple.Safari")
         
-        XCTAssertEqual(available.map(\.id), ["com.test.match"])
+        XCTAssertEqual(available.map(\.id), ["com.test.match", "com.test.nomatch"])
     }
     
-    func testAvailablePluginsKeepsReservedOpenURLPlaceholder() {
+    func testAvailablePluginsKeepsAllEnabledPluginsVisible() {
         let manager = PluginManager.shared
         manager.plugins.removeAll()
         
         let openURLJSON = #"{"name":"Open URL","identifier":"com.openfire.open-url","action":{"type":"url","url":"{text}"},"icon":"link","order":70,"filter":{"minLength":5,"regex":"^(https?://|www\\.)[^ ]+"}}"#
+        let revealPathJSON = #"{"name":"Reveal Path","identifier":"com.openfire.reveal-path","action":{"type":"reveal-path"},"icon":"folder","order":65,"filter":{"minLength":2,"regex":"^/.*$"}}"#
         let normalJSON = #"{"name":"Search","identifier":"com.test.search","action":{"type":"url","url":"https://example.com?q={text}"},"icon":"magnifyingglass","order":10}"#
         
         let openURLConfig = try! JSONDecoder().decode(PluginConfig.self, from: Data(openURLJSON.utf8))
+        let revealPathConfig = try! JSONDecoder().decode(PluginConfig.self, from: Data(revealPathJSON.utf8))
         let normalConfig = try! JSONDecoder().decode(PluginConfig.self, from: Data(normalJSON.utf8))
         
         manager.plugins = [
             Plugin(config: normalConfig, directoryURL: URL(fileURLWithPath: "")),
+            Plugin(config: revealPathConfig, directoryURL: URL(fileURLWithPath: "")),
             Plugin(config: openURLConfig, directoryURL: URL(fileURLWithPath: ""))
         ]
         
         let available = manager.availablePlugins(for: "plain text", appBundleID: nil)
         
-        XCTAssertEqual(available.map(\.id), ["com.test.search", "com.openfire.open-url"])
+        XCTAssertEqual(available.map(\.id), ["com.test.search", "com.openfire.reveal-path", "com.openfire.open-url"])
+    }
+
+    func testMergePluginsPreservingExistingPrefersUserPluginForDuplicateIdentifier() {
+        let oldUserPlugin = makePlugin(
+            name: "Old User Version",
+            identifier: "com.test.duplicate",
+            order: 1,
+            directory: "/tmp/user"
+        )
+        let newBuiltInPlugin = makePlugin(
+            name: "New Built-In Version",
+            identifier: "com.test.duplicate",
+            order: 99,
+            directory: "/tmp/builtin"
+        )
+
+        let merged = PluginManager.mergePluginsPreservingExisting(
+            user: [oldUserPlugin],
+            builtIn: [newBuiltInPlugin]
+        )
+
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.name, "Old User Version")
+        XCTAssertEqual(merged.first?.directoryURL.path, "/tmp/user")
+    }
+
+    func testMergePluginsPreservingExistingKeepsFirstUserDuplicate() {
+        let oldestPlugin = makePlugin(
+            name: "Oldest",
+            identifier: "com.test.duplicate",
+            order: 1,
+            directory: "/tmp/oldest"
+        )
+        let newerPlugin = makePlugin(
+            name: "Newer",
+            identifier: "com.test.duplicate",
+            order: 2,
+            directory: "/tmp/newer"
+        )
+
+        let merged = PluginManager.mergePluginsPreservingExisting(
+            user: [oldestPlugin, newerPlugin],
+            builtIn: []
+        )
+
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.name, "Oldest")
+        XCTAssertEqual(merged.first?.directoryURL.path, "/tmp/oldest")
+    }
+
+    private func makePlugin(name: String, identifier: String, order: Int, directory: String) -> Plugin {
+        let json = """
+        {
+            "name": "\(name)",
+            "identifier": "\(identifier)",
+            "action": { "type": "copy" },
+            "icon": "star",
+            "order": \(order)
+        }
+        """
+
+        let config = try! JSONDecoder().decode(PluginConfig.self, from: Data(json.utf8))
+        return Plugin(config: config, directoryURL: URL(fileURLWithPath: directory))
     }
 }

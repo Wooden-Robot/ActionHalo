@@ -6,6 +6,18 @@ final class CapsuleActionButton: NSButton {
         case accent
         case destructive
     }
+
+    var usesHUDStyle = false {
+        didSet { applyVisualState() }
+    }
+
+    var usesSolidToolbarStyle = false {
+        didSet { applyVisualState() }
+    }
+
+    var segmentCornerRadius: CGFloat? {
+        didSet { applyVisualState() }
+    }
     
     var style: Style = .neutral {
         didSet { applyVisualState() }
@@ -67,17 +79,54 @@ final class CapsuleActionButton: NSButton {
     }
     
     private var foregroundColor: NSColor {
+        if usesSolidToolbarStyle {
+            switch style {
+            case .neutral:
+                return NSColor(white: 1.0, alpha: isHovered ? 0.98 : 0.92)
+            case .accent:
+                return NSColor.white
+            case .destructive:
+                return NSColor(white: 1.0, alpha: isHovered ? 0.98 : 0.92)
+            }
+        }
+
         switch style {
         case .neutral:
-            return .labelColor
+            return usesHUDStyle ? NSColor(white: 1.0, alpha: isHovered ? 0.98 : 0.90) : .labelColor
         case .accent:
-            return NSColor(calibratedRed: 0.80, green: 0.92, blue: 1.0, alpha: 1.0)
+            return usesHUDStyle
+                ? NSColor(calibratedRed: 0.91, green: 0.97, blue: 1.0, alpha: isHovered ? 1.0 : 0.94)
+                : NSColor(calibratedRed: 0.80, green: 0.92, blue: 1.0, alpha: 1.0)
         case .destructive:
-            return NSColor(calibratedRed: 1.0, green: 0.83, blue: 0.83, alpha: 1.0)
+            return usesHUDStyle
+                ? NSColor(calibratedRed: 1.0, green: 0.90, blue: 0.90, alpha: isHovered ? 0.98 : 0.90)
+                : NSColor(calibratedRed: 1.0, green: 0.83, blue: 0.83, alpha: 1.0)
         }
     }
     
     private var backgroundColor: NSColor {
+        if usesSolidToolbarStyle {
+            switch style {
+            case .neutral:
+                return NSColor.white.withAlphaComponent(isHovered ? 0.10 : 0.0)
+            case .accent:
+                return NSColor(calibratedRed: 0.22, green: 0.60, blue: 1.0, alpha: isHovered ? 0.24 : 0.0)
+            case .destructive:
+                return NSColor.white.withAlphaComponent(isHovered ? 0.08 : 0.0)
+            }
+        }
+
+        if usesHUDStyle {
+            switch style {
+            case .neutral:
+                return NSColor(white: 1.0, alpha: isHovered ? 0.10 : 0.03)
+            case .accent:
+                return NSColor(calibratedRed: 0.76, green: 0.90, blue: 1.0, alpha: isHovered ? 0.16 : 0.05)
+            case .destructive:
+                return NSColor(calibratedRed: 1.0, green: 0.48, blue: 0.48, alpha: isHovered ? 0.14 : 0.04)
+            }
+        }
+
         let alpha: CGFloat
         if !isEnabled {
             alpha = 0.08
@@ -98,6 +147,28 @@ final class CapsuleActionButton: NSButton {
     }
     
     private var borderColor: NSColor {
+        if usesSolidToolbarStyle {
+            switch style {
+            case .neutral:
+                return NSColor.white.withAlphaComponent(isHovered ? 0.12 : 0.0)
+            case .accent:
+                return NSColor(calibratedRed: 0.55, green: 0.78, blue: 1.0, alpha: isHovered ? 0.36 : 0.0)
+            case .destructive:
+                return NSColor.white.withAlphaComponent(isHovered ? 0.10 : 0.0)
+            }
+        }
+
+        if usesHUDStyle {
+            switch style {
+            case .neutral:
+                return NSColor.white.withAlphaComponent(isHovered ? 0.12 : 0.0)
+            case .accent:
+                return NSColor.white.withAlphaComponent(isHovered ? 0.16 : 0.0)
+            case .destructive:
+                return NSColor(calibratedRed: 1.0, green: 0.70, blue: 0.70, alpha: isHovered ? 0.16 : 0.0)
+            }
+        }
+
         switch style {
         case .neutral:
             return NSColor.white.withAlphaComponent(isHovered ? 0.18 : 0.10)
@@ -110,12 +181,25 @@ final class CapsuleActionButton: NSButton {
     
     private func applyVisualState() {
         wantsLayer = true
-        layer?.cornerRadius = 10
+        layer?.cornerRadius = segmentCornerRadius ?? 10
         layer?.backgroundColor = backgroundColor.cgColor
-        layer?.borderWidth = 1
+        layer?.borderWidth = usesHUDStyle ? (isHovered ? 1 : 0) : 1
+        if usesSolidToolbarStyle {
+            layer?.borderWidth = isHovered ? 1 : 0
+        }
         layer?.borderColor = borderColor.cgColor
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOffset = .zero
+        if usesSolidToolbarStyle {
+            layer?.shadowRadius = isHovered ? 6 : 0
+            layer?.shadowOpacity = isHovered ? 0.10 : 0
+        } else {
+            layer?.shadowRadius = 0
+            layer?.shadowOpacity = 0
+        }
         alphaValue = isEnabled ? 1.0 : 0.55
         contentTintColor = foregroundColor
+        attributedTitle = NSAttributedString(string: title)
         needsDisplay = true
     }
 }

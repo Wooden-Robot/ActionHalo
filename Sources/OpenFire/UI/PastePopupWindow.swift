@@ -6,10 +6,11 @@ final class PastePopupWindow: NSPanel {
     var onPasteClicked: (() -> Void)?
     var onClearClicked: (() -> Void)?
     
-    private let popupWidth: CGFloat = 152
-    private let popupHeight: CGFloat = 36
+    private let popupWidth: CGFloat = 148
+    private let popupHeight: CGFloat = 32
     private var pasteButton: CapsuleActionButton!
     private var clearButton: CapsuleActionButton!
+    private let container = NSView()
     
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(
@@ -33,66 +34,74 @@ final class PastePopupWindow: NSPanel {
     }
     
     private func setupUI() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: popupWidth, height: popupHeight))
+        container.frame = NSRect(x: 0, y: 0, width: popupWidth, height: popupHeight)
         container.wantsLayer = true
         container.layer?.cornerRadius = popupHeight / 2
         container.layer?.masksToBounds = true
-
-        container.layer?.backgroundColor = NSColor(calibratedWhite: 0.10, alpha: 0.92).cgColor
         container.layer?.borderWidth = 1
-        container.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
-        
-        let stackView = NSStackView()
-        stackView.orientation = .horizontal
-        stackView.spacing = 6
-        stackView.distribution = .fillEqually
+        container.layer?.borderColor = NSColor.white.withAlphaComponent(0.07).cgColor
+        container.layer?.backgroundColor = NSColor(calibratedWhite: 0.10, alpha: 0.985).cgColor
+        container.layer?.shadowColor = NSColor.black.cgColor
+        container.layer?.shadowOffset = .zero
+        container.layer?.shadowRadius = 10
+        container.layer?.shadowOpacity = 0.16
         
         pasteButton = CapsuleActionButton()
         pasteButton.style = .accent
+        pasteButton.usesSolidToolbarStyle = true
+        pasteButton.segmentCornerRadius = 0
         pasteButton.title = "Paste".localized
-        pasteButton.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        pasteButton.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         pasteButton.target = self
         pasteButton.action = #selector(pasteAction)
         pasteButton.imageHugsTitle = true
-        pasteButton.contentTintColor = NSColor(calibratedRed: 0.84, green: 0.94, blue: 1.0, alpha: 1.0)
         
         if let icon = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Paste") {
-            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
             pasteButton.image = icon.withSymbolConfiguration(config)
         }
 
-        let separator = NSView()
-        separator.wantsLayer = true
-        separator.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
-        separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
-        
         clearButton = CapsuleActionButton()
-        clearButton.style = .destructive
+        clearButton.style = .neutral
+        clearButton.usesSolidToolbarStyle = true
+        clearButton.segmentCornerRadius = 0
         clearButton.title = "Clear".localized
-        clearButton.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        clearButton.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         clearButton.target = self
         clearButton.action = #selector(clearAction)
         clearButton.imageHugsTitle = true
         
         if let icon = NSImage(systemSymbolName: "trash", accessibilityDescription: "Clear") {
-            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
             clearButton.image = icon.withSymbolConfiguration(config)
         }
         
-        stackView.addArrangedSubview(pasteButton)
-        stackView.addArrangedSubview(separator)
-        stackView.addArrangedSubview(clearButton)
-        
-        container.addSubview(stackView)
-        
-        stackView.translatesAutoresizingMaskIntoConstraints = false
+        let separator = NSView()
+        separator.wantsLayer = true
+        separator.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.08).cgColor
+
+        container.addSubview(pasteButton)
+        container.addSubview(clearButton)
+        container.addSubview(separator)
+
+        pasteButton.translatesAutoresizingMaskIntoConstraints = false
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        separator.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            stackView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
-            stackView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
-            stackView.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
-            stackView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -4),
-            separator.topAnchor.constraint(equalTo: stackView.topAnchor, constant: 3),
-            separator.bottomAnchor.constraint(equalTo: stackView.bottomAnchor, constant: -3)
+            pasteButton.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            pasteButton.topAnchor.constraint(equalTo: container.topAnchor),
+            pasteButton.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            pasteButton.trailingAnchor.constraint(equalTo: container.centerXAnchor),
+
+            clearButton.leadingAnchor.constraint(equalTo: container.centerXAnchor),
+            clearButton.topAnchor.constraint(equalTo: container.topAnchor),
+            clearButton.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            clearButton.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+
+            separator.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            separator.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
+            separator.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6),
+            separator.widthAnchor.constraint(equalToConstant: 1)
         ])
         
         self.contentView = container

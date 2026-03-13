@@ -286,12 +286,12 @@ final class RadialMenuWindow: NSPanel {
     func hideMenu(completion: (() -> Void)? = nil) {
         if radialMenuView.isGTAModeEnabled {
             NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.12
+                context.duration = 0.08
                 self.backdropView.animator().alphaValue = 0
             })
             
             NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.2
+                context.duration = 0.12
                 context.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 self.animator().alphaValue = 0
             }, completionHandler: { [weak self] in

@@ -5,6 +5,7 @@ final class StatusBarController: NSObject {
     private static let wheelBackdropEnabledKey = "WheelBackdropEnabled"
     
     private var statusItem: NSStatusItem?
+    private var mainMenu: NSMenu?
     private var isEnabled = true
     private var hotkeyRecorderWindow: HotkeyRecorderWindow?
     private var pluginListView: PluginListMenuView?
@@ -20,6 +21,9 @@ final class StatusBarController: NSObject {
             button.image = NSImage(systemSymbolName: "flame.fill", accessibilityDescription: "OpenFire")
             button.image?.size = NSSize(width: 18, height: 18)
             button.image?.isTemplate = true
+            button.target = self
+            button.action = #selector(handleStatusItemClick(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         
         rebuildMenu()
@@ -216,7 +220,7 @@ final class StatusBarController: NSObject {
         quitItem.target = self
         menu.addItem(quitItem)
         
-        statusItem?.menu = menu
+        mainMenu = menu
     }
     
     // MARK: - Actions
@@ -234,6 +238,22 @@ final class StatusBarController: NSObject {
             button.image?.size = NSSize(width: 18, height: 18)
             button.image?.isTemplate = true
         }
+    }
+
+    @objc private func handleStatusItemClick(_ sender: Any?) {
+        guard let event = NSApp.currentEvent else { return }
+        switch event.type {
+        case .rightMouseUp:
+            toggleEnabled()
+        default:
+            presentMainMenu()
+        }
+    }
+
+    private func presentMainMenu() {
+        guard let statusItem, let button = statusItem.button, let menu = mainMenu else { return }
+        statusItem.menu = menu
+        button.performClick(nil)
     }
     
     @objc private func toggleLaunchAtLogin() {
@@ -436,6 +456,12 @@ extension StatusBarController: NSMenuDelegate {
             item.isHidden = false
         } else {
             item.isHidden = true
+        }
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        if menu === mainMenu {
+            statusItem?.menu = nil
         }
     }
 }

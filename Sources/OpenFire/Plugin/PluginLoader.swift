@@ -48,11 +48,25 @@ final class PluginLoader {
         do {
             let contents = try fileManager.contentsOfDirectory(
                 at: directoryURL,
-                includingPropertiesForKeys: nil,
+                includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
                 options: [.skipsHiddenFiles]
             )
+
+            let sortedContents = contents.sorted { lhs, rhs in
+                let lhsValues = try? lhs.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+                let rhsValues = try? rhs.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+
+                let lhsDate = lhsValues?.creationDate ?? lhsValues?.contentModificationDate ?? .distantFuture
+                let rhsDate = rhsValues?.creationDate ?? rhsValues?.contentModificationDate ?? .distantFuture
+
+                if lhsDate != rhsDate {
+                    return lhsDate < rhsDate
+                }
+
+                return lhs.lastPathComponent.localizedStandardCompare(rhs.lastPathComponent) == .orderedAscending
+            }
             
-            for itemURL in contents {
+            for itemURL in sortedContents {
                 if itemURL.pathExtension == "openfireext" {
                     if let plugin = load(from: itemURL) {
                         plugins.append(plugin)

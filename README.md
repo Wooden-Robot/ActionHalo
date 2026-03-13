@@ -14,7 +14,7 @@
 
 <img src="./Assets/demo2.gif" width="600" alt="OpenFire Demo 2" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 12px 0 24px;"/>
 
-> OpenFire is heavily inspired by PopClip but massively refactored and extremely optimized in UI, interaction, and performance using native Core Animation and Swift Concurrency.
+> OpenFire draws inspiration from both GTA V and PopClip, then massively refactors and optimizes the UI, interaction model, and performance with native Core Animation and Swift Concurrency.
 
 </div>
 
@@ -104,22 +104,37 @@ OpenFire comes with a fully-featured **Visual Plugin Editor** built right into t
 - 📋 `copy`: Copy to clipboard
 - 📝 `paste`: Paste into the current input area
 
-#### Script Extensions (Inline Execution)
-For `shell-script` and `applescript`, you can write the short code block directly into the `script` string field for convenience. When triggered, OpenFire will automatically inject the text selected by the user into an environment variable named `$OPENFIRE_TEXT`.
+#### Script Extensions
+For `shell-script` and `applescript`, the standard plugin layout is to point `action.script` at a bundled script file inside the `.openfireext` package. OpenFire also supports inline script text in the same `script` field for short snippets. When triggered, the selected text is injected into `$OPENFIRE_TEXT` and `OPENFIRE_TEXT_FILE`.
 
-**Example: Run Shell**
+**Recommended package layout**
+```text
+My Script.openfireext/
+  Config.json
+  script.sh
+```
+
+**Example: Shell script file**
+```json
+"action": {
+  "type": "shell-script",
+  "script": "script.sh"
+}
+```
+
+**Example: AppleScript file**
+```json
+"action": {
+  "type": "applescript",
+  "script": "script.applescript"
+}
+```
+
+**Inline alternative for short scripts**
 ```json
 "action": {
   "type": "shell-script",
   "script": "echo \"Selected: $OPENFIRE_TEXT\" >> ~/Desktop/openfire.log"
-}
-```
-
-**Example: Run AppleScript**
-```json
-"action": {
-  "type": "applescript",
-  "script": "set envText to (system attribute \"OPENFIRE_TEXT\")\ndisplay dialog \"You selected: \" & envText"
 }
 ```
 

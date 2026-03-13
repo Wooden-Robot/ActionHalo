@@ -1,0 +1,20 @@
+{
+  "name": "打开文件位置",
+  "localizedNames": {
+    "en": "Reveal in Finder"
+  },
+  "icon": "folder",
+  "identifier": "com.openfire.reveal-path",
+  "description": "如果选中文本是文件路径，则在 Finder 中打开对应位置",
+  "localizedDescriptions": {
+    "en": "Open the selected file path in Finder"
+  },
+  "order": 65,
+  "action": {
+    "type": "reveal-path"
+  },
+  "filter": {
+    "minLength": 2,
+    "regex": "^\\s*(?:file://[^\\n]+|~(?:/[^\\n]*)?|/[^\\n]*)\\s*$"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "identifier": "com.openfire.plugin.run-in-terminal",
+  "name": "Run in iTerm2",
+  "localizedNames": {
+    "zh-Hans": "在 iTerm2 中执行"
+  },
+  "description": "Open iTerm2 and execute the selected text as a shell command",
+  "localizedDescriptions": {
+    "zh-Hans": "打开 iTerm2，并将选中文本作为 shell 命令执行"
+  },
+  "icon": "terminal",
+  "isDefaultDisabled": true,
+  "action": {
+    "type": "applescript",
+    "script": "script.applescript"
+  }
+}

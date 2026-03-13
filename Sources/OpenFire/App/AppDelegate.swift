@@ -425,19 +425,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func handleMenuAction(_ item: RadialMenuItem, text: String) {
-        dismissAllMenus()
-        
-        // Small delay to let menu animation complete
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            switch item.action {
-            case .builtIn(let action):
-                ActionExecutor.shared.execute(action: action, text: text)
-            case .plugin(let plugin):
-                PluginManager.shared.executePlugin(plugin, with: text)
-            default:
-                break
-            }
+        switch item.action {
+        case .builtIn(let action):
+            ActionExecutor.shared.execute(action: action, text: text)
+        case .plugin(let plugin):
+            PluginManager.shared.executePlugin(plugin, with: text)
+        default:
+            break
         }
+
+        dismissAllMenus()
     }
     
     // MARK: - Global Click Monitor

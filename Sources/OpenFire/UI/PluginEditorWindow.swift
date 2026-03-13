@@ -325,7 +325,8 @@ final class PluginEditorWindow: NSWindow {
             "Execute AppleScript".localized,
             "Simulate Key Combo".localized,
             "Built-in: Copy".localized,
-            "Built-in: Paste".localized
+            "Built-in: Paste".localized,
+            "Built-in: Reveal in Finder".localized
         ])
         typePopUp.target = self
         typePopUp.action = #selector(typeChanged)
@@ -564,6 +565,9 @@ final class PluginEditorWindow: NSWindow {
         case .paste:
             typePopUp.selectItem(at: 5)
             contentTextView.string = ""
+        case .revealPath:
+            typePopUp.selectItem(at: 6)
+            contentTextView.string = ""
         }
         typeChanged()
     }
@@ -594,6 +598,11 @@ final class PluginEditorWindow: NSWindow {
             contentViewScroll.isHidden = true
         case 5: // Paste
             infoLabel.stringValue = "Built-in: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)".localized
+            contentTextView.isEditable = false
+            contentTextView.string = ""
+            contentViewScroll.isHidden = true
+        case 6: // Reveal in Finder
+            infoLabel.stringValue = "Built-in: Reveal in Finder\nOpens the selected file path in Finder\n(Supports /, ~, and file:// paths)".localized
             contentTextView.isEditable = false
             contentTextView.string = ""
             contentViewScroll.isHidden = true
@@ -655,6 +664,8 @@ final class PluginEditorWindow: NSWindow {
             actionDict = ["type": "copy"]
         case 5: // Paste
             actionDict = ["type": "paste"]
+        case 6: // Reveal in Finder
+            actionDict = ["type": "reveal-path"]
         default:
             return showError("Unsupported plugin type for saving".localized)
         }

@@ -6,6 +6,45 @@ final class ActionExecutor {
     static let shared = ActionExecutor()
     
     private init() {}
+
+    static func revealPathInFinder(_ text: String) {
+        guard let url = resolvedFileURL(from: text) else { return }
+
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return }
+
+        if isDirectory.boolValue {
+            NSWorkspace.shared.open(url)
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+
+    static func resolvedFileURL(from text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let unwrapped = unwrapQuotedPath(trimmed)
+
+        if let fileURL = URL(string: unwrapped), fileURL.isFileURL {
+            return fileURL.standardizedFileURL
+        }
+
+        let expandedPath = (unwrapped as NSString).expandingTildeInPath
+        guard expandedPath.hasPrefix("/") else { return nil }
+
+        return URL(fileURLWithPath: expandedPath).standardizedFileURL
+    }
+
+    private static func unwrapQuotedPath(_ text: String) -> String {
+        guard text.count >= 2 else { return text }
+
+        let pairs: Set<[Character]> = [["\"", "\""], ["'", "'"]]
+        let chars = Array(text)
+        guard pairs.contains([chars.first!, chars.last!]) else { return text }
+
+        return String(chars.dropFirst().dropLast())
+    }
     
     /// Execute a built-in menu action with the given text
     func execute(action: BuiltInAction, text: String) {
@@ -24,6 +63,8 @@ final class ActionExecutor {
             lookUpInDictionary(text)
         case .openURL:
             openURL(text)
+        case .revealPath:
+            Self.revealPathInFinder(text)
         }
     }
     
@@ -87,6 +128,7 @@ enum BuiltInAction: String, CaseIterable {
     case translate = "translate"
     case dictionary = "dictionary"
     case openURL = "openURL"
+    case revealPath = "revealPath"
     
     var title: String {
         switch self {
@@ -97,6 +139,7 @@ enum BuiltInAction: String, CaseIterable {
         case .translate: return "Translate".localized
         case .dictionary: return "Dictionary".localized
         case .openURL: return "Open URL".localized
+        case .revealPath: return "Reveal in Finder".localized
         }
     }
     
@@ -109,6 +152,7 @@ enum BuiltInAction: String, CaseIterable {
         case .translate: return "globe"
         case .dictionary: return "book"
         case .openURL: return "link"
+        case .revealPath: return "folder"
         }
     }
 }

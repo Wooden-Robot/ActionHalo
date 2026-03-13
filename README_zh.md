@@ -14,7 +14,7 @@
 
 <img src="./Assets/demo2.gif" width="600" alt="OpenFire 演示 2" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 12px 0 24px;"/>
 
-> OpenFire 的灵感来源于 PopClip，但在 UI、交互和性能上基于原生 Core Animation 和 Swift Concurrency 进行了大规模重构与极速优化。
+> OpenFire 的灵感同时来自 GTA V 和 PopClip，并在 UI、交互与性能上基于原生 Core Animation 和 Swift Concurrency 做了大规模重构与极速优化。
 
 </div>
 
@@ -104,8 +104,39 @@ OpenFire 内置了功能完善的**可视化插件编辑器**，无需再手动�
 - 📋 `copy`: 复制到剪切板
 - 📝 `paste`: 粘贴到当前输入区
 
-#### 脚本类扩展 (直接内联执行)
-对于 `shell-script` 和 `applescript`，你可以为了方便直接将简短的代码写在 `script` 字符串字段内。当触发脚本时，OpenFire 会自动将用户选中的文本注入到名为 `$OPENFIRE_TEXT` 的环境变量中。
+#### 脚本类扩展
+对于 `shell-script` 和 `applescript`，标准插件写法是让 `action.script` 指向 `.openfireext` 包内附带的脚本文件。OpenFire 也支持把简短脚本直接内联写进同一个 `script` 字段。当触发脚本时，OpenFire 会自动注入 `$OPENFIRE_TEXT` 和 `OPENFIRE_TEXT_FILE`。
+
+**推荐的插件结构**
+```text
+My Script.openfireext/
+  Config.json
+  script.sh
+```
+
+**示例：引用 Shell 脚本文件**
+```json
+"action": {
+  "type": "shell-script",
+  "script": "script.sh"
+}
+```
+
+**示例：引用 AppleScript 文件**
+```json
+"action": {
+  "type": "applescript",
+  "script": "script.applescript"
+}
+```
+
+**短脚本也可以直接内联**
+```json
+"action": {
+  "type": "shell-script",
+  "script": "echo \"Selected: $OPENFIRE_TEXT\" >> ~/Desktop/openfire.log"
+}
+```
 
 ---
 
