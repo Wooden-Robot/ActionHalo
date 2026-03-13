@@ -14,6 +14,17 @@ final class AccessibilityManager {
     private init() {
         systemWideElement = AXUIElementCreateSystemWide()
     }
+
+    /// Convert a global AppKit mouse location into the top-left AX coordinate space
+    /// for the specific display containing that point.
+    func accessibilityScreenPoint(for point: NSPoint) -> CGPoint? {
+        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }) ?? NSScreen.main else {
+            return nil
+        }
+
+        let frame = screen.frame
+        return CGPoint(x: point.x, y: frame.maxY - point.y)
+    }
     
     func startWatchdog() {
         permissionWatchdog?.invalidate()
@@ -153,13 +164,8 @@ final class AccessibilityManager {
     /// Check if the element at the specified screen coordinates is a text input field
     func isTextInputElement(at point: NSPoint) -> Bool {
         guard isAccessibilityEnabled else { return false }
-        
-        // NSEvent.mouseLocation uses bottom-left origin. AXUIElement uses top-left origin.
-        // We need to convert the point relative to the primary screen.
-        let screens = NSScreen.screens
-        guard !screens.isEmpty else { return false }
-        let primaryScreenFrame = screens[0].frame
-        let axPoint = CGPoint(x: point.x, y: primaryScreenFrame.height - point.y)
+
+        guard let axPoint = accessibilityScreenPoint(for: point) else { return false }
         
         // 1. Get the globally focused element instead of hit-testing.
         // Hit-testing often returns low-level items like AXGroup or AXStaticText which breaks the logic.
@@ -247,13 +253,10 @@ final class AccessibilityManager {
     /// specifically excluding structural elements like Finder rows, cells, or images that get double-clicked.
     func isTextElement(at point: NSPoint) -> Bool {
         guard isAccessibilityEnabled else { return false }
-        
+
         // 1. Get the globally focused element or the element exactly under the mouse
         // We use systemWideElement to hit-test the specific point on screen
-        let screens = NSScreen.screens
-        guard !screens.isEmpty else { return false }
-        let primaryScreenFrame = screens[0].frame
-        let axPoint = CGPoint(x: point.x, y: primaryScreenFrame.height - point.y)
+        guard let axPoint = accessibilityScreenPoint(for: point) else { return false }
         
         var hitElementRaw: AXUIElement?
         let hitResult = AXUIElementCopyElementAtPosition(systemWideElement, Float(axPoint.x), Float(axPoint.y), &hitElementRaw)

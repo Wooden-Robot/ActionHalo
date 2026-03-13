@@ -387,7 +387,8 @@ final class StatusBarController: NSObject {
             } else {
                 HotkeyManager.shared.hotkey = (keyCode, modifiers)
             }
-            HotkeyManager.shared.registerHotkeys()
+            let issues = HotkeyManager.shared.registerHotkeys()
+            self?.presentHotkeyRegistrationIssues(issues)
             self?.rebuildMenu()
         }
         recorder.makeKeyAndOrderFront(nil)
@@ -403,7 +404,8 @@ final class StatusBarController: NSObject {
             } else {
                 HotkeyManager.shared.toggleHotkey = (keyCode, modifiers)
             }
-            HotkeyManager.shared.registerHotkeys()
+            let issues = HotkeyManager.shared.registerHotkeys()
+            self?.presentHotkeyRegistrationIssues(issues)
             self?.rebuildMenu()
         }
         recorder.makeKeyAndOrderFront(nil)
@@ -437,6 +439,18 @@ final class StatusBarController: NSObject {
         }
         blacklistWindow?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func presentHotkeyRegistrationIssues(_ issues: [HotkeyManager.RegistrationIssue]) {
+        guard !issues.isEmpty else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Hotkey Registration Failed".localized
+        alert.informativeText = issues.map(\.message).joined(separator: "\n")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK".localized)
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 }
 

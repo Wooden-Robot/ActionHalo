@@ -3,6 +3,15 @@ import Carbon
 
 /// Manages a global hotkey for triggering the radial menu on selected text
 final class HotkeyManager {
+    struct RegistrationIssue: Equatable {
+        let kind: Kind
+        let message: String
+
+        enum Kind: Equatable {
+            case duplicateAssignment
+            case registerFailed(OSStatus)
+        }
+    }
     
     static let shared = HotkeyManager()
     static let hotkeyChangedNotification = Notification.Name("OpenFireHotkeyChanged")
@@ -71,8 +80,20 @@ final class HotkeyManager {
     }
     
     /// Register all global hotkeys
-    func registerHotkeys() {
+    @discardableResult
+    func registerHotkeys() -> [RegistrationIssue] {
         unregisterHotkeys()
+        var issues: [RegistrationIssue] = []
+
+        if let hk = hotkey, let thk = toggleHotkey, hk == thk {
+            let issue = RegistrationIssue(
+                kind: .duplicateAssignment,
+                message: "Menu Hotkey and Toggle Hotkey cannot use the same shortcut.".localized
+            )
+            issues.append(issue)
+            NSLog("[OpenFire] Hotkey registration skipped: duplicate assignment")
+            return issues
+        }
         
         let handler: EventHandlerUPP = { _, event, _ -> OSStatus in
             var hotkeyID = EventHotKeyID()
@@ -101,15 +122,37 @@ final class HotkeyManager {
         
         if let hk = hotkey {
             let hotkeyID = EventHotKeyID(signature: fourCharCode("OFIR"), id: 1)
-            RegisterEventHotKey(hk.keyCode, hk.modifiers, hotkeyID, GetApplicationEventTarget(), 0, &hotkeyRef)
-            NSLog("[OpenFire] Radial Menu Hotkey registered: \(hotkeyDescription)")
+            let status = RegisterEventHotKey(hk.keyCode, hk.modifiers, hotkeyID, GetApplicationEventTarget(), 0, &hotkeyRef)
+            if status == noErr {
+                NSLog("[OpenFire] Radial Menu Hotkey registered: \(hotkeyDescription)")
+            } else {
+                issues.append(
+                    RegistrationIssue(
+                        kind: .registerFailed(status),
+                        message: String(format: "Failed to register Menu Hotkey (%@). It may conflict with another shortcut.".localized, hotkeyDescription)
+                    )
+                )
+                hotkeyRef = nil
+            }
         }
         
         if let thk = toggleHotkey {
             let toggleHotkeyID = EventHotKeyID(signature: fourCharCode("OFIR"), id: 2)
-            RegisterEventHotKey(thk.keyCode, thk.modifiers, toggleHotkeyID, GetApplicationEventTarget(), 0, &toggleHotkeyRef)
-            NSLog("[OpenFire] Toggle App Hotkey registered: \(toggleHotkeyDescription)")
+            let status = RegisterEventHotKey(thk.keyCode, thk.modifiers, toggleHotkeyID, GetApplicationEventTarget(), 0, &toggleHotkeyRef)
+            if status == noErr {
+                NSLog("[OpenFire] Toggle App Hotkey registered: \(toggleHotkeyDescription)")
+            } else {
+                issues.append(
+                    RegistrationIssue(
+                        kind: .registerFailed(status),
+                        message: String(format: "Failed to register Toggle Hotkey (%@). It may conflict with another shortcut.".localized, toggleHotkeyDescription)
+                    )
+                )
+                toggleHotkeyRef = nil
+            }
         }
+
+        return issues
     }
     
     /// Unregister all global hotkeys

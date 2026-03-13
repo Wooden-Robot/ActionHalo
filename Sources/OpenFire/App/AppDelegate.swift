@@ -94,7 +94,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         if HotkeyManager.shared.hotkey != nil || HotkeyManager.shared.toggleHotkey != nil {
-            HotkeyManager.shared.registerHotkeys()
+            let issues = HotkeyManager.shared.registerHotkeys()
+            for issue in issues {
+                NSLog("[OpenFire] Hotkey registration issue: \(issue.message)")
+            }
         }
     }
     
@@ -198,6 +201,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let config = try? JSONDecoder().decode(PluginConfig.self, from: data) {
             pluginName = config.name
             pluginDescription = config.description ?? String(format: "Type: %@".localized, config.action.type.rawValue)
+            if Plugin(config: config, directoryURL: url).requiresExecutionTrust {
+                pluginDescription += "\n\n" + "Warning: this plugin can execute scripts on your Mac. OpenFire will require explicit trust before the first run, and again after plugin changes.".localized
+            }
         }
         
         // Show confirmation alert
