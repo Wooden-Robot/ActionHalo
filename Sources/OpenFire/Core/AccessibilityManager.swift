@@ -7,9 +7,44 @@ final class AccessibilityManager {
     static let shared = AccessibilityManager()
     
     private let systemWideElement: AXUIElement
-    
+
+    enum SelectionAcquisitionSource {
+        case accessibility
+        case copyFallback
+
+        var localizationKey: String {
+            switch self {
+            case .accessibility:
+                return "Accessibility API"
+            case .copyFallback:
+                return "Cmd+C Fallback"
+            }
+        }
+    }
+
+    struct SelectionAcquisitionStatus {
+        let source: SelectionAcquisitionSource
+        let timestamp: Date
+        let textLength: Int
+    }
+
+    enum SelectionAttemptFailure {
+        case accessibilityEmptySelection
+        case copyFallbackEmptySelection
+        case observerSetupFailed
+        case observerTimedOut
+        case noFocusedApplication
+    }
+
+    struct SelectionAttemptStatus {
+        let timestamp: Date
+        let failure: SelectionAttemptFailure
+    }
+
     var onPermissionLost: (() -> Void)?
     private var permissionWatchdog: Timer?
+    private(set) var lastSelectionAcquisitionStatus: SelectionAcquisitionStatus?
+    private(set) var lastSelectionAttemptStatus: SelectionAttemptStatus?
     
     private init() {
         systemWideElement = AXUIElementCreateSystemWide()
@@ -131,6 +166,22 @@ final class AccessibilityManager {
                 completion(result)
             }
         }
+    }
+
+    func recordSelectionAcquisition(source: SelectionAcquisitionSource, text: String) {
+        lastSelectionAcquisitionStatus = SelectionAcquisitionStatus(
+            source: source,
+            timestamp: Date(),
+            textLength: text.count
+        )
+        lastSelectionAttemptStatus = nil
+    }
+
+    func recordSelectionAttemptFailure(_ failure: SelectionAttemptFailure) {
+        lastSelectionAttemptStatus = SelectionAttemptStatus(
+            timestamp: Date(),
+            failure: failure
+        )
     }
 
     private static func capturePasteboardSnapshot(from pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
@@ -355,6 +406,32 @@ final class AccessibilityManager {
         guard elementResult == .success, let element = focusedElement else { return nil }
         
         return (element as! AXUIElement)
+    }
+
+    func focusedElementRoleDescription() -> String? {
+        guard let element = getFocusedElement() else { return nil }
+
+        var roleValue: AnyObject?
+        let roleResult = AXUIElementCopyAttributeValue(
+            element,
+            kAXRoleAttribute as CFString,
+            &roleValue
+        )
+
+        guard roleResult == .success, let role = roleValue as? String else { return nil }
+
+        var subroleValue: AnyObject?
+        let subroleResult = AXUIElementCopyAttributeValue(
+            element,
+            kAXSubroleAttribute as CFString,
+            &subroleValue
+        )
+
+        if subroleResult == .success, let subrole = subroleValue as? String, !subrole.isEmpty {
+            return "\(role) / \(subrole)"
+        }
+
+        return role
     }
     
     /// Get the currently focused application's bundle identifier

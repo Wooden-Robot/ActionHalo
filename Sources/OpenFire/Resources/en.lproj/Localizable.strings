@@ -69,6 +69,8 @@
 "⏸ Disabled" = "⏸ Disabled";
 "Disable in Current App" = "Disable in Current App";
 "Manage Disabled Apps..." = "Manage Disabled Apps...";
+"Manage Plugins in Current App..." = "Manage Plugins in Current App...";
+"Manage Plugins in %@..." = "Manage Plugins in %@...";
 "Diagnostics..." = "Diagnostics...";
 "Plugin Management" = "Plugin Management";
 "Click to toggle · Drag to reorder" = "Click to toggle · Drag to reorder";
@@ -164,6 +166,11 @@
 
 /* OpenFire UI / Other */
 "App Blacklist" = "App Blacklist";
+"Plugins in %@" = "Plugins in %@";
+"Disable specific plugins only in %@. Global disabled plugins stay unavailable here." = "Disable specific plugins only in %@. Global disabled plugins stay unavailable here.";
+"Enabled in this app" = "Enabled in this app";
+"Disabled in this app" = "Disabled in this app";
+"Globally disabled" = "Globally disabled";
 "The OpenFire radial menu will not appear when selecting text in the following apps:" = "The OpenFire radial menu will not appear when selecting text in the following apps:";
 "Please select the application to disable OpenFire in" = "Please select the application to disable OpenFire in";
 "Clear" = "Clear";
@@ -183,6 +190,12 @@
 "Active in current app" = "Active in current app";
 "Selected text length" = "Selected text length";
 "Selected text preview" = "Selected text preview";
+"Focused element" = "Focused element";
+"Selection source" = "Selection source";
+"Last selection failure" = "Last selection failure";
+"Menu readiness" = "Menu readiness";
+"Ready" = "Ready";
+"Blocked" = "Blocked";
 "Plugins" = "Plugins";
 "visible" = "visible";
 "Visible" = "Visible";
@@ -194,7 +207,22 @@
 "None" = "None";
 "Unavailable" = "Unavailable";
 "Unknown" = "Unknown";
+"Accessibility API" = "Accessibility API";
+"Cmd+C Fallback" = "Cmd+C Fallback";
+"No selection captured yet" = "No selection captured yet";
+"No recent selection failure" = "No recent selection failure";
+"%@ · %@ · %d chars" = "%@ · %@ · %d chars";
+"%@ · %@" = "%@ · %@";
+"Accessibility permission is missing" = "Accessibility permission is missing";
+"OpenFire is disabled in the current app" = "OpenFire is disabled in the current app";
+"No selected text was detected via Accessibility" = "No selected text was detected via Accessibility";
+"Accessibility read returned no selected text" = "Accessibility read returned no selected text";
+"Cmd+C fallback returned no selected text" = "Cmd+C fallback returned no selected text";
+"AX observer could not be attached" = "AX observer could not be attached";
+"AX observer timed out waiting for selection" = "AX observer timed out waiting for selection";
+"No focused application was available" = "No focused application was available";
 "Plugin is disabled" = "Plugin is disabled";
+"Plugin is disabled for app %@" = "Plugin is disabled for app %@";
 "Selected text is too short (%d < %d)" = "Selected text is too short (%d < %d)";
 "Selected text is too long (%d > %d)" = "Selected text is too long (%d > %d)";
 "Plugin regex is invalid: %@" = "Plugin regex is invalid: %@";

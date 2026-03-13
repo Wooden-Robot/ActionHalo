@@ -56,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Setup status bar
         statusBarController.setup()
+        isEnabled = statusBarController.currentEnabledState
         statusBarController.onEnabledChanged = { [weak self] enabled in
             self?.setEnabled(enabled)
         }
@@ -108,15 +109,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Quick check via Accessibility API first
         if let text = AccessibilityManager.shared.getSelectedText(), !text.isEmpty {
             let mouseLocation = NSEvent.mouseLocation
+            AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
             self.currentSelectedText = text
             showRadialMenu(at: mouseLocation, text: text)
             return
         }
+        AccessibilityManager.shared.recordSelectionAttemptFailure(.accessibilityEmptySelection)
         
         // If Accessibility fails, simulate Cmd+C (async to allow physical hotkeys to be released)
         AccessibilityManager.shared.getSelectedTextViaCopy { [weak self] copiedText in
-            guard let self = self, let text = copiedText, !text.isEmpty else { return }
+            guard let self = self, let text = copiedText, !text.isEmpty else {
+                AccessibilityManager.shared.recordSelectionAttemptFailure(.copyFallbackEmptySelection)
+                return
+            }
             let mouseLocation = NSEvent.mouseLocation
+            AccessibilityManager.shared.recordSelectionAcquisition(source: .copyFallback, text: text)
             self.currentSelectedText = text
             self.showRadialMenu(at: mouseLocation, text: text)
         }
@@ -232,7 +239,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func startServices() {
         NSLog("[OpenFire] Starting text selection monitoring...")
-        TextSelectionMonitor.shared.startMonitoring()
+        if isEnabled {
+            TextSelectionMonitor.shared.startMonitoring()
+        }
         
         AccessibilityManager.shared.onPermissionLost = { [weak self] in
             self?.showPermissionLostAlert()

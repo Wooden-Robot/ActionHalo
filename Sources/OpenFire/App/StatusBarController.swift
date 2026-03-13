@@ -3,25 +3,27 @@ import Cocoa
 /// Controls the menu bar status item — plugin management via embedded submenu view
 final class StatusBarController: NSObject {
     private static let wheelBackdropEnabledKey = "WheelBackdropEnabled"
+    private static let enabledKey = "OpenFireEnabled"
     
     private var statusItem: NSStatusItem?
     private var mainMenu: NSMenu?
-    private var isEnabled = true
+    private var isEnabled = UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true
     private var hotkeyRecorderWindow: HotkeyRecorderWindow?
     private var pluginListView: PluginListMenuView?
     private var excludeAppItem: NSMenuItem?
+    private var currentAppPluginsItem: NSMenuItem?
     private var blacklistWindow: BlacklistWindow?
     private var diagnosticsWindow: DiagnosticsWindow?
+    private var currentAppPluginsWindow: CurrentAppPluginsWindow?
     
     var onEnabledChanged: ((Bool) -> Void)?
+    var currentEnabledState: Bool { isEnabled }
     
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "flame.fill", accessibilityDescription: "OpenFire")
-            button.image?.size = NSSize(width: 18, height: 18)
-            button.image?.isTemplate = true
+            updateStatusItemIcon(button: button)
             button.target = self
             button.action = #selector(handleStatusItemClick(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -92,6 +94,11 @@ final class StatusBarController: NSObject {
         let manageExcludeItem = NSMenuItem(title: "Manage Disabled Apps...".localized, action: #selector(openBlacklistWindow), keyEquivalent: "")
         manageExcludeItem.target = self
         menu.addItem(manageExcludeItem)
+
+        let currentAppPluginsItem = NSMenuItem(title: "Manage Plugins in Current App...".localized, action: #selector(openCurrentAppPluginsWindow), keyEquivalent: "")
+        currentAppPluginsItem.target = self
+        self.currentAppPluginsItem = currentAppPluginsItem
+        menu.addItem(currentAppPluginsItem)
 
         let diagnosticsItem = NSMenuItem(title: "Diagnostics...".localized, action: #selector(openDiagnosticsWindow), keyEquivalent: "")
         diagnosticsItem.target = self
@@ -232,17 +239,22 @@ final class StatusBarController: NSObject {
     
     @objc func toggleEnabled() {
         isEnabled.toggle()
+        UserDefaults.standard.set(isEnabled, forKey: Self.enabledKey)
         onEnabledChanged?(isEnabled)
         rebuildMenu()
         
         if let button = statusItem?.button {
-            button.image = NSImage(
-                systemSymbolName: isEnabled ? "flame.fill" : "flame",
-                accessibilityDescription: "OpenFire"
-            )
-            button.image?.size = NSSize(width: 18, height: 18)
-            button.image?.isTemplate = true
+            updateStatusItemIcon(button: button)
         }
+    }
+
+    private func updateStatusItemIcon(button: NSStatusBarButton) {
+        button.image = NSImage(
+            systemSymbolName: isEnabled ? "flame.fill" : "flame",
+            accessibilityDescription: "OpenFire"
+        )
+        button.image?.size = NSSize(width: 18, height: 18)
+        button.image?.isTemplate = true
     }
 
     @objc private func handleStatusItemClick(_ sender: Any?) {
@@ -446,6 +458,19 @@ final class StatusBarController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc private func openCurrentAppPluginsWindow() {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              let bundleID = app.bundleIdentifier else { return }
+
+        let window = CurrentAppPluginsWindow(
+            appName: app.localizedName ?? bundleID,
+            bundleID: bundleID
+        )
+        currentAppPluginsWindow = window
+        window.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     @objc private func openDiagnosticsWindow() {
         if diagnosticsWindow == nil {
             diagnosticsWindow = DiagnosticsWindow()
@@ -481,8 +506,13 @@ extension StatusBarController: NSMenuDelegate {
             item.title = isExcluded ? String(format: "Enable in %@".localized, appName) : String(format: "Disable in %@".localized, appName)
             item.state = isExcluded ? .on : .off
             item.isHidden = false
+
+            currentAppPluginsItem?.title = String(format: "Manage Plugins in %@...".localized, appName)
+            currentAppPluginsItem?.isHidden = false
+            currentAppPluginsItem?.isEnabled = true
         } else {
             item.isHidden = true
+            currentAppPluginsItem?.isHidden = true
         }
     }
 

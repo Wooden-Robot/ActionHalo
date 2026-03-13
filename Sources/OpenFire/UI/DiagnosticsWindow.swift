@@ -103,6 +103,14 @@ final class DiagnosticsWindow: NSWindowController {
         let accessibilityEnabled = AccessibilityManager.shared.isAccessibilityEnabled
         let selectedText = AccessibilityManager.shared.getSelectedText() ?? ""
         let selectedPreview = previewText(selectedText)
+        let focusedRole = AccessibilityManager.shared.focusedElementRoleDescription() ?? "Unavailable".localized
+        let acquisitionStatus = AccessibilityManager.shared.lastSelectionAcquisitionStatus
+        let attemptStatus = AccessibilityManager.shared.lastSelectionAttemptStatus
+        let readiness = readinessReasons(
+            accessibilityEnabled: accessibilityEnabled,
+            isAppExcluded: isAppExcluded,
+            selectedText: selectedText
+        )
 
         let diagnostics = PluginManager.shared.visibilityDiagnostics(for: selectedText, appBundleID: frontApp?.bundleIdentifier)
         let visibleCount = diagnostics.filter(\.isVisible).count
@@ -115,8 +123,17 @@ final class DiagnosticsWindow: NSWindowController {
         lines.append("\("Bundle ID".localized): \(frontAppBundleID)")
         lines.append("\("Accessibility".localized): \(accessibilityEnabled ? "Granted".localized : "Missing".localized)")
         lines.append("\("App exclusion".localized): \(isAppExcluded ? "Disabled in current app".localized : "Active in current app".localized)")
+        lines.append("\("Focused element".localized): \(focusedRole)")
         lines.append("\("Selected text length".localized): \(selectedText.count)")
         lines.append("\("Selected text preview".localized): \(selectedPreview)")
+        lines.append("\("Selection source".localized): \(selectionSourceText(from: acquisitionStatus))")
+        lines.append("\("Last selection failure".localized): \(selectionFailureText(from: attemptStatus))")
+        lines.append("\("Menu readiness".localized): \(readiness.isReady ? "Ready".localized : "Blocked".localized)")
+        if !readiness.reasons.isEmpty {
+            for reason in readiness.reasons {
+                lines.append("  - \(reason)")
+            }
+        }
         lines.append("")
         lines.append("\("Plugins".localized) (\(visibleCount)/\(diagnostics.count) \("visible".localized))")
         lines.append("")
@@ -146,6 +163,22 @@ final class DiagnosticsWindow: NSWindowController {
         return (lines.joined(separator: "\n"), visibleCount, diagnostics.count)
     }
 
+    private func readinessReasons(accessibilityEnabled: Bool, isAppExcluded: Bool, selectedText: String) -> (isReady: Bool, reasons: [String]) {
+        var reasons: [String] = []
+
+        if !accessibilityEnabled {
+            reasons.append("Accessibility permission is missing".localized)
+        }
+        if isAppExcluded {
+            reasons.append("OpenFire is disabled in the current app".localized)
+        }
+        if selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            reasons.append("No selected text was detected via Accessibility".localized)
+        }
+
+        return (reasons.isEmpty, reasons)
+    }
+
     private func previewText(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "None".localized }
@@ -163,6 +196,8 @@ final class DiagnosticsWindow: NSWindowController {
         switch reason {
         case .disabled:
             return "Plugin is disabled".localized
+        case .disabledForApp(let bundleID):
+            return String(format: "Plugin is disabled for app %@".localized, bundleID)
         case .textTooShort(let min, let actual):
             return String(format: "Selected text is too short (%d < %d)".localized, actual, min)
         case .textTooLong(let max, let actual):
@@ -180,6 +215,48 @@ final class DiagnosticsWindow: NSWindowController {
             )
         case .appExcluded(let bundleID):
             return String(format: "Current app %@ is explicitly excluded".localized, bundleID)
+        }
+    }
+
+    private func selectionSourceText(from status: AccessibilityManager.SelectionAcquisitionStatus?) -> String {
+        guard let status else { return "No selection captured yet".localized }
+
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        let relativeTime = formatter.localizedString(for: status.timestamp, relativeTo: Date())
+        return String(
+            format: "%@ · %@ · %d chars".localized,
+            status.source.localizationKey.localized,
+            relativeTime,
+            status.textLength
+        )
+    }
+
+    private func selectionFailureText(from status: AccessibilityManager.SelectionAttemptStatus?) -> String {
+        guard let status else { return "No recent selection failure".localized }
+
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        let relativeTime = formatter.localizedString(for: status.timestamp, relativeTo: Date())
+        return String(
+            format: "%@ · %@".localized,
+            localizedSelectionFailure(status.failure),
+            relativeTime
+        )
+    }
+
+    private func localizedSelectionFailure(_ failure: AccessibilityManager.SelectionAttemptFailure) -> String {
+        switch failure {
+        case .accessibilityEmptySelection:
+            return "Accessibility read returned no selected text".localized
+        case .copyFallbackEmptySelection:
+            return "Cmd+C fallback returned no selected text".localized
+        case .observerSetupFailed:
+            return "AX observer could not be attached".localized
+        case .observerTimedOut:
+            return "AX observer timed out waiting for selection".localized
+        case .noFocusedApplication:
+            return "No focused application was available".localized
         }
     }
 }

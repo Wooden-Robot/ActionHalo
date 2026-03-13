@@ -69,6 +69,8 @@
 "⏸ Disabled" = "⏸ 已禁用";
 "Disable in Current App" = "在当前应用中禁用";
 "Manage Disabled Apps..." = "管理禁用应用...";
+"Manage Plugins in Current App..." = "管理当前应用中的插件...";
+"Manage Plugins in %@..." = "管理 %@ 中的插件...";
 "Diagnostics..." = "诊断信息...";
 "Plugin Management" = "插件管理";
 "Click to toggle · Drag to reorder" = "点击切换 · 拖拽排序";
@@ -164,6 +166,11 @@
 
 /* OpenFire UI / Other */
 "App Blacklist" = "已禁用的应用 (App Blacklist)";
+"Plugins in %@" = "%@ 中的插件";
+"Disable specific plugins only in %@. Global disabled plugins stay unavailable here." = "只在 %@ 中禁用特定插件。全局已禁用的插件在这里仍不可用。";
+"Enabled in this app" = "在此应用中启用";
+"Disabled in this app" = "在此应用中禁用";
+"Globally disabled" = "全局已禁用";
 "The OpenFire radial menu will not appear when selecting text in the following apps:" = "以下应用中框选文字时，OpenFire 圆环菜单将不会弹出：";
 "Please select the application to disable OpenFire in" = "请选择你要禁用 OpenFire 的应用程序";
 "Clear" = "清除";
@@ -183,6 +190,12 @@
 "Active in current app" = "当前应用正常启用";
 "Selected text length" = "选中文本长度";
 "Selected text preview" = "选中文本预览";
+"Focused element" = "焦点元素";
+"Selection source" = "选中来源";
+"Last selection failure" = "最近一次选中失败";
+"Menu readiness" = "菜单触发状态";
+"Ready" = "可触发";
+"Blocked" = "被阻塞";
 "Plugins" = "插件";
 "visible" = "可见";
 "Visible" = "可见";
@@ -194,7 +207,22 @@
 "None" = "无";
 "Unavailable" = "不可用";
 "Unknown" = "未知";
+"Accessibility API" = "辅助功能 API";
+"Cmd+C Fallback" = "Cmd+C 回退";
+"No selection captured yet" = "还没有捕获到选中文本";
+"No recent selection failure" = "最近没有选中失败";
+"%@ · %@ · %d chars" = "%@ · %@ · %d 个字符";
+"%@ · %@" = "%@ · %@";
+"Accessibility permission is missing" = "辅助功能权限缺失";
+"OpenFire is disabled in the current app" = "OpenFire 在当前应用中已被禁用";
+"No selected text was detected via Accessibility" = "辅助功能未检测到选中文本";
+"Accessibility read returned no selected text" = "辅助功能读取未返回选中文本";
+"Cmd+C fallback returned no selected text" = "Cmd+C 回退未返回选中文本";
+"AX observer could not be attached" = "AX 观察器无法挂载";
+"AX observer timed out waiting for selection" = "AX 观察器等待选中超时";
+"No focused application was available" = "当前没有可用的焦点应用";
 "Plugin is disabled" = "插件已禁用";
+"Plugin is disabled for app %@" = "插件在应用 %@ 中已被禁用";
 "Selected text is too short (%d < %d)" = "选中文本过短（%d < %d）";
 "Selected text is too long (%d > %d)" = "选中文本过长（%d > %d）";
 "Plugin regex is invalid: %@" = "插件正则无效：%@";

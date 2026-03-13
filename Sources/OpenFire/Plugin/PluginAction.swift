@@ -46,6 +46,7 @@ struct PluginConfig: Codable {
 
 enum PluginVisibilityReason: Equatable {
     case disabled
+    case disabledForApp(String)
     case textTooShort(min: Int, actual: Int)
     case textTooLong(max: Int, actual: Int)
     case invalidRegex(String)

@@ -9,6 +9,7 @@ final class PluginManager {
     /// Notification posted when plugins are reloaded
     static let pluginsReloadedNotification = Notification.Name("OpenFirePluginsReloaded")
     static let trustedPluginFingerprintsKey = "trustedPluginFingerprints"
+    static let perAppDisabledPluginsKey = "perAppDisabledPlugins"
     
     /// The 7 core default plugins that can never be deleted
     static let coreDefaultPluginIDs: Set<String> = [
@@ -134,11 +135,22 @@ final class PluginManager {
     
     /// Get plugins that should be shown for the given text and app context
     func availablePlugins(for text: String, appBundleID: String?) -> [Plugin] {
-        orderedPlugins().filter(\.isEnabled)
+        orderedPlugins().filter { plugin in
+            plugin.isEnabled && isPluginEnabled(plugin.id, forAppBundleID: appBundleID)
+        }
     }
 
     func visibilityDiagnostics(for text: String, appBundleID: String?) -> [PluginVisibilityDiagnostic] {
-        orderedPlugins().map { $0.visibilityDiagnostic(text: text, appBundleID: appBundleID) }
+        orderedPlugins().map { plugin in
+            var diagnostic = plugin.visibilityDiagnostic(text: text, appBundleID: appBundleID)
+            if let appBundleID, plugin.isEnabled, !isPluginEnabled(plugin.id, forAppBundleID: appBundleID) {
+                diagnostic = PluginVisibilityDiagnostic(
+                    plugin: plugin,
+                    reasons: [.disabledForApp(appBundleID)] + diagnostic.reasons
+                )
+            }
+            return diagnostic
+        }
     }
     
     // MARK: - Plugin State
@@ -149,6 +161,36 @@ final class PluginManager {
             savePluginStates()
             NotificationCenter.default.post(name: PluginManager.pluginsReloadedNotification, object: self)
         }
+    }
+
+    func isPluginEnabled(_ identifier: String, forAppBundleID appBundleID: String?) -> Bool {
+        guard let appBundleID else { return true }
+        let disabledByApp = perAppDisabledPlugins()[appBundleID] ?? []
+        return !disabledByApp.contains(identifier)
+    }
+
+    func setPluginEnabled(_ identifier: String, enabled: Bool, forAppBundleID appBundleID: String) {
+        var allOverrides = perAppDisabledPlugins()
+        var disabledByApp = allOverrides[appBundleID] ?? []
+
+        if enabled {
+            disabledByApp.removeAll { $0 == identifier }
+        } else if !disabledByApp.contains(identifier) {
+            disabledByApp.append(identifier)
+        }
+
+        if disabledByApp.isEmpty {
+            allOverrides.removeValue(forKey: appBundleID)
+        } else {
+            allOverrides[appBundleID] = disabledByApp.sorted()
+        }
+
+        UserDefaults.standard.set(allOverrides, forKey: Self.perAppDisabledPluginsKey)
+        NotificationCenter.default.post(name: PluginManager.pluginsReloadedNotification, object: self)
+    }
+
+    func disabledPluginIDs(forAppBundleID appBundleID: String) -> [String] {
+        perAppDisabledPlugins()[appBundleID] ?? []
     }
 
     func isExecutionTrusted(for plugin: Plugin) -> Bool {
@@ -250,6 +292,10 @@ final class PluginManager {
         }
 
         return plugins.sorted { $0.order < $1.order }
+    }
+
+    private func perAppDisabledPlugins() -> [String: [String]] {
+        UserDefaults.standard.dictionary(forKey: Self.perAppDisabledPluginsKey) as? [String: [String]] ?? [:]
     }
     
     func deletePlugin(_ plugin: Plugin) throws {

@@ -119,6 +119,38 @@ final class PluginManagerTests: XCTestCase {
         XCTAssertEqual(available.map(\.id), ["com.test.search", "com.openfire.reveal-path", "com.openfire.open-url"])
     }
 
+    func testAvailablePluginsRespectsPerAppDisabledOverrides() {
+        let manager = PluginManager.shared
+        manager.plugins.removeAll()
+
+        let first = makePlugin(name: "First", identifier: "com.test.first", order: 1, directory: "/tmp/first")
+        let second = makePlugin(name: "Second", identifier: "com.test.second", order: 2, directory: "/tmp/second")
+        manager.plugins = [first, second]
+
+        manager.setPluginEnabled("com.test.second", enabled: false, forAppBundleID: "com.apple.Safari")
+
+        let safariPlugins = manager.availablePlugins(for: "text", appBundleID: "com.apple.Safari")
+        let finderPlugins = manager.availablePlugins(for: "text", appBundleID: "com.apple.finder")
+
+        XCTAssertEqual(safariPlugins.map(\.id), ["com.test.first"])
+        XCTAssertEqual(finderPlugins.map(\.id), ["com.test.first", "com.test.second"])
+        XCTAssertEqual(manager.disabledPluginIDs(forAppBundleID: "com.apple.Safari"), ["com.test.second"])
+    }
+
+    func testVisibilityDiagnosticsExplainPerAppDisabledOverride() {
+        let manager = PluginManager.shared
+        manager.plugins.removeAll()
+
+        let plugin = makePlugin(name: "Scoped", identifier: "com.test.scoped", order: 1, directory: "/tmp/scoped")
+        manager.plugins = [plugin]
+        manager.setPluginEnabled("com.test.scoped", enabled: false, forAppBundleID: "com.apple.Safari")
+
+        let diagnostic = try! XCTUnwrap(manager.visibilityDiagnostics(for: "text", appBundleID: "com.apple.Safari").first)
+
+        XCTAssertFalse(diagnostic.isVisible)
+        XCTAssertEqual(diagnostic.reasons, [.disabledForApp("com.apple.Safari")])
+    }
+
     func testMergePluginsPreservingExistingPrefersUserPluginForDuplicateIdentifier() {
         let oldUserPlugin = makePlugin(
             name: "Old User Version",

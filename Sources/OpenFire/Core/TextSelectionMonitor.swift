@@ -157,8 +157,10 @@ final class TextSelectionMonitor {
                 
                 // Immediately check if text is already selected
                 if let text = AccessibilityManager.shared.getSelectedText(), !text.isEmpty {
+                    AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
                     self.handleSelectionFound(text: text, location: upLocation, taskID: taskID)
                 } else {
+                    AccessibilityManager.shared.recordSelectionAttemptFailure(.accessibilityEmptySelection)
                     // Try to attach an observer
                     self.startObserver(at: upLocation, taskID: taskID)
                     
@@ -179,7 +181,10 @@ final class TextSelectionMonitor {
     // MARK: - Hybrid Detection Logic
     
     private func startObserver(at mouseLocation: NSPoint, taskID: UUID) {
-        guard let focusedApp = NSWorkspace.shared.frontmostApplication else { return }
+        guard let focusedApp = NSWorkspace.shared.frontmostApplication else {
+            AccessibilityManager.shared.recordSelectionAttemptFailure(.noFocusedApplication)
+            return
+        }
         let pid = focusedApp.processIdentifier
         
         var observerRaw: AXObserver?
@@ -191,7 +196,10 @@ final class TextSelectionMonitor {
             monitor.handleSelectionChangedNotification(element: element)
         }, &observerRaw)
         
-        guard error == .success, let observer = observerRaw, let focusedElement = AccessibilityManager.shared.getFocusedElement() else { return }
+        guard error == .success, let observer = observerRaw, let focusedElement = AccessibilityManager.shared.getFocusedElement() else {
+            AccessibilityManager.shared.recordSelectionAttemptFailure(.observerSetupFailed)
+            return
+        }
         
         AXObserverAddNotification(observer, focusedElement, kAXSelectedTextChangedNotification as CFString, selfPointer)
         
@@ -207,6 +215,7 @@ final class TextSelectionMonitor {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self, self.pendingSelectionTaskID == taskID else { return }
             NSLog("[OpenFire-Debug] AXObserver timeout: No text selection detected within 0.4s.")
+            AccessibilityManager.shared.recordSelectionAttemptFailure(.observerTimedOut)
             self.cleanupPendingTask()
         }
         self.observationTimeout = workItem
@@ -220,8 +229,10 @@ final class TextSelectionMonitor {
             
             if let text = AccessibilityManager.shared.getSelectedText(), !text.isEmpty {
                 NSLog("[OpenFire-Debug] Text found via Polling Fallback at 0.1s.")
+                AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
                 self.handleSelectionFound(text: text, location: mouseLocation, taskID: taskID)
             } else {
+                AccessibilityManager.shared.recordSelectionAttemptFailure(.accessibilityEmptySelection)
                 // If native polling fails at 0.1s, immediately fire the Cmd+C fallback for Electron/Qt apps (e.g., Telegram)
                 // This eliminates the previous 0.4s waiting penalty.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
@@ -231,8 +242,10 @@ final class TextSelectionMonitor {
                         guard let self = self, self.pendingSelectionTaskID == taskID else { return }
                         if let text = copiedText, !text.isEmpty {
                             NSLog("[OpenFire-Debug] Text found via Cmd+C Fallback after 0.15s.")
+                            AccessibilityManager.shared.recordSelectionAcquisition(source: .copyFallback, text: text)
                             self.handleSelectionFound(text: text, location: mouseLocation, taskID: taskID)
                         } else {
+                            AccessibilityManager.shared.recordSelectionAttemptFailure(.copyFallbackEmptySelection)
                             self.cleanupPendingTask()
                         }
                     }
@@ -249,6 +262,7 @@ final class TextSelectionMonitor {
         
         if result == .success, let text = selectedTextRaw as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let location = NSEvent.mouseLocation
+            AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
             handleSelectionFound(text: text.trimmingCharacters(in: .whitespacesAndNewlines), location: location, taskID: taskID)
         }
     }
