@@ -1,6 +1,6 @@
 import Cocoa
 
-final class PerAppOverridesWindow: NSWindowController, NSTableViewDelegate, NSTableViewDataSource {
+final class PerAppOverridesWindow: NSWindowController, NSTableViewDelegate, NSTableViewDataSource, NSSearchFieldDelegate {
     private struct Row {
         let pluginID: String
         let pluginName: String
@@ -9,8 +9,11 @@ final class PerAppOverridesWindow: NSWindowController, NSTableViewDelegate, NSTa
     }
 
     private let tableView = NSTableView()
+    private let searchField = NSSearchField()
     private var rows: [Row] = []
+    private var filteredRows: [Row] = []
     private let rowHeight: CGFloat = 44
+    private static var appNameCache: [String: String] = [:]
 
     init() {
         let window = NSWindow(
@@ -26,11 +29,21 @@ final class PerAppOverridesWindow: NSWindowController, NSTableViewDelegate, NSTa
 
         super.init(window: window)
         setupUI()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePluginsReloaded),
+            name: PluginManager.pluginsReloadedNotification,
+            object: nil
+        )
         loadData()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func setupUI() {
@@ -39,12 +52,17 @@ final class PerAppOverridesWindow: NSWindowController, NSTableViewDelegate, NSTa
         let label = NSTextField(labelWithString: "Review plugins disabled only in specific apps, then restore them from one place.".localized)
         label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         label.textColor = .secondaryLabelColor
-        label.frame = NSRect(x: 20, y: 316, width: 470, height: 36)
+        label.frame = NSRect(x: 20, y: 320, width: 470, height: 32)
         label.lineBreakMode = .byWordWrapping
         label.maximumNumberOfLines = 2
         contentView.addSubview(label)
 
-        let scrollView = NSScrollView(frame: NSRect(x: 20, y: 20, width: 480, height: 286))
+        searchField.frame = NSRect(x: 20, y: 286, width: 480, height: 28)
+        searchField.placeholderString = "Filter by plugin or app".localized
+        searchField.delegate = self
+        contentView.addSubview(searchField)
+
+        let scrollView = NSScrollView(frame: NSRect(x: 20, y: 20, width: 480, height: 256))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
         scrollView.borderType = .bezelBorder
@@ -74,15 +92,46 @@ final class PerAppOverridesWindow: NSWindowController, NSTableViewDelegate, NSTa
                 appName: Self.displayName(forAppBundleID: override.appBundleID)
             )
         }
+        applyFilter()
+    }
+
+    private func applyFilter() {
+        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            filteredRows = rows
+            tableView.reloadData()
+            return
+        }
+
+        let foldedQuery = query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        filteredRows = rows.filter { row in
+            [
+                row.pluginName,
+                row.pluginID,
+                row.appName,
+                row.appBundleID
+            ].contains { field in
+                field.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                    .contains(foldedQuery)
+            }
+        }
         tableView.reloadData()
     }
 
     private static func displayName(forAppBundleID bundleID: String) -> String {
+        if let cached = appNameCache[bundleID] {
+            return cached
+        }
+
         if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-            return Bundle(url: appURL)?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            let resolvedName = Bundle(url: appURL)?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
                 ?? Bundle(url: appURL)?.object(forInfoDictionaryKey: "CFBundleName") as? String
                 ?? appURL.deletingPathExtension().lastPathComponent
+            appNameCache[bundleID] = resolvedName
+            return resolvedName
         }
+
+        appNameCache[bundleID] = bundleID
         return bundleID
     }
 
@@ -91,14 +140,24 @@ final class PerAppOverridesWindow: NSWindowController, NSTableViewDelegate, NSTa
         super.showWindow(sender)
     }
 
+    func refreshIfVisible() {
+        guard window?.isVisible == true else { return }
+        loadData()
+    }
+
+    @objc private func handlePluginsReloaded() {
+        refreshIfVisible()
+    }
+
     func numberOfRows(in tableView: NSTableView) -> Int {
-        rows.isEmpty ? 1 : rows.count
+        filteredRows.isEmpty ? 1 : filteredRows.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        if rows.isEmpty {
+        if filteredRows.isEmpty {
             let emptyView = NSView(frame: NSRect(x: 0, y: 0, width: 478, height: rowHeight))
-            let label = NSTextField(labelWithString: "No per-app plugin overrides.".localized)
+            let emptyState = rows.isEmpty ? "No per-app plugin overrides.".localized : "No matches for the current filter.".localized
+            let label = NSTextField(labelWithString: emptyState)
             label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
             label.textColor = .tertiaryLabelColor
             label.alignment = .center
@@ -107,7 +166,7 @@ final class PerAppOverridesWindow: NSWindowController, NSTableViewDelegate, NSTa
             return emptyView
         }
 
-        let item = rows[row]
+        let item = filteredRows[row]
         let cell = NSView(frame: NSRect(x: 0, y: 0, width: 478, height: rowHeight))
 
         let pluginLabel = NSTextField(labelWithString: item.pluginName)
@@ -147,10 +206,14 @@ final class PerAppOverridesWindow: NSWindowController, NSTableViewDelegate, NSTa
 
     @objc private func restoreClicked(_ sender: NSButton) {
         let row = sender.tag
-        guard row >= 0 && row < rows.count else { return }
+        guard row >= 0 && row < filteredRows.count else { return }
 
-        let item = rows[row]
+        let item = filteredRows[row]
         PluginManager.shared.clearPerAppOverride(pluginID: item.pluginID, forAppBundleID: item.appBundleID)
         loadData()
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        applyFilter()
     }
 }

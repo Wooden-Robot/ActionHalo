@@ -193,7 +193,7 @@ class ShortcutRecorderField: NSView {
 }
 
 /// A visual editor window for creating and modifying OpenFire plugins
-final class PluginEditorWindow: NSWindow {
+final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegate {
 
     private var editingPlugin: Plugin?
     
@@ -211,6 +211,7 @@ final class PluginEditorWindow: NSWindow {
     private let infoLabel = NSTextField(labelWithString: "")
     private let riskLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
+    private let saveButton = NSButton()
     private var riskLabelHeightConstraint: NSLayoutConstraint?
     private var statusLabelHeightConstraint: NSLayoutConstraint?
     private var contentViewMinHeightConstraint: NSLayoutConstraint?
@@ -263,30 +264,35 @@ final class PluginEditorWindow: NSWindow {
         let nameLabel = makeLabel("Name:".localized)
         nameField.translatesAutoresizingMaskIntoConstraints = false
         nameField.placeholderString = "e.g.: Google Search".localized
+        nameField.delegate = self
         cv.addSubview(nameField)
         
         // EN Name
         let enNameLabel = makeLabel("Eng Name:".localized)
         enNameField.translatesAutoresizingMaskIntoConstraints = false
         enNameField.placeholderString = "Optional English Name".localized
+        enNameField.delegate = self
         cv.addSubview(enNameField)
         
         // Description
         let descLabel = makeLabel("Description:".localized)
         descField.translatesAutoresizingMaskIntoConstraints = false
         descField.placeholderString = "Optional description".localized
+        descField.delegate = self
         cv.addSubview(descField)
         
         // EN Description
         let enDescLabel = makeLabel("Eng Desc:".localized)
         enDescField.translatesAutoresizingMaskIntoConstraints = false
         enDescField.placeholderString = "Optional English description".localized
+        enDescField.delegate = self
         cv.addSubview(enDescField)
         
         // Identifier
         let idLabel = makeLabel("Identifier:".localized)
         identifierField.translatesAutoresizingMaskIntoConstraints = false
         identifierField.placeholderString = "e.g.: com.openfire.search".localized
+        identifierField.delegate = self
         if editingPlugin != nil {
             identifierField.isEnabled = false // Cannot change ID of existing plugin easily
         }
@@ -380,19 +386,25 @@ final class PluginEditorWindow: NSWindow {
         contentTextView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         contentTextView.allowsUndo = true
         contentTextView.isRichText = false
+        contentTextView.delegate = self
         contentViewScroll.documentView = contentTextView
         cv.addSubview(contentViewScroll)
         
         shortcutField.translatesAutoresizingMaskIntoConstraints = false
         shortcutField.isHidden = true
+        shortcutField.onKeyComboRecorded = { [weak self] _, _ in
+            self?.updateSaveAvailability()
+        }
         cv.addSubview(shortcutField)
         
         // Buttons
-        let saveBtn = NSButton(title: "Save".localized, target: self, action: #selector(saveClicked))
-        saveBtn.translatesAutoresizingMaskIntoConstraints = false
-        saveBtn.bezelStyle = .rounded
-        saveBtn.keyEquivalent = "\r"
-        cv.addSubview(saveBtn)
+        saveButton.title = "Save".localized
+        saveButton.target = self
+        saveButton.action = #selector(saveClicked)
+        saveButton.translatesAutoresizingMaskIntoConstraints = false
+        saveButton.bezelStyle = .rounded
+        saveButton.keyEquivalent = "\r"
+        cv.addSubview(saveButton)
         
         let cancelBtn = NSButton(title: "Cancel".localized, target: self, action: #selector(cancelClicked))
         cancelBtn.translatesAutoresizingMaskIntoConstraints = false
@@ -493,19 +505,19 @@ final class PluginEditorWindow: NSWindow {
             shortcutField.bottomAnchor.constraint(equalTo: contentViewScroll.bottomAnchor),
             
             // Buttons Row
-            saveBtn.topAnchor.constraint(equalTo: contentViewScroll.bottomAnchor, constant: 20),
-            saveBtn.trailingAnchor.constraint(equalTo: cv.trailingAnchor, constant: -20),
-            saveBtn.bottomAnchor.constraint(equalTo: cv.bottomAnchor, constant: -20),
-            saveBtn.widthAnchor.constraint(greaterThanOrEqualToConstant: 80),
+            saveButton.topAnchor.constraint(equalTo: contentViewScroll.bottomAnchor, constant: 20),
+            saveButton.trailingAnchor.constraint(equalTo: cv.trailingAnchor, constant: -20),
+            saveButton.bottomAnchor.constraint(equalTo: cv.bottomAnchor, constant: -20),
+            saveButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 80),
             
-            cancelBtn.centerYAnchor.constraint(equalTo: saveBtn.centerYAnchor),
-            cancelBtn.trailingAnchor.constraint(equalTo: saveBtn.leadingAnchor, constant: -10),
-            cancelBtn.widthAnchor.constraint(equalTo: saveBtn.widthAnchor)
+            cancelBtn.centerYAnchor.constraint(equalTo: saveButton.centerYAnchor),
+            cancelBtn.trailingAnchor.constraint(equalTo: saveButton.leadingAnchor, constant: -10),
+            cancelBtn.widthAnchor.constraint(equalTo: saveButton.widthAnchor)
         ])
         
         if let deleteBtn = deleteBtn {
             NSLayoutConstraint.activate([
-                deleteBtn.centerYAnchor.constraint(equalTo: saveBtn.centerYAnchor),
+                deleteBtn.centerYAnchor.constraint(equalTo: saveButton.centerYAnchor),
                 deleteBtn.leadingAnchor.constraint(equalTo: cv.leadingAnchor, constant: 20),
                 deleteBtn.widthAnchor.constraint(greaterThanOrEqualToConstant: 80)
             ])
@@ -605,6 +617,7 @@ final class PluginEditorWindow: NSWindow {
             contentTextView.string = ""
         }
         typeChanged()
+        updateSaveAvailability()
     }
     
     @objc private func typeChanged() {
@@ -684,10 +697,96 @@ final class PluginEditorWindow: NSWindow {
         default:
             break
         }
+
+        updateSaveAvailability()
     }
     
     @objc private func cancelClicked() {
         self.close()
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        updateSaveAvailability()
+    }
+
+    func textDidChange(_ notification: Notification) {
+        updateSaveAvailability()
+    }
+
+    private func currentValidationMessage() -> String? {
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = identifierField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let typeIndex = typePopUp.indexOfSelectedItem
+        let content = typeIndex == 3
+            ? shortcutField.rawComboString.trimmingCharacters(in: .whitespacesAndNewlines)
+            : contentTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if name.isEmpty || id.isEmpty {
+            return "Name and Identifier cannot be empty.".localized
+        }
+
+        let identifierPattern = #"^[A-Za-z0-9.-]+$"#
+        if id.range(of: identifierPattern, options: .regularExpression) == nil {
+            return "Identifier must use only letters, numbers, dots, and hyphens.".localized
+        }
+
+        if !id.contains(".") {
+            return "Identifier should contain at least one dot.".localized
+        }
+
+        if editingPlugin == nil,
+           PluginManager.shared.plugins.contains(where: { $0.id == id }) {
+            return "A plugin with this identifier already exists".localized
+        }
+
+        switch typeIndex {
+        case 0 where content.isEmpty:
+            return "URL cannot be empty".localized
+        case 0:
+            let sampleURL = content.replacingOccurrences(of: "{text}", with: "openfire")
+            guard let parsedURL = URL(string: sampleURL),
+                  let scheme = parsedURL.scheme,
+                  !scheme.isEmpty else {
+                return "URL must be a valid absolute URL.".localized
+            }
+            return nil
+        case 1 where content.isEmpty:
+            return "Script cannot be empty".localized
+        case 2 where content.isEmpty:
+            return "Code cannot be empty".localized
+        case 3 where content.isEmpty:
+            return "Key combo cannot be empty".localized
+        default:
+            return nil
+        }
+    }
+
+    private func updateSaveAvailability() {
+        let validationMessage = currentValidationMessage()
+        saveButton.isEnabled = (validationMessage == nil)
+        saveButton.toolTip = validationMessage
+
+        let baseStatus = {
+            let index = typePopUp.indexOfSelectedItem
+            guard (index == 1 || index == 2), let plugin = editingPlugin else { return "" }
+            return String(
+                format: "Trust status: %@\nSource: %@".localized,
+                PluginManager.shared.isExecutionTrusted(for: plugin) ? "Trusted".localized : "Not Trusted".localized,
+                plugin.directoryURL.path
+            )
+        }()
+
+        let combinedStatus = [validationMessage, baseStatus]
+            .compactMap { value -> String? in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: "\n")
+
+        statusLabel.stringValue = combinedStatus
+        statusLabel.isHidden = combinedStatus.isEmpty
+        statusLabelHeightConstraint?.constant = combinedStatus.isEmpty ? 0 : (combinedStatus.contains("\n") ? 32 : 16)
+        statusLabel.textColor = validationMessage == nil ? .tertiaryLabelColor : .systemOrange
     }
     
     @objc private func saveClicked() {
@@ -847,7 +946,6 @@ final class PluginEditorWindow: NSWindow {
                 DispatchQueue.main.async {
                     // Force reload plugins
                     PluginManager.shared.reloadPlugins()
-                    NotificationCenter.default.post(name: PluginManager.pluginsReloadedNotification, object: nil)
                     self?.close()
                 }
                 
@@ -889,7 +987,6 @@ final class PluginEditorWindow: NSWindow {
                     try PluginManager.shared.deletePlugin(p)
                     
                     DispatchQueue.main.async {
-                        NotificationCenter.default.post(name: PluginManager.pluginsReloadedNotification, object: nil)
                         self?.close()
                     }
                 } catch {

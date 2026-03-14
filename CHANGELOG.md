@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.3.3
+## v0.3.4
 - 改写 README 中关于触发方式、`Paste / Clear` 与可编辑输入框场景的描述，使文案与实际行为一致。
 - 为默认内置功能新增 `Delete` 区域，并限制其仅在可编辑选区中可执行。
 - 为鼠标选中文本触发加入短暂缓冲，降低对立即删除、覆盖输入和继续改选区的打扰。
@@ -13,6 +13,12 @@
 - 修复 Telegram 搜索与 iTerm2 执行的重复触发排查链路，并收敛 Telegram 冷启动搜索脚本为更稳的单轮 ready-gated 方案。
 - 修复 Diagnostics 窗口文本视图布局错误导致面板看起来空白的问题。
 - 新增全局 `Per-App Overrides` 管理窗口，可集中查看并恢复“某插件在哪个应用中被禁用”的覆盖规则。
+- 修正 Diagnostics 的 readiness 判断，使其优先基于最近一次真实输入框探测位置，而不是当前鼠标位置。
+- 为 `Per-App Overrides` 和“当前应用插件管理”窗口补充搜索、自动刷新与更轻量的状态同步。
+- 为菜单栏中的 `Per-App Overrides` 增加实时数量提示，方便快速发现是否存在按应用禁用记录。
+- 优化插件安装反馈，成功后改为轻量状态栏提示，不再额外弹出成功对话框。
+- 为插件管理列表补充长名称截断与 tooltip，减少窄宽度下的信息拥挤。
+- 为插件编辑器加入实时保存前校验，提前拦截非法 identifier、无效 URL 和缺失内容。
 
 - Rewrote README trigger, `Paste / Clear`, and editable-input wording so the documentation matches the actual behavior.
 - Added a built-in `Delete` action and limited it to editable selections only.
@@ -26,6 +32,12 @@
 - Investigated the duplicate-trigger reports for Telegram Search and Run in iTerm2, then converged Telegram cold-start search to a more reliable single-pass, ready-gated AppleScript flow.
 - Fixed a Diagnostics text-view layout bug that could leave the diagnostics panel visually blank.
 - Added a global `Per-App Overrides` window to review and restore app-specific plugin disables from one place.
+- Corrected Diagnostics readiness reporting so it prefers the last real empty-input probe location instead of the current mouse position.
+- Added search, live refresh, and lighter state syncing for both the global per-app overrides window and the current-app plugin window.
+- Added a live override-count badge to the menu-bar `Per-App Overrides` entry so app-scoped disables are easier to spot.
+- Reduced install friction by replacing the post-install success dialog with lightweight menu-bar feedback.
+- Improved plugin list readability with truncation and tooltips for long names and compact action buttons.
+- Added real-time pre-save validation in the plugin editor for invalid identifiers, malformed URLs, and missing action content.
 
 ## v0.3.2
 - 修复多屏场景下的 Accessibility 坐标换算，降低副屏和非主屏上的文本命中误判。

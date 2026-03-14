@@ -1,11 +1,13 @@
 import Cocoa
 
 /// Manage per-app plugin overrides for the current frontmost application.
-final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NSTableViewDataSource {
+final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NSTableViewDataSource, NSSearchFieldDelegate {
     private let tableView = NSTableView()
+    private let searchField = NSSearchField()
     private let appName: String
     private let bundleID: String
     private var orderedPlugins: [Plugin] = []
+    private var filteredPlugins: [Plugin] = []
     private let rowHeight: CGFloat = 34
 
     init(appName: String, bundleID: String) {
@@ -25,11 +27,21 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
 
         super.init(window: window)
         setupUI()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePluginsReloaded),
+            name: PluginManager.pluginsReloadedNotification,
+            object: nil
+        )
         loadData()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func setupUI() {
@@ -38,7 +50,7 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
         let label = NSTextField(labelWithString: String(format: "Disable specific plugins only in %@. Global disabled plugins stay unavailable here.".localized, appName))
         label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         label.textColor = .secondaryLabelColor
-        label.frame = NSRect(x: 20, y: 336, width: 390, height: 36)
+        label.frame = NSRect(x: 20, y: 340, width: 390, height: 32)
         label.lineBreakMode = .byWordWrapping
         label.maximumNumberOfLines = 2
         contentView.addSubview(label)
@@ -46,10 +58,15 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
         let bundleLabel = NSTextField(labelWithString: bundleID)
         bundleLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         bundleLabel.textColor = .tertiaryLabelColor
-        bundleLabel.frame = NSRect(x: 20, y: 316, width: 390, height: 16)
+        bundleLabel.frame = NSRect(x: 20, y: 320, width: 390, height: 16)
         contentView.addSubview(bundleLabel)
 
-        let scrollView = NSScrollView(frame: NSRect(x: 20, y: 20, width: 400, height: 286))
+        searchField.frame = NSRect(x: 20, y: 286, width: 400, height: 28)
+        searchField.placeholderString = "Filter plugins in this app".localized
+        searchField.delegate = self
+        contentView.addSubview(searchField)
+
+        let scrollView = NSScrollView(frame: NSRect(x: 20, y: 20, width: 400, height: 256))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
         scrollView.borderType = .bezelBorder
@@ -85,6 +102,28 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
             }
         }
 
+        applyFilter()
+    }
+
+    private func applyFilter() {
+        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            filteredPlugins = orderedPlugins
+            tableView.reloadData()
+            return
+        }
+
+        let foldedQuery = query.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        filteredPlugins = orderedPlugins.filter { plugin in
+            [
+                plugin.name,
+                plugin.id,
+                plugin.config.action.type.rawValue
+            ].contains { field in
+                field.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                    .contains(foldedQuery)
+            }
+        }
         tableView.reloadData()
     }
 
@@ -93,12 +132,33 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
         super.showWindow(sender)
     }
 
+    func refreshIfVisible() {
+        guard window?.isVisible == true else { return }
+        loadData()
+    }
+
+    @objc private func handlePluginsReloaded() {
+        refreshIfVisible()
+    }
+
     func numberOfRows(in tableView: NSTableView) -> Int {
-        orderedPlugins.count
+        filteredPlugins.isEmpty ? 1 : filteredPlugins.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let plugin = orderedPlugins[row]
+        if filteredPlugins.isEmpty {
+            let emptyView = NSView(frame: NSRect(x: 0, y: 0, width: 398, height: rowHeight))
+            let emptyState = orderedPlugins.isEmpty ? "No plugins available.".localized : "No matches for the current filter.".localized
+            let label = NSTextField(labelWithString: emptyState)
+            label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+            label.textColor = .tertiaryLabelColor
+            label.alignment = .center
+            label.frame = NSRect(x: 0, y: 8, width: 398, height: 18)
+            emptyView.addSubview(label)
+            return emptyView
+        }
+
+        let plugin = filteredPlugins[row]
         let cell = NSView(frame: NSRect(x: 0, y: 0, width: 398, height: rowHeight))
 
         let globallyEnabled = plugin.isEnabled
@@ -143,13 +203,17 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
 
     @objc private func rowClicked() {
         let row = tableView.clickedRow
-        guard row >= 0 && row < orderedPlugins.count else { return }
+        guard row >= 0 && row < filteredPlugins.count else { return }
 
-        let plugin = orderedPlugins[row]
+        let plugin = filteredPlugins[row]
         guard plugin.isEnabled else { return }
 
         let enabledInApp = PluginManager.shared.isPluginEnabled(plugin.id, forAppBundleID: bundleID)
         PluginManager.shared.setPluginEnabled(plugin.id, enabled: !enabledInApp, forAppBundleID: bundleID)
-        tableView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0))
+        loadData()
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        applyFilter()
     }
 }

@@ -29,6 +29,7 @@ final class TextSelectionMonitor {
     private var pendingSelectionTaskID: UUID?
     private var pendingPresentationWorkItem: DispatchWorkItem?
     private var presentationCancelMonitor: Any?
+    private(set) var lastEmptyInputCheckLocation: NSPoint?
     
     // Minimum drag distance (in points) to consider as text selection
     private let minimumDragDistance: CGFloat = 5.0
@@ -348,6 +349,8 @@ final class TextSelectionMonitor {
     }
     
     private func checkForEmptyTextInputClick(at mouseLocation: NSPoint) {
+        lastEmptyInputCheckLocation = mouseLocation
+
         // Quick check: If pasteboard is empty, don't even bother checking accessibility
         guard Self.hasUsableClipboardText(NSPasteboard.general.string(forType: .string)) else {
             NSLog("[OpenFire-Debug] Pasteboard is empty, skipping empty text input check.")

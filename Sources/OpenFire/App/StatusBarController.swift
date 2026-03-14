@@ -13,10 +13,12 @@ final class StatusBarController: NSObject {
     private var pluginListView: PluginListMenuView?
     private var excludeAppItem: NSMenuItem?
     private var currentAppPluginsItem: NSMenuItem?
+    private var perAppOverridesItem: NSMenuItem?
     private var blacklistWindow: BlacklistWindow?
     private var diagnosticsWindow: DiagnosticsWindow?
     private var currentAppPluginsWindow: CurrentAppPluginsWindow?
     private var perAppOverridesWindow: PerAppOverridesWindow?
+    private var statusFeedbackTimer: Timer?
     
     var onEnabledChanged: ((Bool) -> Void)?
     var currentEnabledState: Bool { isEnabled }
@@ -85,7 +87,10 @@ final class StatusBarController: NSObject {
     }
     
     @objc private func pluginsChanged() {
-        pluginListView?.reloadPlugins()
+        rebuildMenu()
+        diagnosticsWindow?.refreshIfVisible()
+        currentAppPluginsWindow?.refreshIfVisible()
+        perAppOverridesWindow?.refreshIfVisible()
     }
     
     private func rebuildMenu() {
@@ -146,8 +151,13 @@ final class StatusBarController: NSObject {
         self.currentAppPluginsItem = currentAppPluginsItem
         menu.addItem(currentAppPluginsItem)
 
-        let perAppOverridesItem = NSMenuItem(title: "Per-App Overrides...".localized, action: #selector(openPerAppOverridesWindow), keyEquivalent: "")
+        let perAppOverrideCount = PluginManager.shared.allPerAppDisabledPluginOverrides().count
+        let perAppOverridesTitle = perAppOverrideCount > 0
+            ? String(format: "Per-App Overrides... (%d)".localized, perAppOverrideCount)
+            : "Per-App Overrides...".localized
+        let perAppOverridesItem = NSMenuItem(title: perAppOverridesTitle, action: #selector(openPerAppOverridesWindow), keyEquivalent: "")
         perAppOverridesItem.target = self
+        self.perAppOverridesItem = perAppOverridesItem
         menu.addItem(perAppOverridesItem)
 
         let diagnosticsItem = NSMenuItem(title: "Diagnostics...".localized, action: #selector(openDiagnosticsWindow), keyEquivalent: "")
@@ -305,6 +315,27 @@ final class StatusBarController: NSObject {
         )
         button.image?.size = NSSize(width: 18, height: 18)
         button.image?.isTemplate = true
+    }
+
+    func showTemporaryStatusMessage(_ message: String, symbolName: String = "checkmark.circle.fill", duration: TimeInterval = 2.0) {
+        guard let button = statusItem?.button else { return }
+
+        statusFeedbackTimer?.invalidate()
+        let originalTooltip = button.toolTip
+        let originalImage = button.image
+
+        button.toolTip = message
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: message)
+        button.image?.size = NSSize(width: 18, height: 18)
+        button.image?.isTemplate = true
+
+        let timer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self, weak button] _ in
+            guard let self, let button else { return }
+            button.toolTip = originalTooltip
+            button.image = originalImage
+            self.statusFeedbackTimer = nil
+        }
+        statusFeedbackTimer = timer
     }
 
     @objc private func handleStatusItemClick(_ sender: Any?) {
@@ -546,6 +577,11 @@ final class StatusBarController: NSObject {
 
 extension StatusBarController: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
+        let perAppOverrideCount = PluginManager.shared.allPerAppDisabledPluginOverrides().count
+        perAppOverridesItem?.title = perAppOverrideCount > 0
+            ? String(format: "Per-App Overrides... (%d)".localized, perAppOverrideCount)
+            : "Per-App Overrides...".localized
+
         guard let item = excludeAppItem else { return }
         
         if let app = NSWorkspace.shared.frontmostApplication,

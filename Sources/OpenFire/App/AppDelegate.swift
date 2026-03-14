@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isDismissingMenus = false
     private var pendingMenuDismissCompletions: [() -> Void] = []
     private var debugSelectionSequence: UInt64 = 0
+    private var permissionRecoveryTimer: Timer?
     
     // Global monitor for clicking outside
     private var globalClickMonitor: Any?
@@ -147,6 +148,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PluginManager.shared.stopWatchingPluginDirectories()
         HotkeyManager.shared.unregisterHotkeys()
         unregisterServiceObservers()
+        permissionRecoveryTimer?.invalidate()
+        permissionRecoveryTimer = nil
     }
     
     // MARK: - Handle file opening (plugin installation)
@@ -229,7 +232,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Show confirmation alert
         let alert = NSAlert()
         alert.messageText = "Install Plugin".localized
-        alert.informativeText = String(format: "Do you want to install plugin '%@'?\n%@".localized, pluginName, pluginDescription)
+        let informativeText: String
+        if pluginDescription.isEmpty {
+            informativeText = String(format: "Do you want to install plugin '%@'?".localized, pluginName)
+        } else {
+            informativeText = String(format: "Do you want to install plugin '%@'?\n%@".localized, pluginName, pluginDescription)
+        }
+        alert.informativeText = informativeText
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Install".localized)
         alert.addButton(withTitle: "Cancel".localized)
@@ -238,10 +247,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         if alert.runModal() == .alertFirstButtonReturn {
             let success = PluginManager.shared.installPlugin(from: url)
+            guard !success else {
+                NSLog("[OpenFire] Plugin '%@' installed successfully.", pluginName)
+                statusBarController.showTemporaryStatusMessage(
+                    String(format: "Installed %@".localized, pluginName)
+                )
+                return true
+            }
+
             let resultAlert = NSAlert()
-            resultAlert.messageText = success ? "Install Succeeded".localized : "Install Failed".localized
-            resultAlert.informativeText = success ? String(format: "Plugin '%@' installed successfully.".localized, pluginName) : String(format: "Failed to copy plugin to installation directory. Check permissions.\n(%@)".localized, url.path)
-            resultAlert.alertStyle = success ? .informational : .critical
+            resultAlert.messageText = "Install Failed".localized
+            resultAlert.informativeText = String(format: "Failed to copy plugin to installation directory. Check permissions.\n(%@)".localized, url.path)
+            resultAlert.alertStyle = .critical
             resultAlert.runModal()
             return success
         }
@@ -252,6 +269,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func startServices() {
         NSLog("[OpenFire] Starting text selection monitoring...")
+        permissionRecoveryTimer?.invalidate()
+        permissionRecoveryTimer = nil
         if isEnabled {
             TextSelectionMonitor.shared.startMonitoring()
         }
@@ -316,9 +335,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func waitAndRecoverPermission() {
-        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
+        guard permissionRecoveryTimer == nil else { return }
+
+        let timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
             if AccessibilityManager.shared.isAccessibilityEnabled {
                 timer.invalidate()
+                self?.permissionRecoveryTimer = nil
                 self?.startServices()
                 
                 let alert = NSAlert()
@@ -330,6 +352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 alert.runModal()
             }
         }
+        permissionRecoveryTimer = timer
     }
     
     private func setEnabled(_ enabled: Bool) {

@@ -19,6 +19,12 @@ final class DiagnosticsWindow: NSWindowController {
 
         super.init(window: window)
         setupUI()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(refreshClicked),
+            name: PluginManager.pluginsReloadedNotification,
+            object: nil
+        )
         refreshReport()
     }
 
@@ -26,9 +32,18 @@ final class DiagnosticsWindow: NSWindowController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     override func showWindow(_ sender: Any?) {
         refreshReport()
         super.showWindow(sender)
+    }
+
+    func refreshIfVisible() {
+        guard window?.isVisible == true else { return }
+        refreshReport()
     }
 
     private func setupUI() {
@@ -116,6 +131,7 @@ final class DiagnosticsWindow: NSWindowController {
         let focusedRole = AccessibilityManager.shared.focusedElementRoleDescription() ?? "Unavailable".localized
         let acquisitionStatus = AccessibilityManager.shared.lastSelectionAcquisitionStatus
         let attemptStatus = AccessibilityManager.shared.lastSelectionAttemptStatus
+        let emptyInputCheckLocation = TextSelectionMonitor.shared.lastEmptyInputCheckLocation ?? NSEvent.mouseLocation
         let clipboardHasText = TextSelectionMonitor.hasUsableClipboardText(
             NSPasteboard.general.string(forType: .string)
         )
@@ -123,7 +139,7 @@ final class DiagnosticsWindow: NSWindowController {
             !isAppExcluded &&
             selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             clipboardHasText &&
-            AccessibilityManager.shared.isTextInputElement(at: NSEvent.mouseLocation)
+            AccessibilityManager.shared.isTextInputElement(at: emptyInputCheckLocation)
         let readiness = readinessReasons(
             accessibilityEnabled: accessibilityEnabled,
             isAppExcluded: isAppExcluded,
@@ -146,6 +162,7 @@ final class DiagnosticsWindow: NSWindowController {
         lines.append("\("Selected text length".localized): \(selectedText.count)")
         lines.append("\("Selected text preview".localized): \(selectedPreview)")
         lines.append("\("Clipboard".localized): \(clipboardHasText ? "Has text".localized : "Empty".localized)")
+        lines.append("\("Empty-input probe point".localized): \(String(format: "(%.0f, %.0f)", emptyInputCheckLocation.x, emptyInputCheckLocation.y))")
         lines.append("\("Selection source".localized): \(selectionSourceText(from: acquisitionStatus))")
         lines.append("\("Last selection failure".localized): \(selectionFailureText(from: attemptStatus))")
         lines.append("\("Menu readiness".localized): \(readiness.isReady ? "Ready".localized : "Blocked".localized)")

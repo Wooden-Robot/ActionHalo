@@ -246,7 +246,11 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         nameField.frame = NSRect(x: nameLeadingX, y: 5, width: nameWidth, height: 18)
         nameField.font = NSFont.systemFont(ofSize: 13)
         nameField.textColor = plugin.isEnabled ? .labelColor : .tertiaryLabelColor
+        nameField.lineBreakMode = .byTruncatingTail
+        nameField.usesSingleLineMode = true
+        nameField.toolTip = "\(plugin.name)\n\(plugin.id)"
         cell.addSubview(nameField)
+        cell.toolTip = "\(plugin.name)\n\(plugin.id)"
 
         let handleX = viewWidth - trailingPadding - dragHandleWidth
         let editX = handleX - actionButtonSpacing - actionButtonSize
@@ -262,6 +266,7 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
                 deleteBtn.image = delImg.withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
             }
             deleteBtn.contentTintColor = .systemRed.withAlphaComponent(0.8)
+            deleteBtn.toolTip = "Delete".localized
             deleteBtn.target = self
             deleteBtn.action = #selector(deletePluginClicked(_:))
             cell.addSubview(deleteBtn)
@@ -291,6 +296,7 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         if let editImg = NSImage(systemSymbolName: "pencil", accessibilityDescription: "Edit") {
             editBtn.image = editImg.withSymbolConfiguration(.init(pointSize: 15, weight: .bold)) // Thickened pencil
         }
+        editBtn.toolTip = "Edit".localized
         editBtn.target = self
         editBtn.action = #selector(editPluginClicked(_:))
         cell.addSubview(editBtn)
@@ -340,7 +346,6 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         if response == .alertFirstButtonReturn {
             do {
                 try PluginManager.shared.deletePlugin(plugin)
-                NotificationCenter.default.post(name: PluginManager.pluginsReloadedNotification, object: nil)
             } catch {
                 let errAlert = NSAlert()
                 errAlert.messageText = "Delete Failed".localized

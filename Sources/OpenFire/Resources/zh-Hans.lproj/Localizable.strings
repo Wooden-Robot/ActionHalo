@@ -17,6 +17,8 @@
 /* AppDelegate */
 "Type: %@" = "类型: %@";
 "Install Plugin" = "安装插件";
+"Installed %@" = "已安装 %@";
+"Do you want to install plugin '%@'?" = "是否安装插件「%@」？";
 "Do you want to install plugin '%@'?\n%@" = "是否安装插件「%@」?\n%@";
 "Install" = "安装";
 "Cancel" = "取消";
@@ -72,6 +74,7 @@
 "Manage Plugins in Current App..." = "管理当前应用中的插件...";
 "Manage Plugins in %@..." = "管理 %@ 中的插件...";
 "Per-App Overrides..." = "按应用插件覆盖...";
+"Per-App Overrides... (%d)" = "按应用插件覆盖...（%d）";
 "Diagnostics..." = "诊断信息...";
 "Plugin Management" = "插件管理";
 "Click to toggle · Drag to reorder" = "点击切换 · 拖拽排序";
@@ -93,6 +96,8 @@
 "Review plugins disabled only in specific apps, then restore them from one place." = "查看那些只在特定应用里被禁用的插件，并在这里统一恢复。";
 "Restore" = "恢复";
 "No per-app plugin overrides." = "当前没有按应用禁用的插件覆盖。";
+"Filter by plugin or app" = "按插件或应用筛选";
+"No matches for the current filter." = "当前筛选条件下没有结果。";
 
 /* PluginOrderWindow */
 "┼ New Custom Plugin" = "┼ 新建自定义插件";
@@ -136,6 +141,7 @@
 "Save" = "保存";
 "Restore Default" = "恢复默认";
 "Delete" = "删除";
+"Edit" = "编辑";
 "Custom Image" = "自定义图片";
 "Enter a complete URL\nUse {text} as a placeholder for selected text" = "输入完整的 URL\n使用 {text} 作为选中文本的占位符";
 "Write Shell script\nSelected text is available via $OPENFIRE_TEXT" = "编写 Shell 脚本\n选中文本可通过 $OPENFIRE_TEXT 获取";
@@ -149,7 +155,10 @@
 "Built-in: Reveal in Finder\nOpens the selected file path in Finder\n(Supports /, ~, and file:// paths)" = "内置：在 Finder 中显示\n在 Finder 中打开所选文件路径的位置\n(支持 /、~ 和 file:// 路径)";
 "Save Failed" = "保存失败";
 "Name and Identifier cannot be empty." = "名称和标识符不能为空。";
+"Identifier must use only letters, numbers, dots, and hyphens." = "标识符只能包含字母、数字、点和连字符。";
+"Identifier should contain at least one dot." = "标识符至少应包含一个点。";
 "URL cannot be empty" = "URL 不能为空";
+"URL must be a valid absolute URL." = "URL 必须是合法的绝对地址。";
 "Script cannot be empty" = "脚本不能为空";
 "Code cannot be empty" = "代码不能为空";
 "Key combo cannot be empty" = "快捷键不能为空";
@@ -173,6 +182,8 @@
 "App Blacklist" = "已禁用的应用 (App Blacklist)";
 "Plugins in %@" = "%@ 中的插件";
 "Disable specific plugins only in %@. Global disabled plugins stay unavailable here." = "只在 %@ 中禁用特定插件。全局已禁用的插件在这里仍不可用。";
+"Filter plugins in this app" = "筛选当前应用中的插件";
+"No plugins available." = "当前没有可用插件。";
 "Enabled in this app" = "在此应用中启用";
 "Disabled in this app" = "在此应用中禁用";
 "Globally disabled" = "全局已禁用";
@@ -183,6 +194,7 @@
 "Current OpenFire context and plugin visibility report." = "当前 OpenFire 上下文与插件可见性报告。";
 "Refresh" = "刷新";
 "Copy Report" = "复制报告";
+"Empty-input probe point" = "空输入检测点";
 "Visible plugins: %d / %d" = "可见插件：%d / %d";
 "OpenFire Diagnostics" = "OpenFire 诊断";
 "Frontmost app" = "前台应用";
