@@ -28,9 +28,9 @@
 "Trust Plugin Before Running" = "Trust Plugin Before Running";
 "Plugin '%@' can execute scripts on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes." = "Plugin '%@' can execute scripts on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes.";
 "Trust and Run" = "Trust and Run";
-"Menu Hotkey and Toggle Hotkey cannot use the same shortcut." = "Menu Hotkey and Toggle Hotkey cannot use the same shortcut.";
-"Failed to register Menu Hotkey (%@). It may conflict with another shortcut." = "Failed to register Menu Hotkey (%@). It may conflict with another shortcut.";
-"Failed to register Toggle Hotkey (%@). It may conflict with another shortcut." = "Failed to register Toggle Hotkey (%@). It may conflict with another shortcut.";
+"Open Menu Hotkey and Auto Trigger Toggle Hotkey cannot use the same shortcut." = "Open Menu Hotkey and Auto Trigger Toggle Hotkey cannot use the same shortcut.";
+"Failed to register Open Menu Hotkey (%@). It may conflict with another shortcut." = "Failed to register Open Menu Hotkey (%@). It may conflict with another shortcut.";
+"Failed to register Auto Trigger Toggle Hotkey (%@). It may conflict with another shortcut." = "Failed to register Auto Trigger Toggle Hotkey (%@). It may conflict with another shortcut.";
 "Hotkey Registration Failed" = "Hotkey Registration Failed";
 "Plugin '%@' installed successfully." = "Plugin '%@' installed successfully.";
 "Failed to copy plugin to installation directory. Check permissions.\n(%@)" = "Failed to copy plugin to installation directory. Check permissions.\n(%@)";
@@ -67,8 +67,8 @@
 /* StatusBarController */
 "✓ Launch at Login" = "✓ Launch at Login";
 "Launch at Login" = "Launch at Login";
-"✅ Enabled" = "✅ Enabled";
-"⏸ Disabled" = "⏸ Disabled";
+"✅ Auto Trigger On" = "✅ Auto Trigger On";
+"⏸ Auto Trigger Off" = "⏸ Auto Trigger Off";
 "Disable in Current App" = "Disable in Current App";
 "Manage Disabled Apps..." = "Manage Disabled Apps...";
 "Manage Plugins in Current App..." = "Manage Plugins in Current App...";
@@ -84,12 +84,12 @@
 "Ring Opacity" = "Ring Opacity";
 "GTA Mode" = "GTA Mode";
 "✓ GTA Mode" = "✓ GTA Mode";
-"Menu Hotkey: %@" = "Menu Hotkey: %@";
-"Toggle Hotkey: %@" = "Toggle Hotkey: %@";
+"Open Menu Hotkey: %@" = "Open Menu Hotkey: %@";
+"Auto Trigger Toggle Hotkey: %@" = "Auto Trigger Toggle Hotkey: %@";
 "Quit OpenFire" = "Quit OpenFire";
 "Failed to Set Launch at Login" = "Failed to Set Launch at Login";
-"Set Menu Hotkey" = "Set Menu Hotkey";
-"Set Toggle Hotkey" = "Set Toggle Hotkey";
+"Set Open Menu Hotkey" = "Set Open Menu Hotkey";
+"Set Auto Trigger Toggle Hotkey" = "Set Auto Trigger Toggle Hotkey";
 "Enable in %@" = "Enable in %@";
 "Disable in %@" = "Disable in %@";
 "Per-App Overrides" = "Per-App Overrides";

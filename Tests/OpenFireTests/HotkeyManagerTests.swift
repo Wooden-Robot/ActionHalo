@@ -1,4 +1,5 @@
 import XCTest
+import Carbon
 @testable import OpenFire
 
 final class HotkeyManagerTests: XCTestCase {
@@ -31,13 +32,17 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertTrue(desc.contains("⌘") || desc.contains("⇧") || desc.contains("⌥") || desc.contains("⌃"))
     }
     
-    func testToggleHotkeyEquivalent() {
+    func testToggleHotkeyDescription() {
         let manager = HotkeyManager.shared
-        manager.toggleHotkey = (0x0B, 0) // 'B' key
-        XCTAssertEqual(manager.toggleHotkeyEquivalent, "b")
+        manager.toggleHotkey = (0x0B, UInt32(cmdKey | optionKey)) // ⌘⌥B
+        let desc = manager.toggleHotkeyDescription
         
+        XCTAssertTrue(desc.contains("B"))
+        XCTAssertTrue(desc.contains("⌘"))
+        XCTAssertTrue(desc.contains("⌥"))
+
         manager.toggleHotkey = nil
-        XCTAssertEqual(manager.toggleHotkeyEquivalent, "e", "Fallback default for unset hotkey equivalent")
+        XCTAssertFalse(manager.toggleHotkeyDescription.isEmpty, "Description should not be empty even when unset")
     }
 
     func testSettingHotkeyPostsChangeNotification() {

@@ -64,7 +64,7 @@ Built-in automatic blacklist management UI. Supports dragging and dropping apps,
 OpenFire has **two ways to open the wheel**, and they are easy to confuse if described as one flow:
 
 1. **Mouse selection trigger**: select text normally, then release the mouse button. The wheel appears only after the selection is complete and the button is up.
-2. **Optional global hotkey trigger**: if you set a `Menu Hotkey` in the menu bar, OpenFire can open the wheel for the current selection without waiting for the mouse-release flow.
+2. **Optional manual hotkey trigger**: if you set an `Open Menu Hotkey` in the menu bar, OpenFire can open the wheel for the current selection without waiting for the mouse-release flow.
 
 Once the wheel is already visible, there are **two ways to execute an action**:
 
@@ -80,7 +80,8 @@ OpenFire lives in the macOS menu bar and exposes the main controls there:
 - **Ring Opacity**: `0% (Opaque)` to `100% (Transparent)`
 - **GTA Mode**: swaps the wheel into a heavier GTA V-style HUD presentation
 - **Max Items in Menu**: `6 / 8 / 12 / 16`
-- **Menu Hotkey** and **Toggle Hotkey**
+- **Open Menu Hotkey**: manually open the wheel for the current selection. Default: `Shift + Option + D`
+- **Auto Trigger Toggle Hotkey**: turn automatic text-selection triggering on or off. Default: `Shift + Option + X`
 - **Plugin Management** and **App Blacklist**
 
 Note: when **GTA Mode** is enabled, the wheel is intentionally rendered fully opaque and the opacity menu is disabled.

@@ -1,8 +1,17 @@
 import Cocoa
 import Carbon
 
-/// Manages a global hotkey for triggering the radial menu on selected text
+/// Manages the two global hotkeys:
+/// 1) open the radial menu for the current selection
+/// 2) toggle automatic text-selection triggering on/off
 final class HotkeyManager {
+    private enum Defaults {
+        static let menuHotkeyConfiguredKey = "hotkeyConfigured"
+        static let toggleHotkeyConfiguredKey = "toggleHotkeyConfigured"
+        static let defaultMenuHotkey: (keyCode: UInt32, modifiers: UInt32) = (0x02, UInt32(shiftKey | optionKey)) // ⇧⌥D
+        static let defaultToggleHotkey: (keyCode: UInt32, modifiers: UInt32) = (0x07, UInt32(shiftKey | optionKey)) // ⇧⌥X
+    }
+
     struct RegistrationIssue: Equatable {
         let kind: Kind
         let message: String
@@ -17,7 +26,7 @@ final class HotkeyManager {
     static let hotkeyChangedNotification = Notification.Name("OpenFireHotkeyChanged")
     static let toggleHotkeyChangedNotification = Notification.Name("OpenFireToggleHotkeyChanged")
     
-    /// Current hotkey stored as (keyCode, modifiers) for main radial menu
+    /// Current hotkey stored as (keyCode, modifiers) for manually opening the radial menu
     var hotkey: (keyCode: UInt32, modifiers: UInt32)? {
         didSet {
             saveHotkey()
@@ -25,7 +34,7 @@ final class HotkeyManager {
         }
     }
     
-    /// Current hotkey stored as (keyCode, modifiers) for toggling app enabled state
+    /// Current hotkey stored as (keyCode, modifiers) for toggling automatic text-selection triggering
     var toggleHotkey: (keyCode: UInt32, modifiers: UInt32)? {
         didSet {
             saveToggleHotkey()
@@ -57,23 +66,6 @@ final class HotkeyManager {
         return parts.joined()
     }
     
-    // MARK: - Properties for NSMenuItem
-    
-    var toggleHotkeyEquivalent: String {
-        guard let hk = toggleHotkey else { return "e" } // Default behavior
-        return keyStringFromCode(UInt16(hk.keyCode)).lowercased()
-    }
-    
-    var toggleHotkeyModifierFlags: NSEvent.ModifierFlags {
-        guard let hk = toggleHotkey else { return [] }
-        var flags: NSEvent.ModifierFlags = []
-        if (hk.modifiers & UInt32(cmdKey)) != 0 { flags.insert(.command) }
-        if (hk.modifiers & UInt32(optionKey)) != 0 { flags.insert(.option) }
-        if (hk.modifiers & UInt32(shiftKey)) != 0 { flags.insert(.shift) }
-        if (hk.modifiers & UInt32(controlKey)) != 0 { flags.insert(.control) }
-        return flags
-    }
-    
     private var eventHandler: EventHandlerRef?
     private var hotkeyRef: EventHotKeyRef?
     var onHotkeyPressed: (() -> Void)?
@@ -94,7 +86,7 @@ final class HotkeyManager {
         if let hk = hotkey, let thk = toggleHotkey, hk == thk {
             let issue = RegistrationIssue(
                 kind: .duplicateAssignment,
-                message: "Menu Hotkey and Toggle Hotkey cannot use the same shortcut.".localized
+                message: "Open Menu Hotkey and Auto Trigger Toggle Hotkey cannot use the same shortcut.".localized
             )
             issues.append(issue)
             NSLog("[OpenFire] Hotkey registration skipped: duplicate assignment")
@@ -135,7 +127,7 @@ final class HotkeyManager {
                 issues.append(
                     RegistrationIssue(
                         kind: .registerFailed(status),
-                        message: String(format: "Failed to register Menu Hotkey (%@). It may conflict with another shortcut.".localized, hotkeyDescription)
+                        message: String(format: "Failed to register Open Menu Hotkey (%@). It may conflict with another shortcut.".localized, hotkeyDescription)
                     )
                 )
                 hotkeyRef = nil
@@ -146,12 +138,12 @@ final class HotkeyManager {
             let toggleHotkeyID = EventHotKeyID(signature: fourCharCode("OFIR"), id: 2)
             let status = RegisterEventHotKey(thk.keyCode, thk.modifiers, toggleHotkeyID, GetApplicationEventTarget(), 0, &toggleHotkeyRef)
             if status == noErr {
-                NSLog("[OpenFire] Toggle App Hotkey registered: \(toggleHotkeyDescription)")
+                NSLog("[OpenFire] Auto-trigger toggle hotkey registered: \(toggleHotkeyDescription)")
             } else {
                 issues.append(
                     RegistrationIssue(
                         kind: .registerFailed(status),
-                        message: String(format: "Failed to register Toggle Hotkey (%@). It may conflict with another shortcut.".localized, toggleHotkeyDescription)
+                        message: String(format: "Failed to register Auto Trigger Toggle Hotkey (%@). It may conflict with another shortcut.".localized, toggleHotkeyDescription)
                     )
                 )
                 toggleHotkeyRef = nil
@@ -180,6 +172,7 @@ final class HotkeyManager {
     // MARK: - Persistence
     
     private func saveHotkey() {
+        UserDefaults.standard.set(true, forKey: Defaults.menuHotkeyConfiguredKey)
         if let hk = hotkey {
             UserDefaults.standard.set(Int(hk.keyCode), forKey: "hotkeyKeyCode")
             UserDefaults.standard.set(Int(hk.modifiers), forKey: "hotkeyModifiers")
@@ -190,6 +183,7 @@ final class HotkeyManager {
     }
     
     private func saveToggleHotkey() {
+        UserDefaults.standard.set(true, forKey: Defaults.toggleHotkeyConfiguredKey)
         if let hk = toggleHotkey {
             UserDefaults.standard.set(Int(hk.keyCode), forKey: "toggleHotkeyKeyCode")
             UserDefaults.standard.set(Int(hk.modifiers), forKey: "toggleHotkeyModifiers")
@@ -200,16 +194,22 @@ final class HotkeyManager {
     }
     
     private func loadHotkey() {
+        let menuHotkeyConfigured = UserDefaults.standard.object(forKey: Defaults.menuHotkeyConfiguredKey) as? Bool ?? false
         let keyCode = UserDefaults.standard.object(forKey: "hotkeyKeyCode") as? Int
         let modifiers = UserDefaults.standard.object(forKey: "hotkeyModifiers") as? Int
         if let kc = keyCode, let mod = modifiers {
             hotkey = (UInt32(kc), UInt32(mod))
+        } else if !menuHotkeyConfigured {
+            hotkey = Defaults.defaultMenuHotkey
         }
         
+        let toggleHotkeyConfigured = UserDefaults.standard.object(forKey: Defaults.toggleHotkeyConfiguredKey) as? Bool ?? false
         let tKeyCode = UserDefaults.standard.object(forKey: "toggleHotkeyKeyCode") as? Int
         let tModifiers = UserDefaults.standard.object(forKey: "toggleHotkeyModifiers") as? Int
         if let tkc = tKeyCode, let tmod = tModifiers {
             toggleHotkey = (UInt32(tkc), UInt32(tmod))
+        } else if !toggleHotkeyConfigured {
+            toggleHotkey = Defaults.defaultToggleHotkey
         }
     }
     

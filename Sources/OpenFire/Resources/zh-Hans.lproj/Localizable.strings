@@ -28,9 +28,9 @@
 "Trust Plugin Before Running" = "运行前信任插件";
 "Plugin '%@' can execute scripts on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes." = "插件“%@”可以在你的 Mac 上执行脚本。\n\n类型：%@\n位置：%@\n\n只有在你信任该插件来源时才允许执行。插件发生变更后，OpenFire 会再次请求确认。";
 "Trust and Run" = "信任并运行";
-"Menu Hotkey and Toggle Hotkey cannot use the same shortcut." = "菜单热键和开关热键不能使用同一个快捷键。";
-"Failed to register Menu Hotkey (%@). It may conflict with another shortcut." = "菜单热键（%@）注册失败，可能与其他快捷键冲突。";
-"Failed to register Toggle Hotkey (%@). It may conflict with another shortcut." = "开关热键（%@）注册失败，可能与其他快捷键冲突。";
+"Open Menu Hotkey and Auto Trigger Toggle Hotkey cannot use the same shortcut." = "呼出菜单快捷键和自动触发开关快捷键不能使用同一个快捷键。";
+"Failed to register Open Menu Hotkey (%@). It may conflict with another shortcut." = "呼出菜单快捷键（%@）注册失败，可能与其他快捷键冲突。";
+"Failed to register Auto Trigger Toggle Hotkey (%@). It may conflict with another shortcut." = "自动触发开关快捷键（%@）注册失败，可能与其他快捷键冲突。";
 "Hotkey Registration Failed" = "热键注册失败";
 "Plugin '%@' installed successfully." = "插件「%@」已成功安装并启用。";
 "Failed to copy plugin to installation directory. Check permissions.\n(%@)" = "无法复制插件文件到安装目录，请检查权限。 \n(%@)";
@@ -67,8 +67,8 @@
 /* StatusBarController */
 "✓ Launch at Login" = "✓ 开机自动启动";
 "Launch at Login" = "开机自动启动";
-"✅ Enabled" = "✅ 已启用";
-"⏸ Disabled" = "⏸ 已禁用";
+"✅ Auto Trigger On" = "✅ 自动触发已开启";
+"⏸ Auto Trigger Off" = "⏸ 自动触发已关闭";
 "Disable in Current App" = "在当前应用中禁用";
 "Manage Disabled Apps..." = "管理禁用应用...";
 "Manage Plugins in Current App..." = "管理当前应用中的插件...";
@@ -84,12 +84,12 @@
 "Ring Opacity" = "圆环透明度";
 "GTA Mode" = "GTA 氛围";
 "✓ GTA Mode" = "✓ GTA 氛围";
-"Menu Hotkey: %@" = "菜单快捷键: %@";
-"Toggle Hotkey: %@" = "启用/禁用快捷键: %@";
+"Open Menu Hotkey: %@" = "呼出菜单快捷键: %@";
+"Auto Trigger Toggle Hotkey: %@" = "自动触发开关快捷键: %@";
 "Quit OpenFire" = "退出 OpenFire";
 "Failed to Set Launch at Login" = "开机启动设置失败";
-"Set Menu Hotkey" = "设置菜单快捷键";
-"Set Toggle Hotkey" = "设置启用/禁用快捷键";
+"Set Open Menu Hotkey" = "设置呼出菜单快捷键";
+"Set Auto Trigger Toggle Hotkey" = "设置自动触发开关快捷键";
 "Enable in %@" = "在 %@ 中恢复启用";
 "Disable in %@" = "在 %@ 中禁用";
 "Per-App Overrides" = "按应用插件覆盖";

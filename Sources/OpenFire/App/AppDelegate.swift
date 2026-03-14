@@ -118,8 +118,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     /// Called when the global hotkey is pressed
     private func handleHotkeyTriggered() {
-        guard isEnabled else { return }
-        
         // Quick check via Accessibility API first
         if let text = AccessibilityManager.shared.getSelectedText(), !text.isEmpty {
             let mouseLocation = NSEvent.mouseLocation

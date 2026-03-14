@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.5
+- 理顺快捷键语义：将“自动触发开关”和“手动呼出圆环”拆成两条独立逻辑，关闭自动触发后仍可通过手动快捷键呼出菜单。
+- 修正菜单栏中的快捷键文案，明确区分“呼出菜单快捷键”和“自动触发开关快捷键”，减少混淆。
+- 移除此前错误挂到菜单项上的本地快捷键绑定，避免未设置或冲突时出现误触。
+- 为首次启动提供更顺手的默认快捷键：`⇧⌥D` 呼出菜单，`⇧⌥X` 切换自动触发；同时保留“用户清空后不再自动恢复默认值”的行为。
+
+- Split hotkey semantics so automatic text-selection triggering and manual menu invocation are independent; manual invocation still works when auto-trigger is off.
+- Clarified menu-bar copy to distinguish the “open menu” hotkey from the “auto-trigger toggle” hotkey.
+- Removed the incorrect local NSMenuItem shortcut binding that could cause accidental triggers when unset or conflicted.
+- Added more ergonomic first-run defaults: `⇧⌥D` to open the menu and `⇧⌥X` to toggle auto-trigger, while still respecting explicit user clearing.
+
 ## v0.3.4
 - 改写 README 中关于触发方式、`Paste / Clear` 与可编辑输入框场景的描述，使文案与实际行为一致。
 - 为默认内置功能新增 `Delete` 区域，并限制其仅在可编辑选区中可执行。

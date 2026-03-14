@@ -127,11 +127,10 @@ final class StatusBarController: NSObject {
         
         // Enable/Disable
         let toggleItem = NSMenuItem(
-            title: isEnabled ? "✅ Enabled".localized : "⏸ Disabled".localized,
-            action: #selector(toggleEnabled), 
-            keyEquivalent: HotkeyManager.shared.toggleHotkeyEquivalent
+            title: isEnabled ? "✅ Auto Trigger On".localized : "⏸ Auto Trigger Off".localized,
+            action: #selector(toggleEnabled),
+            keyEquivalent: ""
         )
-        toggleItem.keyEquivalentModifierMask = HotkeyManager.shared.toggleHotkeyModifierFlags
         toggleItem.target = self
         menu.addItem(toggleItem)
         
@@ -266,7 +265,7 @@ final class StatusBarController: NSObject {
         // Hotkeys
         let hotkeyDesc = HotkeyManager.shared.hotkeyDescription
         let hotkeyItem = NSMenuItem(
-            title: String(format: "Menu Hotkey: %@".localized, hotkeyDesc),
+            title: String(format: "Open Menu Hotkey: %@".localized, hotkeyDesc),
             action: #selector(setHotkey), keyEquivalent: ""
         )
         hotkeyItem.target = self
@@ -274,7 +273,7 @@ final class StatusBarController: NSObject {
         
         let toggleHotkeyDesc = HotkeyManager.shared.toggleHotkeyDescription
         let toggleHotkeyItem = NSMenuItem(
-            title: String(format: "Toggle Hotkey: %@".localized, toggleHotkeyDesc),
+            title: String(format: "Auto Trigger Toggle Hotkey: %@".localized, toggleHotkeyDesc),
             action: #selector(setToggleHotkey), keyEquivalent: ""
         )
         toggleHotkeyItem.target = self
@@ -472,7 +471,7 @@ final class StatusBarController: NSObject {
     }
     
     @objc private func setHotkey() {
-        let recorder = HotkeyRecorderWindow(title: "Set Menu Hotkey".localized)
+        let recorder = HotkeyRecorderWindow(title: "Set Open Menu Hotkey".localized)
         recorder.onHotkeyRecorded = { [weak self] keyCode, modifiers in
             if keyCode == 0 && modifiers == 0 {
                 HotkeyManager.shared.hotkey = nil
@@ -489,7 +488,7 @@ final class StatusBarController: NSObject {
     }
     
     @objc private func setToggleHotkey() {
-        let recorder = HotkeyRecorderWindow(title: "Set Toggle Hotkey".localized)
+        let recorder = HotkeyRecorderWindow(title: "Set Auto Trigger Toggle Hotkey".localized)
         recorder.onHotkeyRecorded = { [weak self] keyCode, modifiers in
             if keyCode == 0 && modifiers == 0 {
                 HotkeyManager.shared.toggleHotkey = nil
