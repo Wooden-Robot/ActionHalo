@@ -4,7 +4,7 @@ final class UpdateChecker {
     static let shared = UpdateChecker()
     static let autoCheckEnabledKey = "AutoCheckUpdates"
 
-    private let owner = "woodenrobot"
+    private let owner = "Wooden-Robot"
     private let repo = "OpenFire"
     private let lastNotifiedVersionKey = "LastNotifiedVersion"
     private let stateQueue = DispatchQueue(label: "com.openfire.update-checker-state")

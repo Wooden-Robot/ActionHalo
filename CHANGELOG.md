@@ -10,6 +10,7 @@
 - 将启动时的 Accessibility TCC reset 改为异步执行，避免阻塞启动。
 - 加强 Accessibility 类型检查，修复异常 AX 返回值下的潜在崩溃。
 - 改进 Launch at Login、语言切换后的重启、更新检查和 Diagnostics 的状态一致性。
+- 修复更新检查请求指向错误 GitHub 仓库 owner 导致的 `404` 错误。
 - 修复 Telegram 搜索与 iTerm2 执行的重复触发排查链路，并收敛 Telegram 冷启动搜索脚本为更稳的单轮 ready-gated 方案。
 - 修复 Diagnostics 窗口文本视图布局错误导致面板看起来空白的问题。
 - 新增全局 `Per-App Overrides` 管理窗口，可集中查看并恢复“某插件在哪个应用中被禁用”的覆盖规则。
@@ -29,6 +30,7 @@
 - Moved the launch-time Accessibility TCC reset off the startup path to avoid blocking launch.
 - Hardened Accessibility type handling to prevent crashes on unexpected AX return values.
 - Improved consistency across Launch at Login, relaunch-after-language-change, update checking, and Diagnostics state reporting.
+- Fixed update checks hitting the wrong GitHub repository owner and returning `404`.
 - Investigated the duplicate-trigger reports for Telegram Search and Run in iTerm2, then converged Telegram cold-start search to a more reliable single-pass, ready-gated AppleScript flow.
 - Fixed a Diagnostics text-view layout bug that could leave the diagnostics panel visually blank.
 - Added a global `Per-App Overrides` window to review and restore app-specific plugin disables from one place.

@@ -68,7 +68,7 @@ final class UpdateCheckerTests: XCTestCase {
 
         XCTAssertEqual(
             checker.latestReleaseAPIURL()?.absoluteString,
-            "https://api.github.com/repos/woodenrobot/OpenFire/releases/latest"
+            "https://api.github.com/repos/Wooden-Robot/OpenFire/releases/latest"
         )
     }
 
