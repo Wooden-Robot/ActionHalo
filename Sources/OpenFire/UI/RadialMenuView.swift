@@ -672,6 +672,7 @@ final class RadialMenuView: NSView {
     
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        let eventSummary = "eventNumber=\(event.eventNumber) clickCount=\(event.clickCount) timestamp=\(String(format: "%.6f", event.timestamp))"
         
         let dx = point.x - trackingCenter.x
         let dy = point.y - trackingCenter.y
@@ -696,9 +697,18 @@ final class RadialMenuView: NSView {
         let index = hitTestSector(at: point)
         
         if index >= 0 && index < menuItems.count {
+            let item = menuItems[index]
+            NSLog("[OpenFire-Debug] RadialMenuView.mouseUp selected index=%d title=%@ %@",
+                  index,
+                  item.title,
+                  eventSummary)
             // Flash feedback and trigger immediately on mouse release
             flashSector(at: index) { [weak self] in
-                self?.onItemSelected?(self!.menuItems[index])
+                guard let self else { return }
+                NSLog("[OpenFire-Debug] RadialMenuView.onItemSelected dispatch title=%@ %@",
+                      item.title,
+                      eventSummary)
+                self.onItemSelected?(self.menuItems[index])
             }
         }
     }

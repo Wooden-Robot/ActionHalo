@@ -3,12 +3,16 @@ import Cocoa
 /// Main application delegate — orchestrates all components
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static let radialMenuExcludedPluginIDs: Set<String> = ["com.openfire.builtin.paste"]
+    static let deletePluginID = "com.openfire.delete"
     
     private let statusBarController = StatusBarController()
     private var radialMenuWindow: RadialMenuWindow?
     private var isEnabled = true
     private var currentSelectedText: String = ""
     private var observersRegistered = false
+    private var isDismissingMenus = false
+    private var pendingMenuDismissCompletions: [() -> Void] = []
+    private var debugSelectionSequence: UInt64 = 0
     
     // Global monitor for clicking outside
     private var globalClickMonitor: Any?
@@ -390,12 +394,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static func radialMenuPlugins(from plugins: [Plugin]) -> [Plugin] {
         plugins.filter { !radialMenuExcludedPluginIDs.contains($0.id) }
     }
+
+    static func isPluginExecutable(_ plugin: Plugin, text: String, appBundleID: String?, isSelectionEditable: Bool) -> Bool {
+        let matchesContext = plugin.shouldShow(text: text, appBundleID: appBundleID)
+        guard matchesContext else { return false }
+
+        if plugin.id == deletePluginID {
+            return isSelectionEditable
+        }
+
+        return true
+    }
+
+    func beginMenuDismiss(completion: (() -> Void)? = nil) -> Bool {
+        if let completion {
+            pendingMenuDismissCompletions.append(completion)
+        }
+
+        guard !isDismissingMenus else { return false }
+        isDismissingMenus = true
+        return true
+    }
+
+    func finishMenuDismiss() {
+        let completions = pendingMenuDismissCompletions
+        pendingMenuDismissCompletions.removeAll()
+        isDismissingMenus = false
+        completions.forEach { $0() }
+    }
     
     private func showRadialMenu(at point: NSPoint, plugins: [Plugin]) {
         dismissAllMenus()
         
         var items: [RadialMenuItem] = []
         let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
+        let isSelectionEditable = AccessibilityManager.shared.isFocusedSelectionEditable()
         
         for plugin in plugins {
             items.append(RadialMenuItem(
@@ -403,7 +436,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 iconName: plugin.iconName,
                 action: .plugin(plugin),
                 customIcon: plugin.customIcon,
-                isExecutable: plugin.shouldShow(text: currentSelectedText, appBundleID: appBundleID)
+                isExecutable: Self.isPluginExecutable(
+                    plugin,
+                    text: currentSelectedText,
+                    appBundleID: appBundleID,
+                    isSelectionEditable: isSelectionEditable
+                )
             ))
         }
         
@@ -414,6 +452,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let window = RadialMenuWindow()
         window.onItemSelected = { [weak self] item in
             guard let self = self else { return }
+            self.debugSelectionSequence += 1
+            let selectionID = self.debugSelectionSequence
+            let actionSummary: String
+            switch item.action {
+            case .plugin(let plugin):
+                actionSummary = "plugin:\(plugin.id)"
+            case .builtIn(let action):
+                actionSummary = "builtIn:\(String(describing: action))"
+            default:
+                actionSummary = "other"
+            }
+            NSLog("[OpenFire-Debug] AppDelegate.onItemSelected selectionID=%llu title=%@ action=%@ textLength=%ld",
+                  selectionID,
+                  item.title,
+                  actionSummary,
+                  self.currentSelectedText.count)
             self.handleMenuAction(item, text: self.currentSelectedText)
         }
         window.showMenu(at: point, items: items, selectedText: currentSelectedText)
@@ -448,37 +502,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func dismissAllMenus(completion: (() -> Void)? = nil) {
-        NSLog("[OpenFire-Debug] dismissAllMenus called")
+        let completionLabel = completion == nil ? "none" : "provided"
+        NSLog("[OpenFire-Debug] dismissAllMenus called completion=%@ radialVisible=%@ popupVisible=%@ isDismissing=%@",
+              completionLabel,
+              radialMenuWindow == nil ? "false" : "true",
+              pastePopupWindow == nil ? "false" : "true",
+              isDismissingMenus ? "true" : "false")
+        guard beginMenuDismiss(completion: completion) else { return }
+
         let radialWindow = radialMenuWindow
         let popupWindow = pastePopupWindow
         radialMenuWindow = nil
         pastePopupWindow = nil
         removeGlobalClickMonitor()
 
-        var pendingDismissals = 0
-        let finishDismissal: () -> Void = {
+        let dismissCount = (popupWindow == nil ? 0 : 1) + (radialWindow == nil ? 0 : 1)
+        guard dismissCount > 0 else {
+            finishMenuDismiss()
+            return
+        }
+
+        var pendingDismissals = dismissCount
+        let finishDismissal: () -> Void = { [weak self] in
+            guard pendingDismissals > 0 else { return }
             pendingDismissals -= 1
             if pendingDismissals == 0 {
-                completion?()
+                self?.finishMenuDismiss()
             }
         }
 
         if let popupWindow {
-            pendingDismissals += 1
             popupWindow.hidePopup(completion: finishDismissal)
         }
 
         if let radialWindow {
-            pendingDismissals += 1
             radialWindow.hideMenu(completion: finishDismissal)
-        }
-
-        if pendingDismissals == 0 {
-            completion?()
         }
     }
     
     private func handleMenuAction(_ item: RadialMenuItem, text: String) {
+        switch item.action {
+        case .plugin(let plugin):
+            NSLog("[OpenFire-Debug] handleMenuAction plugin=%@ requiresTrust=%@ textLength=%ld",
+                  plugin.id,
+                  plugin.requiresExecutionTrust ? "true" : "false",
+                  text.count)
+        case .builtIn(let action):
+            NSLog("[OpenFire-Debug] handleMenuAction builtIn=%@ textLength=%ld",
+                  String(describing: action),
+                  text.count)
+        default:
+            NSLog("[OpenFire-Debug] handleMenuAction other textLength=%ld", text.count)
+        }
+
         switch item.action {
         case .builtIn(let action):
             ActionExecutor.shared.execute(action: action, text: text)
@@ -486,6 +562,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .plugin(let plugin):
             if plugin.requiresExecutionTrust {
                 dismissAllMenus {
+                    NSLog("[OpenFire-Debug] dismissAllMenus completion executing trusted plugin=%@",
+                          plugin.id)
                     PluginManager.shared.executePlugin(plugin, with: text)
                 }
             } else {

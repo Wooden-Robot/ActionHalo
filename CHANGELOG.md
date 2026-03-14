@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.3.3
+- 改写 README 中关于触发方式、`Paste / Clear` 与可编辑输入框场景的描述，使文案与实际行为一致。
+- 为默认内置功能新增 `Delete` 区域，并限制其仅在可编辑选区中可执行。
+- 为鼠标选中文本触发加入短暂缓冲，降低对立即删除、覆盖输入和继续改选区的打扰。
+- 修复空输入 `Paste` 快捷入口绕过按应用禁用规则的问题，并补齐相关测试。
+- 统一插件安装、保存、删除和用户覆盖包识别逻辑，避免旧命名插件遮蔽新版本。
+- 为脚本插件加入超时与强制终止保护，降低卡死风险。
+- 将启动时的 Accessibility TCC reset 改为异步执行，避免阻塞启动。
+- 加强 Accessibility 类型检查，修复异常 AX 返回值下的潜在崩溃。
+- 改进 Launch at Login、语言切换后的重启、更新检查和 Diagnostics 的状态一致性。
+- 修复 Telegram 搜索与 iTerm2 执行的重复触发排查链路，并收敛 Telegram 冷启动搜索脚本为更稳的单轮 ready-gated 方案。
+- 修复 Diagnostics 窗口文本视图布局错误导致面板看起来空白的问题。
+- 新增全局 `Per-App Overrides` 管理窗口，可集中查看并恢复“某插件在哪个应用中被禁用”的覆盖规则。
+
+- Rewrote README trigger, `Paste / Clear`, and editable-input wording so the documentation matches the actual behavior.
+- Added a built-in `Delete` action and limited it to editable selections only.
+- Added a short delay for mouse-selection-triggered menus to reduce interference with immediate delete, overwrite, or reselection flows.
+- Fixed the empty-input `Paste` shortcut bypassing per-app plugin disable rules and added coverage for it.
+- Unified plugin install, save, delete, and user-override resolution so legacy-named bundles no longer shadow newer overrides.
+- Added timeout and forced-termination protection for script plugins to reduce hang risk.
+- Moved the launch-time Accessibility TCC reset off the startup path to avoid blocking launch.
+- Hardened Accessibility type handling to prevent crashes on unexpected AX return values.
+- Improved consistency across Launch at Login, relaunch-after-language-change, update checking, and Diagnostics state reporting.
+- Investigated the duplicate-trigger reports for Telegram Search and Run in iTerm2, then converged Telegram cold-start search to a more reliable single-pass, ready-gated AppleScript flow.
+- Fixed a Diagnostics text-view layout bug that could leave the diagnostics panel visually blank.
+- Added a global `Per-App Overrides` window to review and restore app-specific plugin disables from one place.
+
 ## v0.3.2
 - 修复多屏场景下的 Accessibility 坐标换算，降低副屏和非主屏上的文本命中误判。
 - 为插件目录热重载加入防抖，减少连续文件变更时的重复扫描和预热卡顿。

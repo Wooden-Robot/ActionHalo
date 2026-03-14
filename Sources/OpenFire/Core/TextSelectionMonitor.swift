@@ -27,9 +27,12 @@ final class TextSelectionMonitor {
     
     // Polling fallback state for non-standard apps (e.g. Telegram, Electron apps)
     private var pendingSelectionTaskID: UUID?
+    private var pendingPresentationWorkItem: DispatchWorkItem?
+    private var presentationCancelMonitor: Any?
     
     // Minimum drag distance (in points) to consider as text selection
     private let minimumDragDistance: CGFloat = 5.0
+    private let mouseSelectionPresentationDelay: TimeInterval = 0.16
     
     private init() {}
     
@@ -96,6 +99,7 @@ final class TextSelectionMonitor {
         guard isMonitoring else { return }
         
         cleanupPendingTask()
+        cancelPendingSelectionPresentation()
         
         if let eventTap = eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: false)
@@ -119,6 +123,7 @@ final class TextSelectionMonitor {
     
     private func handleMouseUp() {
         guard let downLocation = mouseDownLocation else { return }
+        cancelPendingSelectionPresentation()
         
         // Check blacklist
         if let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier {
@@ -277,8 +282,8 @@ final class TextSelectionMonitor {
         if let taskID = taskID, pendingSelectionTaskID != taskID { return } // Already handled
         
         cleanupPendingTask()
-        
-        postTextSelectedNotification(text: text, location: location)
+
+        scheduleSelectionPresentation(text: text, location: location)
     }
     
     private func cleanupPendingTask() {
@@ -307,6 +312,38 @@ final class TextSelectionMonitor {
                 object: self,
                 userInfo: ["text": text, "mouseLocation": NSValue(point: location)]
             )
+        }
+    }
+
+    private func scheduleSelectionPresentation(text: String, location: NSPoint) {
+        cancelPendingSelectionPresentation()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.cancelPendingSelectionPresentation()
+            self.postTextSelectedNotification(text: text, location: location)
+        }
+
+        pendingPresentationWorkItem = workItem
+        presentationCancelMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.keyDown, .leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            self?.cancelPendingSelectionPresentation()
+        }
+
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + mouseSelectionPresentationDelay,
+            execute: workItem
+        )
+    }
+
+    private func cancelPendingSelectionPresentation() {
+        pendingPresentationWorkItem?.cancel()
+        pendingPresentationWorkItem = nil
+
+        if let monitor = presentationCancelMonitor {
+            NSEvent.removeMonitor(monitor)
+            presentationCancelMonitor = nil
         }
     }
     

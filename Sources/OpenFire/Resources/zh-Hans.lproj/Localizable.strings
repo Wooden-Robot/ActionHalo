@@ -71,6 +71,7 @@
 "Manage Disabled Apps..." = "管理禁用应用...";
 "Manage Plugins in Current App..." = "管理当前应用中的插件...";
 "Manage Plugins in %@..." = "管理 %@ 中的插件...";
+"Per-App Overrides..." = "按应用插件覆盖...";
 "Diagnostics..." = "诊断信息...";
 "Plugin Management" = "插件管理";
 "Click to toggle · Drag to reorder" = "点击切换 · 拖拽排序";
@@ -88,6 +89,10 @@
 "Set Toggle Hotkey" = "设置启用/禁用快捷键";
 "Enable in %@" = "在 %@ 中恢复启用";
 "Disable in %@" = "在 %@ 中禁用";
+"Per-App Overrides" = "按应用插件覆盖";
+"Review plugins disabled only in specific apps, then restore them from one place." = "查看那些只在特定应用里被禁用的插件，并在这里统一恢复。";
+"Restore" = "恢复";
+"No per-app plugin overrides." = "当前没有按应用禁用的插件覆盖。";
 
 /* PluginOrderWindow */
 "┼ New Custom Plugin" = "┼ 新建自定义插件";

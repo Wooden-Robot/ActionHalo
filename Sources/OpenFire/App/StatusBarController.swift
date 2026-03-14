@@ -16,6 +16,7 @@ final class StatusBarController: NSObject {
     private var blacklistWindow: BlacklistWindow?
     private var diagnosticsWindow: DiagnosticsWindow?
     private var currentAppPluginsWindow: CurrentAppPluginsWindow?
+    private var perAppOverridesWindow: PerAppOverridesWindow?
     
     var onEnabledChanged: ((Bool) -> Void)?
     var currentEnabledState: Bool { isEnabled }
@@ -144,6 +145,10 @@ final class StatusBarController: NSObject {
         currentAppPluginsItem.target = self
         self.currentAppPluginsItem = currentAppPluginsItem
         menu.addItem(currentAppPluginsItem)
+
+        let perAppOverridesItem = NSMenuItem(title: "Per-App Overrides...".localized, action: #selector(openPerAppOverridesWindow), keyEquivalent: "")
+        perAppOverridesItem.target = self
+        menu.addItem(perAppOverridesItem)
 
         let diagnosticsItem = NSMenuItem(title: "Diagnostics...".localized, action: #selector(openDiagnosticsWindow), keyEquivalent: "")
         diagnosticsItem.target = self
@@ -515,6 +520,14 @@ final class StatusBarController: NSObject {
             diagnosticsWindow = DiagnosticsWindow()
         }
         diagnosticsWindow?.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func openPerAppOverridesWindow() {
+        if perAppOverridesWindow == nil {
+            perAppOverridesWindow = PerAppOverridesWindow()
+        }
+        perAppOverridesWindow?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 

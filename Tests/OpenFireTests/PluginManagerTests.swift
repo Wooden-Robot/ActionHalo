@@ -151,6 +151,30 @@ final class PluginManagerTests: XCTestCase {
         XCTAssertEqual(diagnostic.reasons, [.disabledForApp("com.apple.Safari")])
     }
 
+    func testAllPerAppDisabledPluginOverridesListsEveryScopedDisable() {
+        let manager = PluginManager.shared
+        manager.plugins.removeAll()
+
+        manager.setPluginEnabled("com.test.first", enabled: false, forAppBundleID: "com.apple.Safari")
+        manager.setPluginEnabled("com.test.second", enabled: false, forAppBundleID: "com.apple.finder")
+
+        let overrides = manager.allPerAppDisabledPluginOverrides()
+
+        XCTAssertEqual(
+            overrides,
+            [
+                .init(appBundleID: "com.apple.Safari", pluginID: "com.test.first"),
+                .init(appBundleID: "com.apple.finder", pluginID: "com.test.second")
+            ]
+        )
+
+        manager.clearPerAppOverride(pluginID: "com.test.first", forAppBundleID: "com.apple.Safari")
+        XCTAssertEqual(
+            manager.allPerAppDisabledPluginOverrides(),
+            [.init(appBundleID: "com.apple.finder", pluginID: "com.test.second")]
+        )
+    }
+
     func testMergePluginsPreservingExistingPrefersUserPluginForDuplicateIdentifier() {
         let oldUserPlugin = makePlugin(
             name: "Old User Version",

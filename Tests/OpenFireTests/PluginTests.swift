@@ -265,6 +265,16 @@ final class PluginTests: XCTestCase {
         XCTAssertNotEqual(fingerprintA, fingerprintB)
     }
 
+    func testDeleteBuiltInPluginUsesDeleteKeyCombo() throws {
+        let pluginURL = URL(fileURLWithPath: "/Users/woodenrobot/code/github/OpenFire/Plugins/Delete.openfireext")
+        let plugin = try XCTUnwrap(PluginLoader.load(from: pluginURL))
+
+        XCTAssertEqual(plugin.id, "com.openfire.delete")
+        XCTAssertEqual(plugin.config.action.type, .keyCombo)
+        XCTAssertEqual(plugin.config.action.key, "delete")
+        XCTAssertTrue(PluginManager.coreDefaultPluginIDs.contains(plugin.id))
+    }
+
     private func makePluginBundle(identifier: String, actionType: String, scriptName: String, scriptContent: String) throws -> URL {
         let bundleURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".openfireext")
         temporaryDirectories.append(bundleURL)

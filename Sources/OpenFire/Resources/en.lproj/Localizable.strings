@@ -71,6 +71,7 @@
 "Manage Disabled Apps..." = "Manage Disabled Apps...";
 "Manage Plugins in Current App..." = "Manage Plugins in Current App...";
 "Manage Plugins in %@..." = "Manage Plugins in %@...";
+"Per-App Overrides..." = "Per-App Overrides...";
 "Diagnostics..." = "Diagnostics...";
 "Plugin Management" = "Plugin Management";
 "Click to toggle · Drag to reorder" = "Click to toggle · Drag to reorder";
@@ -88,6 +89,10 @@
 "Set Toggle Hotkey" = "Set Toggle Hotkey";
 "Enable in %@" = "Enable in %@";
 "Disable in %@" = "Disable in %@";
+"Per-App Overrides" = "Per-App Overrides";
+"Review plugins disabled only in specific apps, then restore them from one place." = "Review plugins disabled only in specific apps, then restore them from one place.";
+"Restore" = "Restore";
+"No per-app plugin overrides." = "No per-app plugin overrides.";
 
 /* PluginOrderWindow */
 "┼ New Custom Plugin" = "┼ New Custom Plugin";

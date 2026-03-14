@@ -94,7 +94,7 @@ OpenFire's true power lies in its plugin system. Plugins exist as `.openfireext`
 ### Pre-installed Plugins
 | 🔌 Plugin | 📝 Description |
 | :--- | :--- |
-| **Copy / Cut** | Core clipboard actions for the selected text itself. |
+| **Copy / Cut / Delete** | Core editing actions for the selected text itself. |
 | **Search / Translate / Dict** | Everyday text actions for web search, translation, and the macOS Dictionary app. |
 | **Open Link / Reveal in Finder** | Context-aware built-ins for URLs and file paths. They stay visible and become executable only when the current selection matches. |
 

@@ -3,6 +3,10 @@ import JavaScriptCore
 
 /// Manages plugin lifecycle: loading, execution, filtering, and hot-reload
 final class PluginManager {
+    struct PerAppPluginOverride: Equatable {
+        let appBundleID: String
+        let pluginID: String
+    }
     
     static let shared = PluginManager()
     
@@ -11,11 +15,12 @@ final class PluginManager {
     static let trustedPluginFingerprintsKey = "trustedPluginFingerprints"
     static let perAppDisabledPluginsKey = "perAppDisabledPlugins"
     
-    /// The 7 core default plugins that can never be deleted
+    /// Core default plugins that can never be deleted
     static let coreDefaultPluginIDs: Set<String> = [
         "com.openfire.copy",
         "com.openfire.builtin.paste",
         "com.openfire.cut",
+        "com.openfire.delete",
         "com.openfire.translate",
         "com.openfire.search", 
         "com.openfire.dictionary",
@@ -208,6 +213,23 @@ final class PluginManager {
 
     func disabledPluginIDs(forAppBundleID appBundleID: String) -> [String] {
         perAppDisabledPlugins()[appBundleID] ?? []
+    }
+
+    func allPerAppDisabledPluginOverrides() -> [PerAppPluginOverride] {
+        perAppDisabledPlugins()
+            .flatMap { appBundleID, pluginIDs in
+                pluginIDs.map { PerAppPluginOverride(appBundleID: appBundleID, pluginID: $0) }
+            }
+            .sorted {
+                if $0.pluginID == $1.pluginID {
+                    return $0.appBundleID.localizedCaseInsensitiveCompare($1.appBundleID) == .orderedAscending
+                }
+                return $0.pluginID.localizedCaseInsensitiveCompare($1.pluginID) == .orderedAscending
+            }
+    }
+
+    func clearPerAppOverride(pluginID: String, forAppBundleID appBundleID: String) {
+        setPluginEnabled(pluginID, enabled: true, forAppBundleID: appBundleID)
     }
 
     func isExecutionTrusted(for plugin: Plugin) -> Bool {
@@ -432,6 +454,10 @@ final class PluginManager {
     /// Execute a plugin action with the given text
     func executePlugin(_ plugin: Plugin, with text: String) {
         let action = plugin.config.action
+        NSLog("[OpenFire-Debug] executePlugin plugin=%@ type=%@ textLength=%ld",
+              plugin.id,
+              action.type.rawValue,
+              text.count)
         
         switch action.type {
         case .url:

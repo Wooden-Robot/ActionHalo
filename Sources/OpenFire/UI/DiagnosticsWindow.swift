@@ -64,11 +64,21 @@ final class DiagnosticsWindow: NSWindowController {
         scrollView.hasVerticalScroller = true
         scrollView.borderType = .bezelBorder
 
+        textView.frame = scrollView.contentView.bounds
         textView.isEditable = false
         textView.isSelectable = true
+        textView.isRichText = false
+        textView.importsGraphics = false
         textView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         textView.textContainerInset = NSSize(width: 8, height: 8)
         textView.backgroundColor = .textBackgroundColor
+        textView.minSize = scrollView.contentView.bounds.size
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.containerSize = NSSize(width: scrollView.contentView.bounds.width, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
         scrollView.documentView = textView
         contentView.addSubview(scrollView)
     }

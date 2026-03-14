@@ -65,6 +65,66 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertEqual(finderPaste?.id, "com.openfire.builtin.paste")
     }
 
+    func testDeletePluginRequiresEditableSelectionToBeExecutable() throws {
+        let delete = try makePlugin(
+            name: "Delete",
+            identifier: "com.openfire.delete",
+            actionType: "key-combo",
+            actionContent: "\"key\":\"delete\""
+        )
+
+        XCTAssertFalse(
+            AppDelegate.isPluginExecutable(
+                delete,
+                text: "selected",
+                appBundleID: nil,
+                isSelectionEditable: false
+            )
+        )
+        XCTAssertTrue(
+            AppDelegate.isPluginExecutable(
+                delete,
+                text: "selected",
+                appBundleID: nil,
+                isSelectionEditable: true
+            )
+        )
+    }
+
+    func testNonDeletePluginDoesNotRequireEditableSelection() throws {
+        let copy = try makePlugin(
+            name: "Copy",
+            identifier: "com.openfire.copy",
+            actionType: "copy"
+        )
+
+        XCTAssertTrue(
+            AppDelegate.isPluginExecutable(
+                copy,
+                text: "selected",
+                appBundleID: nil,
+                isSelectionEditable: false
+            )
+        )
+    }
+
+    func testMenuDismissIsIdempotentWhileAlreadyInProgress() {
+        let appDelegate = AppDelegate()
+        var completionCount = 0
+
+        XCTAssertTrue(appDelegate.beginMenuDismiss {
+            completionCount += 1
+        })
+        XCTAssertFalse(appDelegate.beginMenuDismiss {
+            completionCount += 1
+        })
+
+        appDelegate.finishMenuDismiss()
+
+        XCTAssertEqual(completionCount, 2)
+        XCTAssertTrue(appDelegate.beginMenuDismiss())
+    }
+
     private func makePlugin(name: String, identifier: String, actionType: String, actionContent: String? = nil) throws -> Plugin {
         let extraActionFields = actionContent.map { ",\($0)" } ?? ""
         let json = """

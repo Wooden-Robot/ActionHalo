@@ -125,6 +125,31 @@ final class AccessibilityManager {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
+
+    func isFocusedSelectionEditable() -> Bool {
+        guard isAccessibilityEnabled else { return false }
+        guard let focusedElement = getFocusedElement() else { return false }
+
+        var isSettable: DarwinBoolean = false
+        let isValueSettable =
+            AXUIElementIsAttributeSettable(focusedElement, kAXValueAttribute as CFString, &isSettable) == .success &&
+            isSettable.boolValue
+        let isSelectedTextSettable =
+            AXUIElementIsAttributeSettable(focusedElement, kAXSelectedTextAttribute as CFString, &isSettable) == .success &&
+            isSettable.boolValue
+
+        if isValueSettable || isSelectedTextSettable {
+            return true
+        }
+
+        var isEditing: AnyObject?
+        if AXUIElementCopyAttributeValue(focusedElement, "AXDocumentIsEditing" as CFString, &isEditing) == .success,
+           let editing = isEditing as? Bool {
+            return editing
+        }
+
+        return false
+    }
     
     // Fallback: Simulate Cmd+C to grab text from apps that refuse to expose accessibility text
     func getSelectedTextViaCopy(completion: @escaping (String?) -> Void) {
