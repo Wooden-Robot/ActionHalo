@@ -7,6 +7,11 @@ final class TextSelectionMonitor {
     
     /// Notification posted when text is selected. UserInfo contains "text" and "mouseLocation"
     static let textSelectedNotification = Notification.Name("OpenFireTextSelected")
+
+    static func hasUsableClipboardText(_ text: String?) -> Bool {
+        guard let text else { return false }
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
     
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -307,7 +312,7 @@ final class TextSelectionMonitor {
     
     private func checkForEmptyTextInputClick(at mouseLocation: NSPoint) {
         // Quick check: If pasteboard is empty, don't even bother checking accessibility
-        guard let pasteboardString = NSPasteboard.general.string(forType: .string), !pasteboardString.isEmpty else {
+        guard Self.hasUsableClipboardText(NSPasteboard.general.string(forType: .string)) else {
             NSLog("[OpenFire-Debug] Pasteboard is empty, skipping empty text input check.")
             return
         }

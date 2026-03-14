@@ -43,7 +43,7 @@ Supports custom `.openfireext` plugin packages. Features double-click installati
 Rewritten Accessibility recognition logic at the foundation. Text-selection actions stay focused on the selected content itself, while input-only actions such as paste are routed into editable-field shortcuts instead of polluting the main wheel.
 
 ✂️ **Cleaner Quick Actions**
-When OpenFire detects an empty editable field, it can show a lightweight `Paste / Clear` capsule near the cursor for faster text entry cleanup without opening the full wheel. This is also where the built-in `Paste` action now lives by default.
+When OpenFire detects that you clicked into an editable field and there is no active text selection, it can show a lightweight `Paste / Clear` capsule near the cursor for quick paste access or for clearing the current clipboard contents. When the clipboard is empty, this shortcut does not appear. This is also where the built-in `Paste` action now lives by default.
 
 🚫 **Customizable App Blacklist**
 Built-in automatic blacklist management UI. Supports dragging and dropping apps, or browsing via the `+` button to precisely block specific software.
@@ -61,14 +61,17 @@ Built-in automatic blacklist management UI. Supports dragging and dropping apps,
 
 ### How Triggering Works
 
-The shared rule is simple: **the wheel appears only after text selection is completed and the mouse button is released**.
+OpenFire has **two ways to open the wheel**, and they are easy to confuse if described as one flow:
 
-After that trigger point, there are two ways to finish the action:
+1. **Mouse selection trigger**: select text normally, then release the mouse button. The wheel appears only after the selection is complete and the button is up.
+2. **Optional global hotkey trigger**: if you set a `Menu Hotkey` in the menu bar, OpenFire can open the wheel for the current selection without waiting for the mouse-release flow.
 
-1. **Select, release, then click**: finish the selection, let the wheel pop up, then click a slice to execute it immediately.
-2. **Select, release, press, drag, then release**: finish the selection, let the wheel pop up, press down again right away, drag into the slice you want, then release to execute it.
+Once the wheel is already visible, there are **two ways to execute an action**:
 
-The second mode is the signature interaction: after the wheel appears, you can use a press-drag-release motion instead of a simple click.
+1. **Release, then click**: let the wheel pop up, then click the slice you want.
+2. **Release, press, drag, then release**: let the wheel pop up, press down again right away, drag into the target slice, then release to fire it.
+
+The second execution style is the signature interaction: as soon as the wheel appears, you can go straight into a weapon-wheel-like press-drag-release motion instead of pausing to click a slice.
 
 ### Menu Bar Controls
 
@@ -77,6 +80,7 @@ OpenFire lives in the macOS menu bar and exposes the main controls there:
 - **Ring Opacity**: `0% (Opaque)` to `100% (Transparent)`
 - **GTA Mode**: swaps the wheel into a heavier GTA V-style HUD presentation
 - **Max Items in Menu**: `6 / 8 / 12 / 16`
+- **Menu Hotkey** and **Toggle Hotkey**
 - **Plugin Management** and **App Blacklist**
 
 Note: when **GTA Mode** is enabled, the wheel is intentionally rendered fully opaque and the opacity menu is disabled.

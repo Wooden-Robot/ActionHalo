@@ -4,11 +4,39 @@ final class UpdateChecker {
     static let shared = UpdateChecker()
     static let autoCheckEnabledKey = "AutoCheckUpdates"
 
-    private let owner = "Wooden-Robot"
+    private let owner = "woodenrobot"
     private let repo = "OpenFire"
     private let lastNotifiedVersionKey = "LastNotifiedVersion"
+    private let stateQueue = DispatchQueue(label: "com.openfire.update-checker-state")
+    private var isCheckingUpdates = false
 
     private init() {}
+
+    func beginUpdateCheck() -> Bool {
+        stateQueue.sync {
+            guard !isCheckingUpdates else { return false }
+            isCheckingUpdates = true
+            return true
+        }
+    }
+
+    func finishUpdateCheck() {
+        stateQueue.sync {
+            isCheckingUpdates = false
+        }
+    }
+
+    func lastNotifiedVersion() -> String? {
+        UserDefaults.standard.string(forKey: lastNotifiedVersionKey)
+    }
+
+    func setLastNotifiedVersion(_ version: String?) {
+        if let version {
+            UserDefaults.standard.set(version, forKey: lastNotifiedVersionKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: lastNotifiedVersionKey)
+        }
+    }
 
     func isAutoCheckEnabled() -> Bool {
         return UserDefaults.standard.object(forKey: Self.autoCheckEnabledKey) as? Bool ?? true
@@ -17,7 +45,11 @@ final class UpdateChecker {
     func checkForUpdates(showUpToDate: Bool = false, showErrors: Bool = false) {
         let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
 
-        guard let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/releases/latest") else {
+        guard let url = latestReleaseAPIURL() else {
+            return
+        }
+        guard beginUpdateCheck() else {
+            NSLog("[OpenFire] Skipping update check because another check is already in flight.")
             return
         }
 
@@ -27,6 +59,7 @@ final class UpdateChecker {
 
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
+            defer { self.finishUpdateCheck() }
             if let error = error {
                 if showErrors {
                     DispatchQueue.main.async {
@@ -74,6 +107,7 @@ final class UpdateChecker {
             guard !latestVersion.isEmpty else { return }
 
             if normalizedCurrent.compare(latestVersion, options: .numeric) != .orderedAscending {
+                self.setLastNotifiedVersion(nil)
                 if showUpToDate {
                     DispatchQueue.main.async {
                         self.presentUpToDateAlert(currentVersion: normalizedCurrent)
@@ -83,7 +117,7 @@ final class UpdateChecker {
             }
 
             if !showUpToDate,
-               UserDefaults.standard.string(forKey: self.lastNotifiedVersionKey) == latestVersion {
+               self.lastNotifiedVersion() == latestVersion {
                 return
             }
 
@@ -93,7 +127,7 @@ final class UpdateChecker {
 
             DispatchQueue.main.async {
                 self.presentUpdateAlert(latestVersion: latestVersion, currentVersion: normalizedCurrent, url: url)
-                UserDefaults.standard.set(latestVersion, forKey: self.lastNotifiedVersionKey)
+                self.setLastNotifiedVersion(latestVersion)
             }
         }.resume()
     }
@@ -169,6 +203,10 @@ final class UpdateChecker {
         let trimmed = version.trimmingCharacters(in: .whitespacesAndNewlines)
         let withoutPrefix = trimmed.hasPrefix("v") || trimmed.hasPrefix("V") ? String(trimmed.dropFirst()) : trimmed
         return withoutPrefix.split(separator: "-").first.map(String.init) ?? ""
+    }
+
+    func latestReleaseAPIURL() -> URL? {
+        URL(string: "https://api.github.com/repos/\(owner)/\(repo)/releases/latest")
     }
 }
 

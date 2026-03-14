@@ -283,9 +283,27 @@ final class AccessibilityManager {
             
             var position = CGPoint.zero
             var size = CGSize.zero
-            
-            AXValueGetValue(positionValue as! AXValue, .cgPoint, &position)
-            AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+
+            guard
+                let positionValue,
+                let sizeValue,
+                CFGetTypeID(positionValue) == AXValueGetTypeID(),
+                CFGetTypeID(sizeValue) == AXValueGetTypeID()
+            else {
+                NSLog("[OpenFire-Debug] Failed to decode AX position/size for focused text input.")
+                return false
+            }
+
+            let positionAXValue = unsafeBitCast(positionValue, to: AXValue.self)
+            let sizeAXValue = unsafeBitCast(sizeValue, to: AXValue.self)
+
+            guard
+                AXValueGetValue(positionAXValue, .cgPoint, &position),
+                AXValueGetValue(sizeAXValue, .cgSize, &size)
+            else {
+                NSLog("[OpenFire-Debug] Failed to decode AX position/size for focused text input.")
+                return false
+            }
             
             let elementRect = CGRect(origin: position, size: size)
             let contains = elementRect.contains(axPoint)
@@ -358,7 +376,9 @@ final class AccessibilityManager {
             // Even if it's "StaticText", check if it's literally just a label inside a button or a row (common in native macOS apps)
             var parentRaw: AnyObject?
             if AXUIElementCopyAttributeValue(hitElement, kAXParentAttribute as CFString, &parentRaw) == .success,
-               let parent = parentRaw as! AXUIElement? {
+               let parentRaw,
+               CFGetTypeID(parentRaw) == AXUIElementGetTypeID() {
+                let parent = unsafeBitCast(parentRaw, to: AXUIElement.self)
                 var parentRoleRaw: AnyObject?
                 if AXUIElementCopyAttributeValue(parent, kAXRoleAttribute as CFString, &parentRoleRaw) == .success,
                    let parentRole = parentRoleRaw as? String {
@@ -395,17 +415,26 @@ final class AccessibilityManager {
             kAXFocusedApplicationAttribute as CFString,
             &focusedApp
         )
-        guard appResult == .success, let app = focusedApp else { return nil }
+        guard
+            appResult == .success,
+            let focusedApp,
+            CFGetTypeID(focusedApp) == AXUIElementGetTypeID()
+        else { return nil }
+        let app = unsafeBitCast(focusedApp, to: AXUIElement.self)
         
         var focusedElement: AnyObject?
         let elementResult = AXUIElementCopyAttributeValue(
-            app as! AXUIElement,
+            app,
             kAXFocusedUIElementAttribute as CFString,
             &focusedElement
         )
-        guard elementResult == .success, let element = focusedElement else { return nil }
+        guard
+            elementResult == .success,
+            let focusedElement,
+            CFGetTypeID(focusedElement) == AXUIElementGetTypeID()
+        else { return nil }
         
-        return (element as! AXUIElement)
+        return unsafeBitCast(focusedElement, to: AXUIElement.self)
     }
 
     func focusedElementRoleDescription() -> String? {

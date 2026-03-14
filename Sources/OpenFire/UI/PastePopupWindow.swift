@@ -109,12 +109,10 @@ final class PastePopupWindow: NSPanel {
     
     @objc private func pasteAction() {
         onPasteClicked?()
-        hidePopup()
     }
     
     @objc private func clearAction() {
         onClearClicked?()
-        hidePopup()
     }
     
     func show(at screenPoint: NSPoint) {

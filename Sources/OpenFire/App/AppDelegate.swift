@@ -12,6 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     // Global monitor for clicking outside
     private var globalClickMonitor: Any?
+
+    static func emptyInputPastePlugin(from plugins: [Plugin], appBundleID: String?) -> Plugin? {
+        plugins.first { plugin in
+            plugin.id == "com.openfire.builtin.paste" &&
+            plugin.isEnabled &&
+            PluginManager.shared.isPluginEnabled(plugin.id, forAppBundleID: appBundleID)
+        }
+    }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Automatically clear stale accessibility permissions if the app was updated
@@ -326,7 +334,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             TextSelectionMonitor.shared.startMonitoring()
         } else {
             TextSelectionMonitor.shared.stopMonitoring()
-            radialMenuWindow?.hideMenu()
+            dismissAllMenus()
         }
     }
     
@@ -357,9 +365,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mouseLocation = locationValue.pointValue
         currentSelectedText = "" // Empty text because nothing is selected
         
-        // Find the built-in paste plugin
-        guard let pastePlugin = PluginManager.shared.plugins.first(where: { $0.id == "com.openfire.builtin.paste" }),
-              pastePlugin.isEnabled else {
+        let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
+
+        // Find the built-in paste plugin, respecting per-app disable overrides.
+        guard let pastePlugin = Self.emptyInputPastePlugin(
+            from: PluginManager.shared.plugins,
+            appBundleID: appBundleID
+        ) else {
             return
         }
         
@@ -437,13 +449,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     private func dismissAllMenus(completion: (() -> Void)? = nil) {
         NSLog("[OpenFire-Debug] dismissAllMenus called")
-        let window = radialMenuWindow
+        let radialWindow = radialMenuWindow
+        let popupWindow = pastePopupWindow
         radialMenuWindow = nil
-        pastePopupWindow?.hidePopup()
         pastePopupWindow = nil
         removeGlobalClickMonitor()
-        window?.hideMenu(completion: completion)
-        if window == nil {
+
+        var pendingDismissals = 0
+        let finishDismissal: () -> Void = {
+            pendingDismissals -= 1
+            if pendingDismissals == 0 {
+                completion?()
+            }
+        }
+
+        if let popupWindow {
+            pendingDismissals += 1
+            popupWindow.hidePopup(completion: finishDismissal)
+        }
+
+        if let radialWindow {
+            pendingDismissals += 1
+            radialWindow.hideMenu(completion: finishDismissal)
+        }
+
+        if pendingDismissals == 0 {
             completion?()
         }
     }
@@ -492,16 +522,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // If this is a new version running for the first time
         if lastVersion != currentVersion {
             NSLog("[OpenFire] App updated from \(lastVersion ?? "none") to \(currentVersion). Resetting TCC permissions.")
-            
-            // Silently reset the old invalid permission record
-            let task = Process()
-            task.launchPath = "/usr/bin/tccutil"
-            task.arguments = ["reset", "Accessibility", "com.openfire.app"]
-            task.launch()
-            task.waitUntilExit()
-            
+
+            // Mark the new version first so repeated launches do not enqueue duplicate resets.
             // Mark the new version as launched
             UserDefaults.standard.set(currentVersion, forKey: "LastRunVersion")
+
+            // Reset asynchronously to avoid blocking app launch on a shell task.
+            DispatchQueue.global(qos: .utility).async {
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+                task.arguments = ["reset", "Accessibility", "com.openfire.app"]
+
+                do {
+                    try task.run()
+                    task.waitUntilExit()
+                } catch {
+                    NSLog("[OpenFire] Failed to reset Accessibility TCC: \(error.localizedDescription)")
+                }
+            }
         }
     }
 }

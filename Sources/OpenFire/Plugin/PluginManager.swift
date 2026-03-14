@@ -23,14 +23,11 @@ final class PluginManager {
         "com.openfire.reveal-path"
     ]
     
-    /// Plugins that intentionally keep their slot even when current selection is not executable.
-    static let reservedPlaceholderPluginIDs: Set<String> = [
-        "com.openfire.open-url"
-    ]
-    
     var plugins: [Plugin] = []
     private var fileWatchers: [DispatchSourceFileSystemObject] = []
     private var pendingReloadWorkItem: DispatchWorkItem?
+    private let loadStateQueue = DispatchQueue(label: "com.openfire.plugin-load-state")
+    private var latestScheduledLoadID: UInt64 = 0
     
     /// User plugins directory
     var userPluginsURL: URL {
@@ -69,8 +66,23 @@ final class PluginManager {
     }
     
     // MARK: - Loading
+
+    func beginPluginLoad() -> UInt64 {
+        loadStateQueue.sync {
+            latestScheduledLoadID += 1
+            return latestScheduledLoadID
+        }
+    }
+
+    func shouldApplyPluginLoadResult(_ loadID: UInt64) -> Bool {
+        loadStateQueue.sync {
+            loadID == latestScheduledLoadID
+        }
+    }
     
     func loadAllPlugins() {
+        let loadID = beginPluginLoad()
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             
@@ -101,6 +113,11 @@ final class PluginManager {
             let newPlugins = Array(mergedPlugins.values)
             
             DispatchQueue.main.async {
+                guard self.shouldApplyPluginLoadResult(loadID) else {
+                    NSLog("[OpenFire] Discarding stale plugin load result #\(loadID)")
+                    return
+                }
+
                 self.plugins = newPlugins
                 
                 // Prewarm assets to eliminate first-launch stutter
@@ -297,6 +314,43 @@ final class PluginManager {
     private func perAppDisabledPlugins() -> [String: [String]] {
         UserDefaults.standard.dictionary(forKey: Self.perAppDisabledPluginsKey) as? [String: [String]] ?? [:]
     }
+
+    func userPluginURL(for identifier: String) -> URL? {
+        let directMatch = userPluginsURL.appendingPathComponent("\(identifier).openfireext")
+        if FileManager.default.fileExists(atPath: directMatch.path) {
+            return directMatch
+        }
+
+        return userPluginURLs(for: identifier).first
+    }
+
+    func userPluginURLs(for identifier: String) -> [URL] {
+        let fileManager = FileManager.default
+
+        let contents = (try? fileManager.contentsOfDirectory(
+            at: userPluginsURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        var matches: [URL] = []
+        for itemURL in contents where itemURL.pathExtension == "openfireext" {
+            guard let plugin = PluginLoader.load(from: itemURL) else { continue }
+            if plugin.id == identifier {
+                matches.append(itemURL)
+            }
+        }
+
+        return matches.sorted {
+            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+        }
+    }
+
+    func removeDuplicateUserPlugins(for identifier: String, keeping preservedURL: URL? = nil) {
+        for url in userPluginURLs(for: identifier) where url != preservedURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
     
     func deletePlugin(_ plugin: Plugin) throws {
         // Core defaults cannot be deleted
@@ -306,10 +360,9 @@ final class PluginManager {
         
         let pathStr = plugin.directoryURL.path
         let isBuiltIn = pathStr.hasPrefix(Bundle.main.bundlePath) || pathStr.contains("/Resources/Plugins/")
-        let userOverrideURL = userPluginsURL.appendingPathComponent("\(plugin.id).openfireext")
-        let hasUserOverride = FileManager.default.fileExists(atPath: userOverrideURL.path)
+        let userOverrideURL = userPluginURL(for: plugin.id)
         
-        if hasUserOverride {
+        if let userOverrideURL {
             // Delete the user override file physically
             try FileManager.default.removeItem(at: userOverrideURL)
         } else if isBuiltIn {
@@ -449,30 +502,20 @@ final class PluginManager {
             let textFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
             try? text.write(to: textFile, atomically: true, encoding: .utf8)
             
-            do {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/bin/bash")
-                process.arguments = ["-c", content]
-                process.environment = ProcessInfo.processInfo.environment
-                process.environment?["OPENFIRE_TEXT"] = text
-                process.environment?["OPENFIRE_TEXT_FILE"] = textFile.path
-                process.currentDirectoryURL = plugin.directoryURL
-                
-                let errorPipe = Pipe()
-                process.standardError = errorPipe
-                
-                NSLog("[OpenFire-Debug] Launching bash process...")
-                try process.run()
-                process.waitUntilExit()
-                NSLog("[OpenFire-Debug] bash process finished with exit code: \(process.terminationStatus)")
-                
-                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                if !errorData.isEmpty, let errorStr = String(data: errorData, encoding: .utf8), !errorStr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    NSLog("[OpenFire] Shell script stderr: \(errorStr)")
-                }
-            } catch {
-                NSLog("[OpenFire] Failed to execute shell script: \(error.localizedDescription)")
-            }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = ["-c", content]
+            process.environment = ProcessInfo.processInfo.environment
+            process.environment?["OPENFIRE_TEXT"] = text
+            process.environment?["OPENFIRE_TEXT_FILE"] = textFile.path
+            process.currentDirectoryURL = plugin.directoryURL
+            
+            NSLog("[OpenFire-Debug] Launching bash process...")
+            self.runProcessWithTimeout(
+                process,
+                timeout: 30,
+                logPrefix: "Shell script"
+            )
             
             try? FileManager.default.removeItem(at: textFile)
         }
@@ -537,19 +580,13 @@ final class PluginManager {
                 process.environment?["OPENFIRE_TEXT"] = text
                 process.environment?["OPENFIRE_TEXT_FILE"] = textFile.path
                 process.currentDirectoryURL = plugin.directoryURL
-                
-                let errorPipe = Pipe()
-                process.standardError = errorPipe
-                
+
                 NSLog("[OpenFire-Debug] Launching osascript process...")
-                try process.run()
-                process.waitUntilExit()
-                NSLog("[OpenFire-Debug] osascript process finished with exit code: \(process.terminationStatus)")
-                
-                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                if !errorData.isEmpty, let errorStr = String(data: errorData, encoding: .utf8), !errorStr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    NSLog("[OpenFire] AppleScript stderr: \(errorStr)")
-                }
+                self.runProcessWithTimeout(
+                    process,
+                    timeout: 30,
+                    logPrefix: "AppleScript"
+                )
                 
                 try? FileManager.default.removeItem(at: tempFile)
                 try? FileManager.default.removeItem(at: textFile)
@@ -617,12 +654,26 @@ final class PluginManager {
                 sourceURL.stopAccessingSecurityScopedResource()
             }
         }
-        
-        let destinationURL = userPluginsURL.appendingPathComponent(sourceURL.lastPathComponent)
+
         let fileManager = FileManager.default
         
         // Create plugins directory if needed
         try? fileManager.createDirectory(at: userPluginsURL, withIntermediateDirectories: true)
+
+        let sourcePlugin = PluginLoader.load(from: sourceURL)
+        let canonicalFileName: String
+        if let plugin = sourcePlugin {
+            canonicalFileName = "\(plugin.id).openfireext"
+        } else {
+            canonicalFileName = sourceURL.lastPathComponent
+        }
+
+        let destinationURL = userPluginsURL.appendingPathComponent(canonicalFileName)
+        if let existingURL = sourcePlugin.flatMap({ userPluginURL(for: $0.id) }),
+           existingURL != destinationURL,
+           fileManager.fileExists(atPath: existingURL.path) {
+            try? fileManager.removeItem(at: existingURL)
+        }
         
         // Remove existing plugin with same name
         if fileManager.fileExists(atPath: destinationURL.path) {
@@ -631,12 +682,54 @@ final class PluginManager {
         
         do {
             try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            if let plugin = sourcePlugin {
+                removeDuplicateUserPlugins(for: plugin.id, keeping: destinationURL)
+            }
             NSLog("[OpenFire] Plugin installed: \(sourceURL.lastPathComponent)")
             reloadPlugins()
             return true
         } catch {
             NSLog("[OpenFire] Failed to install plugin: \(error.localizedDescription)")
             return false
+        }
+    }
+
+    private func runProcessWithTimeout(_ process: Process, timeout: TimeInterval, logPrefix: String) {
+        let errorPipe = Pipe()
+        process.standardError = errorPipe
+
+        let semaphore = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in
+            semaphore.signal()
+        }
+
+        do {
+            try process.run()
+        } catch {
+            NSLog("[OpenFire] Failed to launch \(logPrefix): \(error.localizedDescription)")
+            return
+        }
+
+        let waitResult = semaphore.wait(timeout: .now() + timeout)
+        if waitResult == .timedOut {
+            NSLog("[OpenFire] \(logPrefix) timed out after \(Int(timeout))s, terminating process.")
+            if process.isRunning {
+                process.terminate()
+                let terminationResult = semaphore.wait(timeout: .now() + 2)
+                if terminationResult == .timedOut, process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                    _ = semaphore.wait(timeout: .now() + 2)
+                }
+            }
+        }
+
+        NSLog("[OpenFire-Debug] \(logPrefix) process finished with exit code: \(process.terminationStatus)")
+
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        if !errorData.isEmpty,
+           let errorStr = String(data: errorData, encoding: .utf8),
+           !errorStr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            NSLog("[OpenFire] \(logPrefix) stderr: \(errorStr)")
         }
     }
 }

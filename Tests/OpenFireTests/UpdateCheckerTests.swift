@@ -2,6 +2,12 @@ import XCTest
 @testable import OpenFire
 
 final class UpdateCheckerTests: XCTestCase {
+    override func tearDown() {
+        UpdateChecker.shared.finishUpdateCheck()
+        UpdateChecker.shared.setLastNotifiedVersion(nil)
+        super.tearDown()
+    }
+
     func testNormalizeVersionStripsPrefixAndSuffix() {
         let checker = UpdateChecker.shared
 
@@ -55,5 +61,35 @@ final class UpdateCheckerTests: XCTestCase {
 
         defaults.set(true, forKey: key)
         XCTAssertTrue(checker.isAutoCheckEnabled())
+    }
+
+    func testLatestReleaseAPIURLMatchesPublishedRepository() {
+        let checker = UpdateChecker.shared
+
+        XCTAssertEqual(
+            checker.latestReleaseAPIURL()?.absoluteString,
+            "https://api.github.com/repos/woodenrobot/OpenFire/releases/latest"
+        )
+    }
+
+    func testBeginUpdateCheckRejectsConcurrentChecksUntilFinished() {
+        let checker = UpdateChecker.shared
+
+        XCTAssertTrue(checker.beginUpdateCheck())
+        XCTAssertFalse(checker.beginUpdateCheck())
+
+        checker.finishUpdateCheck()
+
+        XCTAssertTrue(checker.beginUpdateCheck())
+    }
+
+    func testSetLastNotifiedVersionCanStoreAndClearValue() {
+        let checker = UpdateChecker.shared
+
+        checker.setLastNotifiedVersion("1.2.3")
+        XCTAssertEqual(checker.lastNotifiedVersion(), "1.2.3")
+
+        checker.setLastNotifiedVersion(nil)
+        XCTAssertNil(checker.lastNotifiedVersion())
     }
 }

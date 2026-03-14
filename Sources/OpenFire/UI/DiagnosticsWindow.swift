@@ -106,10 +106,19 @@ final class DiagnosticsWindow: NSWindowController {
         let focusedRole = AccessibilityManager.shared.focusedElementRoleDescription() ?? "Unavailable".localized
         let acquisitionStatus = AccessibilityManager.shared.lastSelectionAcquisitionStatus
         let attemptStatus = AccessibilityManager.shared.lastSelectionAttemptStatus
+        let clipboardHasText = TextSelectionMonitor.hasUsableClipboardText(
+            NSPasteboard.general.string(forType: .string)
+        )
+        let emptyInputShortcutReady = accessibilityEnabled &&
+            !isAppExcluded &&
+            selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            clipboardHasText &&
+            AccessibilityManager.shared.isTextInputElement(at: NSEvent.mouseLocation)
         let readiness = readinessReasons(
             accessibilityEnabled: accessibilityEnabled,
             isAppExcluded: isAppExcluded,
-            selectedText: selectedText
+            selectedText: selectedText,
+            emptyInputShortcutReady: emptyInputShortcutReady
         )
 
         let diagnostics = PluginManager.shared.visibilityDiagnostics(for: selectedText, appBundleID: frontApp?.bundleIdentifier)
@@ -126,6 +135,7 @@ final class DiagnosticsWindow: NSWindowController {
         lines.append("\("Focused element".localized): \(focusedRole)")
         lines.append("\("Selected text length".localized): \(selectedText.count)")
         lines.append("\("Selected text preview".localized): \(selectedPreview)")
+        lines.append("\("Clipboard".localized): \(clipboardHasText ? "Has text".localized : "Empty".localized)")
         lines.append("\("Selection source".localized): \(selectionSourceText(from: acquisitionStatus))")
         lines.append("\("Last selection failure".localized): \(selectionFailureText(from: attemptStatus))")
         lines.append("\("Menu readiness".localized): \(readiness.isReady ? "Ready".localized : "Blocked".localized)")
@@ -133,6 +143,9 @@ final class DiagnosticsWindow: NSWindowController {
             for reason in readiness.reasons {
                 lines.append("  - \(reason)")
             }
+        }
+        if emptyInputShortcutReady {
+            lines.append("  - \("Empty-input Paste / Clear shortcut is currently available".localized)")
         }
         lines.append("")
         lines.append("\("Plugins".localized) (\(visibleCount)/\(diagnostics.count) \("visible".localized))")
@@ -163,7 +176,12 @@ final class DiagnosticsWindow: NSWindowController {
         return (lines.joined(separator: "\n"), visibleCount, diagnostics.count)
     }
 
-    private func readinessReasons(accessibilityEnabled: Bool, isAppExcluded: Bool, selectedText: String) -> (isReady: Bool, reasons: [String]) {
+    private func readinessReasons(
+        accessibilityEnabled: Bool,
+        isAppExcluded: Bool,
+        selectedText: String,
+        emptyInputShortcutReady: Bool
+    ) -> (isReady: Bool, reasons: [String]) {
         var reasons: [String] = []
 
         if !accessibilityEnabled {
@@ -172,8 +190,8 @@ final class DiagnosticsWindow: NSWindowController {
         if isAppExcluded {
             reasons.append("OpenFire is disabled in the current app".localized)
         }
-        if selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            reasons.append("No selected text was detected via Accessibility".localized)
+        if selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !emptyInputShortcutReady {
+            reasons.append("No active selected text or empty-input shortcut is currently available".localized)
         }
 
         return (reasons.isEmpty, reasons)

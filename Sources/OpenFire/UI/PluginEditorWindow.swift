@@ -809,7 +809,7 @@ final class PluginEditorWindow: NSWindow {
                 } else {
                     try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
                 }
-                
+
                 // Write Config.json
                 let configURL = bundleURL.appendingPathComponent("Config.json")
                 let data = try JSONSerialization.data(withJSONObject: configDict, options: .prettyPrinted)
@@ -840,7 +840,8 @@ final class PluginEditorWindow: NSWindow {
                         try? FileManager.default.removeItem(at: iconDestURL)
                     }
                 }
-                
+
+                PluginManager.shared.removeDuplicateUserPlugins(for: id, keeping: bundleURL)
 
                 
                 DispatchQueue.main.async {
@@ -873,9 +874,7 @@ final class PluginEditorWindow: NSWindow {
         
         let pathStr = p.directoryURL.path
         let isBuiltIn = pathStr.hasPrefix(Bundle.main.bundlePath) || pathStr.contains("/Resources/Plugins/")
-        let userPluginsURL = PluginManager.shared.userPluginsURL
-        let userOverrideURL = userPluginsURL.appendingPathComponent("\(p.id).openfireext")
-        let hasUserOverride = FileManager.default.fileExists(atPath: userOverrideURL.path)
+        let hasUserOverride = PluginManager.shared.userPluginURL(for: p.id) != nil
         
         // Let PluginManager handle the actual file/soft deletion logic depending on whether it has an override
         let alert = NSAlert()

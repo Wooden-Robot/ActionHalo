@@ -4,6 +4,7 @@ import Cocoa
 final class StatusBarController: NSObject {
     private static let wheelBackdropEnabledKey = "WheelBackdropEnabled"
     private static let enabledKey = "OpenFireEnabled"
+    private static let launchAgentLabel = "com.openfire.app"
     
     private var statusItem: NSStatusItem?
     private var mainMenu: NSMenu?
@@ -18,6 +19,51 @@ final class StatusBarController: NSObject {
     
     var onEnabledChanged: ((Bool) -> Void)?
     var currentEnabledState: Bool { isEnabled }
+
+    static func launchAgentURL(fileManager: FileManager = .default) -> URL {
+        fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents/\(launchAgentLabel).plist")
+    }
+
+    static func launchAgentPlist(bundleIdentifier: String) -> String {
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Label</key>
+            <string>\(launchAgentLabel)</string>
+            <key>ProgramArguments</key>
+            <array>
+                <string>/usr/bin/open</string>
+                <string>-b</string>
+                <string>\(bundleIdentifier)</string>
+            </array>
+            <key>RunAtLoad</key>
+            <true/>
+        </dict>
+        </plist>
+        """
+    }
+
+    static func relaunchArguments(bundlePath: String) -> [String] {
+        [bundlePath]
+    }
+
+    static func isLaunchAgentEnabled(fileManager: FileManager = .default, bundleIdentifier: String) -> Bool {
+        let plistURL = launchAgentURL(fileManager: fileManager)
+        guard
+            let data = try? Data(contentsOf: plistURL),
+            let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+            let label = plist["Label"] as? String,
+            let args = plist["ProgramArguments"] as? [String]
+        else {
+            return false
+        }
+
+        return label == launchAgentLabel &&
+            args == ["/usr/bin/open", "-b", bundleIdentifier]
+    }
     
     func setup() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -53,9 +99,8 @@ final class StatusBarController: NSObject {
         menu.addItem(NSMenuItem.separator())
         
         // Launch at Login
-        let launchAgentURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/com.openfire.app.plist")
-        let isLaunchAtLogin = FileManager.default.fileExists(atPath: launchAgentURL.path)
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? Self.launchAgentLabel
+        let isLaunchAtLogin = Self.isLaunchAgentEnabled(bundleIdentifier: bundleIdentifier)
         
         let launchItem = NSMenuItem(
             title: isLaunchAtLogin ? "✓ Launch at Login".localized : "Launch at Login".localized,
@@ -276,35 +321,22 @@ final class StatusBarController: NSObject {
     @objc private func toggleLaunchAtLogin() {
         let fileManager = FileManager.default
         let launchAgentsURL = fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents")
-        let plistURL = launchAgentsURL.appendingPathComponent("com.openfire.app.plist")
+        let plistURL = Self.launchAgentURL(fileManager: fileManager)
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? Self.launchAgentLabel
         
         do {
-            if fileManager.fileExists(atPath: plistURL.path) {
+            if Self.isLaunchAgentEnabled(fileManager: fileManager, bundleIdentifier: bundleIdentifier) {
                 // If it exists, disable by removing it
                 try fileManager.removeItem(at: plistURL)
             } else {
                 // If it doesn't exist, enable by creating it
                 try fileManager.createDirectory(at: launchAgentsURL, withIntermediateDirectories: true)
-                let bundlePath = Bundle.main.bundlePath
-                
-                let plistString = """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-                <plist version="1.0">
-                <dict>
-                    <key>Label</key>
-                    <string>com.openfire.app</string>
-                    <key>ProgramArguments</key>
-                    <array>
-                        <string>/usr/bin/open</string>
-                        <string>\(bundlePath)</string>
-                    </array>
-                    <key>RunAtLoad</key>
-                    <true/>
-                </dict>
-                </plist>
-                """
-                
+                let plistString = Self.launchAgentPlist(bundleIdentifier: bundleIdentifier)
+
+                if fileManager.fileExists(atPath: plistURL.path) {
+                    try fileManager.removeItem(at: plistURL)
+                }
+
                 try plistString.write(to: plistURL, atomically: true, encoding: .utf8)
             }
             rebuildMenu()
@@ -389,10 +421,17 @@ final class StatusBarController: NSObject {
     
     // Programmatically relaunch the app
     private func relaunchApp() {
+        let bundlePath = Bundle.main.bundleURL.path
         let task = Process()
-        let executablePath = Bundle.main.executablePath!
-        task.launchPath = executablePath
-        task.launch()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = Self.relaunchArguments(bundlePath: bundlePath)
+
+        do {
+            try task.run()
+        } catch {
+            NSLog("[OpenFire] Failed to relaunch app: \(error.localizedDescription)")
+        }
+
         NSApplication.shared.terminate(nil)
     }
     

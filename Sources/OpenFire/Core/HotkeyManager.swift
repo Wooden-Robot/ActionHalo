@@ -19,12 +19,18 @@ final class HotkeyManager {
     
     /// Current hotkey stored as (keyCode, modifiers) for main radial menu
     var hotkey: (keyCode: UInt32, modifiers: UInt32)? {
-        didSet { saveHotkey() }
+        didSet {
+            saveHotkey()
+            NotificationCenter.default.post(name: Self.hotkeyChangedNotification, object: self)
+        }
     }
     
     /// Current hotkey stored as (keyCode, modifiers) for toggling app enabled state
     var toggleHotkey: (keyCode: UInt32, modifiers: UInt32)? {
-        didSet { saveToggleHotkey() }
+        didSet {
+            saveToggleHotkey()
+            NotificationCenter.default.post(name: Self.toggleHotkeyChangedNotification, object: self)
+        }
     }
     
     /// Human-readable description

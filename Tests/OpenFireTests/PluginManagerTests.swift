@@ -218,6 +218,36 @@ final class PluginManagerTests: XCTestCase {
         XCTAssertFalse(manager.isExecutionTrusted(for: pluginB))
     }
 
+    func testUserPluginURLFindsLegacyNamedOverrideByIdentifier() throws {
+        let manager = PluginManager.shared
+        let legacyURL = manager.userPluginsURL.appendingPathComponent("Legacy Name.openfireext")
+        temporaryDirectories.append(legacyURL)
+
+        try FileManager.default.createDirectory(at: legacyURL, withIntermediateDirectories: true)
+        let config = """
+        {
+            "name": "Legacy",
+            "identifier": "com.test.legacy",
+            "action": { "type": "copy" }
+        }
+        """
+        try config.write(to: legacyURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+
+        let resolvedURL = manager.userPluginURL(for: "com.test.legacy")
+
+        XCTAssertEqual(resolvedURL?.lastPathComponent, "Legacy Name.openfireext")
+    }
+
+    func testStalePluginLoadResultsAreDiscarded() {
+        let manager = PluginManager.shared
+
+        let firstLoad = manager.beginPluginLoad()
+        let secondLoad = manager.beginPluginLoad()
+
+        XCTAssertFalse(manager.shouldApplyPluginLoadResult(firstLoad))
+        XCTAssertTrue(manager.shouldApplyPluginLoadResult(secondLoad))
+    }
+
     private func makePlugin(name: String, identifier: String, order: Int, directory: String) -> Plugin {
         let json = """
         {

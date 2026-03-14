@@ -312,10 +312,7 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         
         let pathStr = plugin.directoryURL.path
         let isBuiltIn = pathStr.hasPrefix(Bundle.main.bundlePath) || pathStr.contains("/Resources/Plugins/")
-        
-        let userPluginsURL = PluginManager.shared.userPluginsURL
-        let userOverrideURL = userPluginsURL.appendingPathComponent("\(plugin.id).openfireext")
-        let hasUserOverride = FileManager.default.fileExists(atPath: userOverrideURL.path)
+        let hasUserOverride = PluginManager.shared.userPluginURL(for: plugin.id) != nil
         
         // If it's a core default plugin, it can never be deleted
         if PluginManager.coreDefaultPluginIDs.contains(plugin.id) {

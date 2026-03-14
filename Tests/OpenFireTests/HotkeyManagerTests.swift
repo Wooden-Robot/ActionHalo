@@ -2,7 +2,6 @@ import XCTest
 @testable import OpenFire
 
 final class HotkeyManagerTests: XCTestCase {
-    
     override func setUp() {
         super.setUp()
         UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
@@ -39,5 +38,23 @@ final class HotkeyManagerTests: XCTestCase {
         
         manager.toggleHotkey = nil
         XCTAssertEqual(manager.toggleHotkeyEquivalent, "e", "Fallback default for unset hotkey equivalent")
+    }
+
+    func testSettingHotkeyPostsChangeNotification() {
+        let manager = HotkeyManager.shared
+        let expectation = expectation(forNotification: HotkeyManager.hotkeyChangedNotification, object: manager)
+
+        manager.hotkey = (0x00, 768)
+
+        wait(for: [expectation], timeout: 0.1)
+    }
+
+    func testSettingToggleHotkeyPostsChangeNotification() {
+        let manager = HotkeyManager.shared
+        let expectation = expectation(forNotification: HotkeyManager.toggleHotkeyChangedNotification, object: manager)
+
+        manager.toggleHotkey = (0x0B, 0)
+
+        wait(for: [expectation], timeout: 0.1)
     }
 }
