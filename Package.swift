@@ -14,7 +14,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "OpenFire",
-            path: "Sources/OpenFire",
+            path: "Sources/App",
             exclude: ["Resources/Info.plist"],
             resources: [
                 .process("Resources")
