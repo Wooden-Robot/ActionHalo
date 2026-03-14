@@ -54,7 +54,7 @@ Built-in automatic blacklist management UI. Supports dragging and dropping apps,
 
 ### Installation
 
-1. Download the latest `.dmg` from the [Releases](https://github.com/woodenrobot/OpenFire/releases) page.
+1. Download the latest `.dmg` from the [Releases](https://github.com/Wooden-Robot/OpenFire/releases) page.
 2. Open the downloaded file and drag the **OpenFire** app into your `Applications` folder.
 3. Launch OpenFire.
 4. Open **System Settings → Privacy & Security → Accessibility** and grant permissions to OpenFire (required for text selection detection).

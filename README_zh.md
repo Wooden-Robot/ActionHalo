@@ -54,7 +54,7 @@
 
 ### 安装步骤
 
-1. 在 [Releases](https://github.com/woodenrobot/OpenFire/releases) 页面下载最新的 `.dmg` 安装包。
+1. 在 [Releases](https://github.com/Wooden-Robot/OpenFire/releases) 页面下载最新的 `.dmg` 安装包。
 2. 双击打开，将 **OpenFire** 图标拖入 `Applications` 应用程序文件夹。
 3. 运行 OpenFire。
 4. 前往 **系统设置 → 隐私与安全 → 辅助功能**，为 OpenFire 授予必须的辅助功能权限（用于监听文本选中事件）。
