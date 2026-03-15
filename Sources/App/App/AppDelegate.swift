@@ -4,6 +4,7 @@ import Cocoa
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static let radialMenuExcludedPluginIDs: Set<String> = ["com.openfire.builtin.paste"]
     static let deletePluginID = "com.openfire.delete"
+    static let menuDismissEventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .keyDown]
     
     private let statusBarController = StatusBarController()
     private var radialMenuWindow: RadialMenuWindow?
@@ -600,7 +601,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Global Click Monitor
     
     private func setupGlobalClickMonitor() {
-        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] _ in
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.menuDismissEventMask) { [weak self] _ in
             self?.dismissAllMenus()
         }
     }

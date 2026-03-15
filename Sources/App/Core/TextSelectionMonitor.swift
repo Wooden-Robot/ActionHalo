@@ -165,6 +165,10 @@ final class TextSelectionMonitor {
             // Wait a tiny bit then do a hybrid check: Observer + Polling
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 guard let self = self, self.pendingSelectionTaskID == taskID else { return }
+                guard !AccessibilityManager.shared.shouldSuppressSelectionPresentation() else {
+                    self.cleanupPendingTask()
+                    return
+                }
                 
                 // Immediately check if text is already selected
                 if let text = AccessibilityManager.shared.getSelectedText(), !text.isEmpty {
@@ -267,6 +271,11 @@ final class TextSelectionMonitor {
     
     private func handleSelectionChangedNotification(element: AXUIElement) {
         let taskID = self.pendingSelectionTaskID
+
+        guard !AccessibilityManager.shared.shouldSuppressSelectionPresentation() else {
+            cleanupPendingTask()
+            return
+        }
         
         var selectedTextRaw: AnyObject?
         let result = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selectedTextRaw)

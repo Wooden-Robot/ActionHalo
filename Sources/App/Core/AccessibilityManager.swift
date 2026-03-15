@@ -1,8 +1,19 @@
 import Cocoa
 import ApplicationServices
+import Carbon
 
 /// Manages macOS Accessibility API integration for detecting text selection
 final class AccessibilityManager {
+    private static let protectedTextSubroles: Set<String> = [
+        "AXSecureTextField",
+        "AXSecureTextArea"
+    ]
+
+    private static let protectedTextBooleanAttributes: [CFString] = [
+        "AXValueProtected" as CFString,
+        "AXProtectedContent" as CFString,
+        "AXSecure" as CFString
+    ]
     
     static let shared = AccessibilityManager()
     
@@ -109,8 +120,10 @@ final class AccessibilityManager {
     
     func getSelectedText() -> String? {
         guard isAccessibilityEnabled else { return nil }
+        guard !isSecureEventInputEnabled() else { return nil }
         
         guard let element = getFocusedElement() else { return nil }
+        guard !Self.isProtectedTextElement(element) else { return nil }
         
         // Get the selected text from the focused element
         var selectedText: AnyObject?
@@ -153,6 +166,13 @@ final class AccessibilityManager {
     
     // Fallback: Simulate Cmd+C to grab text from apps that refuse to expose accessibility text
     func getSelectedTextViaCopy(completion: @escaping (String?) -> Void) {
+        guard !shouldSuppressSelectionPresentation() else {
+            DispatchQueue.main.async {
+                completion(nil)
+            }
+            return
+        }
+
         DispatchQueue.global(qos: .userInitiated).async {
             // Give the user ~50ms to lift their fingers from the global hotkey
             // so physical modifiers (like Option/Control) don't turn Cmd+C into Option+Cmd+C
@@ -207,6 +227,20 @@ final class AccessibilityManager {
             timestamp: Date(),
             failure: failure
         )
+    }
+
+    func isFocusedElementProtected() -> Bool {
+        guard isAccessibilityEnabled else { return false }
+        guard let focusedElement = getFocusedElement() else { return false }
+        return Self.isProtectedTextElement(focusedElement)
+    }
+
+    func isSecureEventInputEnabled() -> Bool {
+        IsSecureEventInputEnabled()
+    }
+
+    func shouldSuppressSelectionPresentation() -> Bool {
+        isSecureEventInputEnabled() || isFocusedElementProtected()
     }
 
     private static func capturePasteboardSnapshot(from pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
@@ -460,6 +494,43 @@ final class AccessibilityManager {
         else { return nil }
         
         return unsafeBitCast(focusedElement, to: AXUIElement.self)
+    }
+
+    private static func isProtectedTextElement(_ element: AXUIElement) -> Bool {
+        var subroleValue: AnyObject?
+        if AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleValue) == .success,
+           let subrole = subroleValue as? String,
+           protectedTextSubroles.contains(subrole) {
+            return true
+        }
+
+        for attribute in protectedTextBooleanAttributes {
+            var attributeValue: AnyObject?
+            if AXUIElementCopyAttributeValue(element, attribute, &attributeValue) == .success,
+               let isProtected = attributeValue as? Bool,
+               isProtected {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    static func isProtectedTextElementDescriptor(subrole: String?, flags: [String: Bool]) -> Bool {
+        if let subrole, protectedTextSubroles.contains(subrole) {
+            return true
+        }
+
+        return protectedTextBooleanAttributes.contains { attribute in
+            flags[attribute as String] == true
+        }
+    }
+
+    static func shouldSuppressSelectionPresentation(
+        isProtectedElement: Bool,
+        secureEventInputEnabled: Bool
+    ) -> Bool {
+        secureEventInputEnabled || isProtectedElement
     }
 
     func focusedElementRoleDescription() -> String? {

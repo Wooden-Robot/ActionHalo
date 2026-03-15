@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.6
+- 修复受保护输入场景的误触发：密码框、隐藏输入框及开启 Secure Event Input 的输入上下文中，不再因为选中内容而弹出圆环。
+- 保持圆环的键盘关闭语义不变：普通场景下按下任意按键仍会立即收起圆环，避免选中后继续输入时被遮挡。
+
+- Fixed protected-input false positives so password fields, hidden text inputs, and other Secure Event Input contexts no longer trigger the radial menu when text is selected.
+- Preserved keyboard dismissal semantics so any normal key press still closes the radial menu immediately in non-protected contexts.
+
 ## v0.3.5
 - 理顺快捷键语义：将“自动触发开关”和“手动呼出圆环”拆成两条独立逻辑，关闭自动触发后仍可通过手动快捷键呼出菜单。
 - 修正菜单栏中的快捷键文案，明确区分“呼出菜单快捷键”和“自动触发开关快捷键”，减少混淆。
