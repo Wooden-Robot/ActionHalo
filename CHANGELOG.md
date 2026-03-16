@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.7
+- 修复截图工具兼容性：当前台应用是系统截图、Snipaste、CleanShot X、Shottr、Xnapper、Snagit、PixPin、iShot 等抓屏工具时，OpenFire 不再介入鼠标抬起后的选区/输入框检测，避免截图界面因为鼠标移动或状态切换被打断。
+- 同时屏蔽 OpenFire 自身作为前台应用时的全局触发检测，减少自干扰。
+
+- Fixed screen-capture compatibility so OpenFire no longer hooks mouse-up selection or empty-input detection while the frontmost app is a screenshot tool such as macOS Screenshot, Snipaste, CleanShot X, Shottr, Xnapper, Snagit, PixPin, or iShot.
+- Also suppressed global trigger detection while OpenFire itself is frontmost to reduce self-interference.
+
 ## v0.3.6
 - 修复受保护输入场景的误触发：密码框、隐藏输入框及开启 Secure Event Input 的输入上下文中，不再因为选中内容而弹出圆环。
 - 保持圆环的键盘关闭语义不变：普通场景下按下任意按键仍会立即收起圆环，避免选中后继续输入时被遮挡。

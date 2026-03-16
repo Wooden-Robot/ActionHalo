@@ -12,6 +12,37 @@ final class TextSelectionMonitor {
         guard let text else { return false }
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    static func shouldSuppressForFrontmostApp(bundleID: String?, localizedName: String?) -> Bool {
+        let normalizedBundleID = normalizeFrontmostAppIdentifier(bundleID)
+        let normalizedName = normalizeFrontmostAppIdentifier(localizedName)
+
+        if normalizedBundleID == "comopenfireapp" || normalizedName == "openfire" {
+            return true
+        }
+
+        let knownScreenCaptureHints = [
+            "comapplescreencaptureui",
+            "comapplescreenshot",
+            "comapplegrab",
+            "snipaste",
+            "cleanshot",
+            "shottr",
+            "xnapper",
+            "snagit",
+            "pixpin",
+            "ishot",
+            "screenshot",
+            "screenrecord",
+            "screenrecorder",
+            "screencapture",
+            "snippingtool"
+        ]
+
+        return knownScreenCaptureHints.contains { hint in
+            normalizedBundleID.contains(hint) || normalizedName.contains(hint)
+        }
+    }
     
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -36,6 +67,12 @@ final class TextSelectionMonitor {
     private let mouseSelectionPresentationDelay: TimeInterval = 0.16
     
     private init() {}
+
+    private static func normalizeFrontmostAppIdentifier(_ value: String?) -> String {
+        guard let value else { return "" }
+        let lowered = value.lowercased()
+        return lowered.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+    }
     
     // MARK: - Start / Stop
     
@@ -125,9 +162,18 @@ final class TextSelectionMonitor {
     private func handleMouseUp() {
         guard let downLocation = mouseDownLocation else { return }
         cancelPendingSelectionPresentation()
+
+        let frontmostApp = NSWorkspace.shared.frontmostApplication
+        if Self.shouldSuppressForFrontmostApp(
+            bundleID: frontmostApp?.bundleIdentifier,
+            localizedName: frontmostApp?.localizedName
+        ) {
+            mouseDownLocation = nil
+            return
+        }
         
         // Check blacklist
-        if let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier {
+        if let bundleId = frontmostApp?.bundleIdentifier {
             let excluded = UserDefaults.standard.stringArray(forKey: "ExcludedApps") ?? []
             if excluded.contains(bundleId) {
                 mouseDownLocation = nil
@@ -359,6 +405,15 @@ final class TextSelectionMonitor {
     
     private func checkForEmptyTextInputClick(at mouseLocation: NSPoint) {
         lastEmptyInputCheckLocation = mouseLocation
+
+        let frontmostApp = NSWorkspace.shared.frontmostApplication
+        if Self.shouldSuppressForFrontmostApp(
+            bundleID: frontmostApp?.bundleIdentifier,
+            localizedName: frontmostApp?.localizedName
+        ) {
+            NSLog("[OpenFire-Debug] Suppressing empty text input check for frontmost app: \(frontmostApp?.localizedName ?? frontmostApp?.bundleIdentifier ?? "unknown")")
+            return
+        }
 
         // Quick check: If pasteboard is empty, don't even bother checking accessibility
         guard Self.hasUsableClipboardText(NSPasteboard.general.string(forType: .string)) else {

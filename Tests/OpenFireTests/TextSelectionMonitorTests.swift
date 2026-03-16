@@ -19,4 +19,37 @@ final class TextSelectionMonitorTests: XCTestCase {
         XCTAssertFalse(TextSelectionMonitor.hasUsableClipboardText("   \n\t"))
         XCTAssertTrue(TextSelectionMonitor.hasUsableClipboardText("hello"))
     }
+
+    func testShouldSuppressForFrontmostAppSuppressesOpenFireItself() {
+        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.openfire.app",
+            localizedName: "OpenFire"
+        ))
+    }
+
+    func testShouldSuppressForFrontmostAppSuppressesKnownScreenCaptureTools() {
+        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.apple.screencaptureui",
+            localizedName: "Screenshot"
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.snipaste.macos",
+            localizedName: "Snipaste"
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "pl.maketheweb.CleanShotX",
+            localizedName: "CleanShot X"
+        ))
+    }
+
+    func testShouldSuppressForFrontmostAppKeepsRegularEditorsEnabled() {
+        XCTAssertFalse(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.apple.TextEdit",
+            localizedName: "TextEdit"
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.microsoft.VSCode",
+            localizedName: "Visual Studio Code"
+        ))
+    }
 }
