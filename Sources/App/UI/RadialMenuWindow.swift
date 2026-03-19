@@ -6,6 +6,9 @@ final class RadialMenuWindow: NSPanel {
     
     private let radialMenuView: RadialMenuView
     private let backdropView = NSView(frame: .zero)
+    private let visualEffectView = NSVisualEffectView(frame: .zero)
+    private let vignetteLayer = CAGradientLayer()
+    private var suppressVisualEffectImmediateAlphaUpdate = false
     
     var onItemSelected: ((RadialMenuItem) -> Void)?
     
@@ -44,14 +47,30 @@ final class RadialMenuWindow: NSPanel {
         backdropView.alphaValue = 0
         let backdropLayer = CAGradientLayer()
         backdropLayer.colors = [
-            NSColor(calibratedWhite: 0.02, alpha: 0.62).cgColor,
-            NSColor(calibratedWhite: 0.02, alpha: 0.42).cgColor,
-            NSColor(calibratedWhite: 0.02, alpha: 0.62).cgColor
+            NSColor(calibratedWhite: 0.01, alpha: 0.86).cgColor,
+            NSColor(calibratedWhite: 0.015, alpha: 0.58).cgColor,
+            NSColor(calibratedWhite: 0.01, alpha: 0.86).cgColor
         ]
         backdropLayer.locations = [0.0, 0.5, 1.0]
         backdropLayer.startPoint = CGPoint(x: 0.5, y: 1.0)
         backdropLayer.endPoint = CGPoint(x: 0.5, y: 0.0)
         backdropView.layer = backdropLayer
+        
+        vignetteLayer.type = .radial
+        vignetteLayer.colors = [
+            NSColor(calibratedWhite: 0.0, alpha: 0.0).cgColor,
+            NSColor(calibratedWhite: 0.0, alpha: 0.08).cgColor,
+            NSColor(calibratedWhite: 0.0, alpha: 0.34).cgColor,
+            NSColor(calibratedWhite: 0.0, alpha: 0.62).cgColor
+        ]
+        vignetteLayer.locations = [0.0, 0.42, 0.72, 1.0]
+        vignetteLayer.startPoint = CGPoint(x: 0.5, y: 0.5)
+        vignetteLayer.endPoint = CGPoint(x: 1.0, y: 1.0)
+        vignetteLayer.opacity = 0
+        backdropView.layer?.addSublayer(vignetteLayer)
+
+        visualEffectView.state = .active
+        visualEffectView.wantsLayer = true
         
         // Forward item selection or handle pagination
         radialMenuView.onItemSelected = { [weak self] item in
@@ -88,31 +107,41 @@ final class RadialMenuWindow: NSPanel {
         let targetAlpha = backdropEnabled ? 1.0 : (UserDefaults.standard.object(forKey: "ringOpacity") as? Double ?? 0.25)
         radialMenuView.windowBaseAlpha = CGFloat(targetAlpha)
         radialMenuView.isGTAModeEnabled = backdropEnabled
-        let backdropTargetAlpha = backdropEnabled ? max(0.18, min(CGFloat(targetAlpha) * 1.9, 0.72)) : 0
+        let backdropTargetAlpha = backdropEnabled ? max(0.38, min(CGFloat(targetAlpha) * 2.35, 0.94)) : 0
         
         // Show with animation first time
         setupDismissMonitors()
-        alphaValue = backdropEnabled ? 0 : 1
+        alphaValue = 1
         backdropView.alphaValue = 0
+        visualEffectView.alphaValue = backdropEnabled ? 0 : radialMenuView.windowBaseAlpha
         orderFront(nil)
         
         renderCurrentPage(allowCursorWarp: true)
+
+        if backdropEnabled {
+            suppressVisualEffectImmediateAlphaUpdate = true
+            visualEffectView.alphaValue = 0
+        }
         
         AnimationHelper.showAnimation(for: radialMenuView)
         
         if backdropEnabled {
             NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.16
+                context.duration = 0.32
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.18, 0.82, 0.22, 1.0)
                 self.backdropView.animator().alphaValue = backdropTargetAlpha
             })
-            
-            // Only fade the full-screen window in GTA mode; otherwise a full-screen panel fade
-            // can read as a brief flash even though the background is mostly transparent.
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.3
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                self.animator().alphaValue = 1.0
-            })
+            animateGTAVignette()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+                guard self.isVisible else { return }
+                NSAnimationContext.runAnimationGroup({ context in
+                    context.duration = 0.24
+                    context.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 0.84, 0.24, 1.0)
+                    self.visualEffectView.animator().alphaValue = self.radialMenuView.windowBaseAlpha
+                }, completionHandler: {
+                    self.suppressVisualEffectImmediateAlphaUpdate = false
+                })
+            }
         }
     }
     
@@ -185,6 +214,7 @@ final class RadialMenuWindow: NSPanel {
         cv.wantsLayer = true
         backdropView.frame = cv.bounds
         (backdropView.layer as? CAGradientLayer)?.frame = backdropView.bounds
+        vignetteLayer.frame = backdropView.bounds
         backdropView.isHidden = !useFullscreenWindow
 
         // Calculate tracking center (mouse position relative to the full window)
@@ -222,9 +252,9 @@ final class RadialMenuWindow: NSPanel {
             } else {
                 newGlobalPoint = NSPoint(x: targetWindowFrame.minX + vCenter.x, y: targetWindowFrame.minY + vCenter.y)
             }
-            // CGWarpMouseCursorPosition uses standard flipped top-left CG coordinates
-            let cgPoint = CGPoint(x: newGlobalPoint.x, y: screenFrame.minY + screenFrame.height - newGlobalPoint.y)
-            CGWarpMouseCursorPosition(cgPoint)
+            if let cgPoint = AccessibilityManager.coreGraphicsScreenPoint(for: newGlobalPoint) {
+                CGWarpMouseCursorPosition(cgPoint)
+            }
         }
         
         // Both visual and tracking center are now the clamped position
@@ -245,30 +275,21 @@ final class RadialMenuWindow: NSPanel {
         }
         
         // Visual effect background for frosted glass look
-        var visualEffect = cv.subviews.first(where: { $0 is NSVisualEffectView }) as? NSVisualEffectView
         let visualFrame = NSRect(x: vCenter.x - radius, y: vCenter.y - radius, width: menuSize, height: menuSize)
-        
-        if visualEffect == nil {
-            visualEffect = NSVisualEffectView(frame: visualFrame)
-            visualEffect?.material = radialMenuView.isGTAModeEnabled ? .hudWindow : .popover
-            visualEffect?.state = .active
-            visualEffect?.blendingMode = radialMenuView.isGTAModeEnabled ? .behindWindow : .withinWindow
-            visualEffect?.wantsLayer = true
-        } else {
-            visualEffect?.frame = visualFrame
-            visualEffect?.material = radialMenuView.isGTAModeEnabled ? .hudWindow : .popover
-            visualEffect?.blendingMode = radialMenuView.isGTAModeEnabled ? .behindWindow : .withinWindow
+        visualEffectView.frame = visualFrame
+        visualEffectView.material = radialMenuView.isGTAModeEnabled ? .hudWindow : .popover
+        visualEffectView.blendingMode = radialMenuView.isGTAModeEnabled ? .behindWindow : .withinWindow
+        visualEffectView.layer?.cornerRadius = radius
+        visualEffectView.layer?.masksToBounds = true
+        if !visualEffectView.isHidden && !suppressVisualEffectImmediateAlphaUpdate {
+            visualEffectView.alphaValue = radialMenuView.windowBaseAlpha
         }
-        
-        visualEffect?.layer?.cornerRadius = radius
-        visualEffect?.layer?.masksToBounds = true
-        visualEffect?.alphaValue = radialMenuView.windowBaseAlpha
         self.hasShadow = radialMenuView.isGTAModeEnabled
         
         // *The visual effect mask will now be dynamically applied by RadialMenuView.buildMenu()*
         
-        if visualEffect?.superview == nil, let ve = visualEffect {
-            cv.addSubview(ve)
+        if visualEffectView.superview == nil {
+            cv.addSubview(visualEffectView)
         }
         
         if radialMenuView.superview == nil {
@@ -285,10 +306,19 @@ final class RadialMenuWindow: NSPanel {
     
     func hideMenu(completion: (() -> Void)? = nil) {
         if radialMenuView.isGTAModeEnabled {
+            suppressVisualEffectImmediateAlphaUpdate = false
+            vignetteLayer.removeAllAnimations()
             NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.08
+                context.duration = 0.1
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 self.backdropView.animator().alphaValue = 0
+                self.visualEffectView.animator().alphaValue = 0
             })
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            vignetteLayer.opacity = 0
+            vignetteLayer.transform = CATransform3DIdentity
+            CATransaction.commit()
             
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.12
@@ -370,4 +400,40 @@ final class RadialMenuWindow: NSPanel {
     }
     
     override var canBecomeKey: Bool { false }
+    
+    private func animateGTAVignette() {
+        vignetteLayer.removeAllAnimations()
+        
+        let scale = CAKeyframeAnimation(keyPath: "transform.scale")
+        scale.values = [1.12, 1.0, 1.025, 1.0]
+        scale.keyTimes = [0.0, 0.48, 0.78, 1.0]
+        scale.duration = 0.34
+        scale.timingFunctions = [
+            CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.24, 1.0),
+            CAMediaTimingFunction(name: .easeOut),
+            CAMediaTimingFunction(name: .easeOut)
+        ]
+        
+        let opacity = CAKeyframeAnimation(keyPath: "opacity")
+        opacity.values = [0.0, 0.9, 0.72]
+        opacity.keyTimes = [0.0, 0.44, 1.0]
+        opacity.duration = 0.34
+        opacity.timingFunctions = [
+            CAMediaTimingFunction(controlPoints: 0.22, 0.84, 0.24, 1.0),
+            CAMediaTimingFunction(name: .easeOut)
+        ]
+        
+        let group = CAAnimationGroup()
+        group.animations = [scale, opacity]
+        group.duration = 0.34
+        group.fillMode = .forwards
+        group.isRemovedOnCompletion = false
+        vignetteLayer.add(group, forKey: "gtaVignetteReveal")
+        
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        vignetteLayer.opacity = 0.72
+        vignetteLayer.transform = CATransform3DIdentity
+        CATransaction.commit()
+    }
 }

@@ -45,6 +45,17 @@ final class RadialMenuWindowTests: XCTestCase {
         window.hideMenu()
     }
 
+    func testShowMenuInGTAModeKeepsWindowVisibleWithoutFullscreenFade() {
+        UserDefaults.standard.set(true, forKey: "WheelBackdropEnabled")
+
+        let window = RadialMenuWindow()
+        window.showMenu(at: NSPoint(x: 400, y: 300), items: makeItems(count: 4), selectedText: "hello")
+
+        XCTAssertEqual(window.alphaValue, 1.0, accuracy: 0.001)
+
+        window.hideMenu()
+    }
+
     func testSelectingNextPageShowsPreviousAndRemainingItems() throws {
         UserDefaults.standard.set(6, forKey: "maxRadialMenuItems")
 

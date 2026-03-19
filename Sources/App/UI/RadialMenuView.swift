@@ -254,6 +254,7 @@ final class RadialMenuView: NSView {
         let sectorAngle = availableAngle / CGFloat(itemCount)
         let geometrySignature = GeometrySignature(itemCount: itemCount, center: center, boundsSize: bounds.size)
         let needsGeometryRebuild = lastGeometrySignature != geometrySignature
+        let shouldResetPresentationState = hoveredIndex != -1
         // Start from top (π/2) and go clockwise
         var startAngle = CGFloat.pi / 2
         
@@ -344,27 +345,34 @@ final class RadialMenuView: NSView {
             // Determine base opacity multiplier based on executable state
             let executableMultiplier: Float = item.isExecutable ? 1.0 : 0.25
             
-            // Clean up old hover state paths/animations just in case
-            sectorLayer.removeAllAnimations()
-            glowLayer.removeAllAnimations()
-            iconLayer.removeAllAnimations()
-            labelLayer.removeAllAnimations()
+            if shouldResetPresentationState {
+                sectorLayer.removeAllAnimations()
+                glowLayer.removeAllAnimations()
+                iconLayer.removeAllAnimations()
+                labelLayer.removeAllAnimations()
+            }
             
             // Re-apply base styles (in case it was left in hover state)
-            sectorLayer.fillColor = sectorColor.cgColor
-            sectorLayer.strokeColor = borderColor.cgColor
-            sectorLayer.lineWidth = 1.0
+            if shouldResetPresentationState || sectorLayer.fillColor == nil {
+                sectorLayer.fillColor = sectorColor.cgColor
+                sectorLayer.strokeColor = borderColor.cgColor
+                sectorLayer.lineWidth = 1.0
+            }
             sectorLayer.opacity = baseSectorOpacity * executableMultiplier
             
             // Reset Glow
-            glowLayer.shadowOpacity = 0
-            glowLayer.fillColor = NSColor.clear.cgColor
+            if shouldResetPresentationState || glowLayer.fillColor == nil {
+                glowLayer.shadowOpacity = 0
+                glowLayer.fillColor = NSColor.clear.cgColor
+            }
             
             // Reset Icon
-            iconLayer.setValue(1.0, forKeyPath: "transform.scale")
-            iconLayer.shadowRadius = 5
-            iconLayer.shadowOpacity = 0.9
-            iconLayer.shadowColor = NSColor.black.cgColor
+            if shouldResetPresentationState {
+                iconLayer.setValue(1.0, forKeyPath: "transform.scale")
+                iconLayer.shadowRadius = 5
+                iconLayer.shadowOpacity = 0.9
+                iconLayer.shadowColor = NSColor.black.cgColor
+            }
             iconLayer.opacity = baseIconOpacity * executableMultiplier
             
             labelLayer.opacity = baseLabelOpacity * executableMultiplier

@@ -11,34 +11,46 @@ struct AnimationHelper {
         // Ensure layer is ready
         view.wantsLayer = true
         
-        let startScale: CGFloat = 0.05
-        let startAngle: CGFloat = -.pi / 1.5 // Start rotated back 120 degrees
+        let startScale: CGFloat = 0.03
+        let startAngle: CGFloat = -.pi * 0.92
         
         var transform = CATransform3DIdentity
         transform = CATransform3DScale(transform, startScale, startScale, 1)
         transform = CATransform3DRotate(transform, startAngle, 0, 0, 1)
         view.layer?.transform = transform
         
-        // Scale Spring
-        let scaleAnim = CASpringAnimation(keyPath: "transform.scale")
-        scaleAnim.damping = 16
-        scaleAnim.stiffness = 250
-        scaleAnim.mass = 0.5
-        scaleAnim.initialVelocity = 0.0
-        scaleAnim.fromValue = startScale
-        scaleAnim.toValue = 1.0
-        
-        // Rotation Spring (ease-out type spin to snap into place)
-        let rotAnim = CASpringAnimation(keyPath: "transform.rotation.z")
-        rotAnim.damping = 20
-        rotAnim.stiffness = 200
-        rotAnim.mass = 0.6
-        rotAnim.fromValue = startAngle
-        rotAnim.toValue = 0.0
-        
+        let scaleAnim = CAKeyframeAnimation(keyPath: "transform.scale")
+        scaleAnim.values = [startScale, 1.08, 0.985, 1.0]
+        scaleAnim.keyTimes = [0.0, 0.58, 0.82, 1.0]
+        scaleAnim.duration = 0.26
+        scaleAnim.timingFunctions = [
+            CAMediaTimingFunction(controlPoints: 0.16, 1.0, 0.3, 1.0),
+            CAMediaTimingFunction(name: .easeOut),
+            CAMediaTimingFunction(name: .easeOut)
+        ]
+
+        let rotAnim = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        rotAnim.values = [startAngle, 0.12, -0.035, 0.0]
+        rotAnim.keyTimes = [0.0, 0.64, 0.84, 1.0]
+        rotAnim.duration = 0.26
+        rotAnim.timingFunctions = [
+            CAMediaTimingFunction(controlPoints: 0.2, 0.95, 0.28, 1.0),
+            CAMediaTimingFunction(name: .easeOut),
+            CAMediaTimingFunction(name: .easeOut)
+        ]
+
+        let opacityAnim = CAKeyframeAnimation(keyPath: "opacity")
+        opacityAnim.values = [0.0, 0.72, 1.0]
+        opacityAnim.keyTimes = [0.0, 0.55, 1.0]
+        opacityAnim.duration = 0.16
+        opacityAnim.timingFunctions = [
+            CAMediaTimingFunction(name: .easeOut),
+            CAMediaTimingFunction(name: .easeOut)
+        ]
+
         let group = CAAnimationGroup()
-        group.animations = [scaleAnim, rotAnim]
-        group.duration = scaleAnim.settlingDuration
+        group.animations = [scaleAnim, rotAnim, opacityAnim]
+        group.duration = 0.26
         group.fillMode = .forwards
         group.isRemovedOnCompletion = false
         
@@ -52,11 +64,7 @@ struct AnimationHelper {
             completion?()
         }
         
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.2
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            view.animator().alphaValue = 1.0
-        }, completionHandler: nil)
+        view.alphaValue = 1.0
         
         CATransaction.commit()
     }

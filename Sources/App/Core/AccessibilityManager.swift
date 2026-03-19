@@ -71,6 +71,17 @@ final class AccessibilityManager {
         let frame = screen.frame
         return CGPoint(x: point.x, y: frame.maxY - point.y)
     }
+
+    /// Convert a global AppKit point into Quartz global coordinates used by CGEvent APIs.
+    /// Quartz uses a top-left origin spanning the full virtual desktop, so the Y axis
+    /// must be flipped against the desktop's highest screen edge rather than the current screen.
+    static func coreGraphicsScreenPoint(for point: NSPoint, screenFrames: [NSRect] = NSScreen.screens.map(\.frame)) -> CGPoint? {
+        guard let desktopMaxY = screenFrames.map(\.maxY).max() else {
+            return nil
+        }
+
+        return CGPoint(x: point.x, y: desktopMaxY - point.y)
+    }
     
     func startWatchdog() {
         permissionWatchdog?.invalidate()
@@ -403,6 +414,8 @@ final class AccessibilityManager {
         var roleValue: AnyObject?
         let roleResult = AXUIElementCopyAttributeValue(hitElement, kAXRoleAttribute as CFString, &roleValue)
         guard roleResult == .success, let role = roleValue as? String else { return false }
+        let bundleID = getFocusedAppBundleID()
+        let ancestorRoles = ancestorRoles(for: hitElement)
         
         // Allowed roles that represent actual selectable text content
         let allowedRoles = [
@@ -424,29 +437,16 @@ final class AccessibilityManager {
             kAXWindowRole,
             kAXApplicationRole
         ]
-        
+
         NSLog("[OpenFire-Debug] Double-click hit test detected role: \(role)")
-        
-        if forbiddenRoles.contains(role) {
-            return false
-        }
-        
-        if allowedRoles.contains(role) {
-            // Even if it's "StaticText", check if it's literally just a label inside a button or a row (common in native macOS apps)
-            var parentRaw: AnyObject?
-            if AXUIElementCopyAttributeValue(hitElement, kAXParentAttribute as CFString, &parentRaw) == .success,
-               let parentRaw,
-               CFGetTypeID(parentRaw) == AXUIElementGetTypeID() {
-                let parent = unsafeBitCast(parentRaw, to: AXUIElement.self)
-                var parentRoleRaw: AnyObject?
-                if AXUIElementCopyAttributeValue(parent, kAXRoleAttribute as CFString, &parentRoleRaw) == .success,
-                   let parentRole = parentRoleRaw as? String {
-                    if forbiddenRoles.contains(parentRole) || parentRole == kAXListRole || parentRole == kAXOutlineRole || parentRole == kAXTableRole {
-                        NSLog("[OpenFire-Debug] Blocking allowed role \(role) because its parent is \(parentRole)")
-                        return false
-                    }
-                }
-            }
+
+        if Self.shouldTreatElementAsText(
+            role: role,
+            ancestorRoles: ancestorRoles,
+            bundleID: bundleID,
+            allowedRoles: allowedRoles,
+            forbiddenRoles: forbiddenRoles
+        ) {
             return true
         }
         
@@ -454,7 +454,7 @@ final class AccessibilityManager {
         // EXCEPT if it's Electron/Chromium (which often wrap text in generic AXGroups).
         // Let's explicitly check the app ID.
         if role == "AXGroup" {
-            if let bundleID = getFocusedAppBundleID() {
+            if let bundleID {
                 // Electron apps (VSCode, Telegram, Obsidian, Discord) and Chromium use massive AXGroups
                 let electronHeuristics = ["electron", "desktop", "telegram", "discord", "obsidian", "code", "chrome", "edge", "brave"]
                 let lowerID = bundleID.lowercased()
@@ -563,5 +563,68 @@ final class AccessibilityManager {
     func getFocusedAppBundleID() -> String? {
         guard let frontApp = NSWorkspace.shared.frontmostApplication else { return nil }
         return frontApp.bundleIdentifier
+    }
+
+    private func ancestorRoles(for element: AXUIElement, maxDepth: Int = 6) -> [String] {
+        var roles: [String] = []
+        var currentElement = element
+
+        for _ in 0..<maxDepth {
+            var parentRaw: AnyObject?
+            let result = AXUIElementCopyAttributeValue(currentElement, kAXParentAttribute as CFString, &parentRaw)
+            guard result == .success, let parentRaw, CFGetTypeID(parentRaw) == AXUIElementGetTypeID() else {
+                break
+            }
+
+            let parent = unsafeBitCast(parentRaw, to: AXUIElement.self)
+            var roleRaw: AnyObject?
+            if AXUIElementCopyAttributeValue(parent, kAXRoleAttribute as CFString, &roleRaw) == .success,
+               let role = roleRaw as? String {
+                roles.append(role)
+            }
+
+            currentElement = parent
+        }
+
+        return roles
+    }
+
+    static func shouldTreatElementAsText(
+        role: String,
+        ancestorRoles: [String],
+        bundleID: String?,
+        allowedRoles: [String],
+        forbiddenRoles: [String]
+    ) -> Bool {
+        let structuralAncestorRoles: Set<String> = [
+            kAXCellRole,
+            kAXRowRole,
+            kAXListRole,
+            kAXOutlineRole,
+            kAXTableRole,
+            "AXBrowser"
+        ]
+
+        if forbiddenRoles.contains(role) {
+            return false
+        }
+
+        if allowedRoles.contains(role) {
+            if let blockingAncestor = ancestorRoles.first(where: { forbiddenRoles.contains($0) || structuralAncestorRoles.contains($0) }) {
+                NSLog("[OpenFire-Debug] Blocking allowed role \(role) because an ancestor is \(blockingAncestor)")
+                return false
+            }
+            return true
+        }
+
+        if role == "AXGroup",
+           let bundleID,
+           bundleID.lowercased().contains("jetbrains"),
+           ancestorRoles.contains(where: structuralAncestorRoles.contains) {
+            NSLog("[OpenFire-Debug] Blocking AXGroup in JetBrains structural container: \(ancestorRoles)")
+            return false
+        }
+
+        return false
     }
 }
