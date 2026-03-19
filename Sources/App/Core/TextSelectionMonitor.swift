@@ -48,7 +48,6 @@ final class TextSelectionMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var isMonitoring = false
     private var mouseDownLocation: NSPoint?
-    private var clickCount: Int = 1
     
     // AXObserver state for robust text selection detection
     private var currentObserver: AXObserver?
@@ -101,7 +100,6 @@ final class TextSelectionMonitor {
             
             if type == .leftMouseDown {
                 monitor.mouseDownLocation = NSEvent.mouseLocation
-                monitor.clickCount = Int(event.getIntegerValueField(.mouseEventClickState))
             } else if type == .leftMouseUp {
                 monitor.handleMouseUp()
             }
@@ -158,6 +156,10 @@ final class TextSelectionMonitor {
     
     /// Notification posted when an empty text input is clicked
     static let emptyTextInputClickedNotification = Notification.Name("OpenFireEmptyTextInputClicked")
+
+    static func shouldTreatMouseInteractionAsSelectionTrigger(distance: CGFloat, minimumDragDistance: CGFloat) -> Bool {
+        distance >= minimumDragDistance
+    }
     
     private func handleMouseUp() {
         guard let downLocation = mouseDownLocation else { return }
@@ -199,12 +201,13 @@ final class TextSelectionMonitor {
         // Clean up any pending observers or active tasks
         cleanupPendingTask()
         
-        let localClickCount = self.clickCount
-        let isDrag = distance >= minimumDragDistance
-        let isTextElement = AccessibilityManager.shared.isTextElement(at: downLocation)
+        let isDrag = Self.shouldTreatMouseInteractionAsSelectionTrigger(
+            distance: distance,
+            minimumDragDistance: minimumDragDistance
+        )
         
-        // If it was a meaningful drag, OR a double/triple click specifically on a text element
-        if isDrag || (localClickCount >= 2 && isTextElement) {
+        // Only real drag-selection should open the radial menu.
+        if isDrag {
             let taskID = UUID()
             self.pendingSelectionTaskID = taskID
             

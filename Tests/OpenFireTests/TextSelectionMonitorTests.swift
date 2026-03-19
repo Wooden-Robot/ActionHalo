@@ -20,6 +20,12 @@ final class TextSelectionMonitorTests: XCTestCase {
         XCTAssertTrue(TextSelectionMonitor.hasUsableClipboardText("hello"))
     }
 
+    func testSelectionTriggerRequiresActualDragDistance() {
+        XCTAssertFalse(TextSelectionMonitor.shouldTreatMouseInteractionAsSelectionTrigger(distance: 0, minimumDragDistance: 5))
+        XCTAssertFalse(TextSelectionMonitor.shouldTreatMouseInteractionAsSelectionTrigger(distance: 4.99, minimumDragDistance: 5))
+        XCTAssertTrue(TextSelectionMonitor.shouldTreatMouseInteractionAsSelectionTrigger(distance: 5, minimumDragDistance: 5))
+    }
+
     func testShouldSuppressForFrontmostAppSuppressesOpenFireItself() {
         XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
             bundleID: "com.openfire.app",
