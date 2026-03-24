@@ -39,6 +39,47 @@ final class AccessibilityManager {
         let textLength: Int
     }
 
+    struct SelectionSnapshot: Equatable {
+        let text: String?
+        let rangeLocation: Int?
+        let rangeLength: Int?
+        let hasReadableSelectedTextAttribute: Bool
+        let hasReadableSelectedRangeAttribute: Bool
+
+        init(
+            text: String?,
+            rangeLocation: Int?,
+            rangeLength: Int?,
+            hasReadableSelectedTextAttribute: Bool = false,
+            hasReadableSelectedRangeAttribute: Bool = false
+        ) {
+            self.text = text
+            self.rangeLocation = rangeLocation
+            self.rangeLength = rangeLength
+            self.hasReadableSelectedTextAttribute = hasReadableSelectedTextAttribute
+            self.hasReadableSelectedRangeAttribute = hasReadableSelectedRangeAttribute
+        }
+
+        var normalizedText: String? {
+            guard let text else { return nil }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+
+        var normalizedRange: (Int, Int)? {
+            guard let rangeLocation, let rangeLength, rangeLength > 0 else { return nil }
+            return (rangeLocation, rangeLength)
+        }
+
+        var isReadable: Bool {
+            hasReadableSelectedTextAttribute || hasReadableSelectedRangeAttribute
+        }
+
+        var canReadSelectedTextViaAccessibility: Bool {
+            hasReadableSelectedTextAttribute
+        }
+    }
+
     enum SelectionAttemptFailure {
         case accessibilityEmptySelection
         case copyFallbackEmptySelection
@@ -150,6 +191,72 @@ final class AccessibilityManager {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    func currentSelectionSnapshot() -> SelectionSnapshot? {
+        guard isAccessibilityEnabled else { return nil }
+        guard !isSecureEventInputEnabled() else { return nil }
+        guard let element = getFocusedElement() else { return nil }
+        guard !Self.isProtectedTextElement(element) else { return nil }
+
+        var selectedText: String?
+        var selectedTextRaw: AnyObject?
+        let selectedTextResult = AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextAttribute as CFString,
+            &selectedTextRaw
+        )
+        if selectedTextResult == .success,
+           let text = selectedTextRaw as? String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            selectedText = trimmed.isEmpty ? nil : trimmed
+        }
+
+        var rangeLocation: Int?
+        var rangeLength: Int?
+        var selectedRangeRaw: AnyObject?
+        let selectedRangeResult = AXUIElementCopyAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            &selectedRangeRaw
+        )
+        if selectedRangeResult == .success,
+           let selectedRangeRaw,
+           CFGetTypeID(selectedRangeRaw) == AXValueGetTypeID() {
+            let selectedRangeAXValue = unsafeBitCast(selectedRangeRaw, to: AXValue.self)
+            var range = CFRange()
+            if AXValueGetValue(selectedRangeAXValue, .cfRange, &range) {
+                rangeLocation = range.location
+                rangeLength = range.length
+            }
+        }
+
+        return SelectionSnapshot(
+            text: selectedText,
+            rangeLocation: rangeLocation,
+            rangeLength: rangeLength,
+            hasReadableSelectedTextAttribute: selectedTextResult == .success,
+            hasReadableSelectedRangeAttribute: selectedRangeResult == .success
+        )
+    }
+
+    static func didSelectionChange(from previous: SelectionSnapshot?, to current: SelectionSnapshot?) -> Bool {
+        let previousText = previous?.normalizedText
+        let currentText = current?.normalizedText
+        if previousText != currentText {
+            return true
+        }
+
+        let previousRange = previous?.normalizedRange
+        let currentRange = current?.normalizedRange
+        switch (previousRange, currentRange) {
+        case (.none, .none):
+            return false
+        case let (.some(previousRange), .some(currentRange)):
+            return previousRange.0 != currentRange.0 || previousRange.1 != currentRange.1
+        default:
+            return true
+        }
+    }
+
     func isFocusedSelectionEditable() -> Bool {
         guard isAccessibilityEnabled else { return false }
         guard let focusedElement = getFocusedElement() else { return false }
@@ -191,6 +298,7 @@ final class AccessibilityManager {
             
             let pasteboard = NSPasteboard.general
             let initialChangeCount = pasteboard.changeCount
+            let initialString = pasteboard.string(forType: .string)
             let snapshot = Self.capturePasteboardSnapshot(from: pasteboard)
             
             // Simulate Cmd+C via CGEvent
@@ -205,24 +313,21 @@ final class AccessibilityManager {
             usleep(10000) // 10ms gap between down and up
             cmdUp?.post(tap: .cghidEventTap)
             
-            // Wait for Electron/React apps to detect the event, process the DOM, and write to PB
-            usleep(50000)
-            
-            // Read new content
-            let newString = pasteboard.string(forType: .string)
-            let observedChangeCount = pasteboard.changeCount
+            // Wait for Electron/Chromium/WebView apps to detect the event, process the DOM,
+            // and asynchronously write to the pasteboard.
+            let copyObservation = Self.pollPasteboardForCopiedText(
+                pasteboard: pasteboard,
+                initialChangeCount: initialChangeCount,
+                initialString: initialString
+            )
             
             // Only restore when Cmd+C actually produced a fresh clipboard value.
-            if Self.shouldRestorePasteboardSnapshot(
-                initialChangeCount: initialChangeCount,
-                observedChangeCount: observedChangeCount,
-                copiedText: newString
-            ) {
+            if copyObservation.hasFreshCopiedText {
                 Self.restorePasteboardSnapshot(snapshot, to: pasteboard)
             }
             
-            let trimmed = newString?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let result = (trimmed?.isEmpty == false) ? trimmed : nil
+            let trimmed = copyObservation.copiedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let result = copyObservation.hasFreshCopiedText && (trimmed?.isEmpty == false) ? trimmed : nil
             
             DispatchQueue.main.async {
                 completion(result)
@@ -288,18 +393,166 @@ final class AccessibilityManager {
         pasteboard.writeObjects(restoredItems)
     }
 
+    private struct CopyObservation {
+        let copiedText: String?
+        let hasFreshCopiedText: Bool
+    }
+
+    private static func pollPasteboardForCopiedText(
+        pasteboard: NSPasteboard,
+        initialChangeCount: Int,
+        initialString: String?
+    ) -> CopyObservation {
+        var latestString = initialString
+        var latestChangeCount = initialChangeCount
+
+        for _ in 0..<12 {
+            usleep(25000)
+            latestString = pasteboard.string(forType: .string)
+            latestChangeCount = pasteboard.changeCount
+
+            if shouldTreatCopiedTextAsFresh(
+                initialChangeCount: initialChangeCount,
+                observedChangeCount: latestChangeCount,
+                initialString: initialString,
+                observedString: latestString
+            ) {
+                return CopyObservation(
+                    copiedText: latestString,
+                    hasFreshCopiedText: true
+                )
+            }
+        }
+
+        return CopyObservation(
+            copiedText: latestString,
+            hasFreshCopiedText: false
+        )
+    }
+
+    static func shouldTreatCopiedTextAsFresh(
+        initialChangeCount: Int,
+        observedChangeCount: Int,
+        initialString: String?,
+        observedString: String?
+    ) -> Bool {
+        guard let observedString else { return false }
+        let trimmedObservedString = observedString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedObservedString.isEmpty else { return false }
+
+        if observedChangeCount != initialChangeCount {
+            return true
+        }
+
+        let trimmedInitialString = initialString?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedInitialString != trimmedObservedString
+    }
+
     static func shouldRestorePasteboardSnapshot(
         initialChangeCount: Int,
         observedChangeCount: Int,
-        copiedText: String?
+        copiedText: String?,
+        initialString: String? = nil
     ) -> Bool {
-        guard let copiedText else { return false }
-        guard !copiedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        return observedChangeCount != initialChangeCount
+        if initialString == nil {
+            guard let copiedText else { return false }
+            guard !copiedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            return observedChangeCount != initialChangeCount
+        }
+
+        return shouldTreatCopiedTextAsFresh(
+            initialChangeCount: initialChangeCount,
+            observedChangeCount: observedChangeCount,
+            initialString: initialString,
+            observedString: copiedText
+        )
     }
 
     static func shouldAssumeFocusedTextInputContainsClickWhenBoundsUnavailable() -> Bool {
         false
+    }
+
+    static func shouldTreatFocusedRoleAsTextSelectionContext(
+        role: String,
+        ancestorRoles: [String]
+    ) -> Bool {
+        let allowedRoles = [
+            kAXStaticTextRole,
+            kAXTextFieldRole,
+            kAXTextAreaRole,
+            "AXWebArea",
+            "AXHeading",
+            "AXParagraph",
+            "AXLink"
+        ]
+        let forbiddenRoles = [
+            kAXImageRole,
+            kAXCellRole,
+            kAXRowRole,
+            kAXButtonRole,
+            kAXWindowRole,
+            kAXApplicationRole
+        ]
+
+        return shouldTreatElementAsText(
+            role: role,
+            ancestorRoles: ancestorRoles,
+            bundleID: nil,
+            allowedRoles: allowedRoles,
+            forbiddenRoles: forbiddenRoles
+        )
+    }
+
+    func isFocusedTextSelectionContext(at point: NSPoint) -> Bool {
+        guard isAccessibilityEnabled else { return false }
+        guard let axPoint = accessibilityScreenPoint(for: point) else { return false }
+        guard let focusedElement = getFocusedElement() else { return false }
+
+        var roleValue: AnyObject?
+        guard AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXRoleAttribute as CFString,
+            &roleValue
+        ) == .success,
+              let role = roleValue as? String else { return false }
+
+        let ancestorRoles = ancestorRoles(for: focusedElement)
+        guard Self.shouldTreatFocusedRoleAsTextSelectionContext(
+            role: role,
+            ancestorRoles: ancestorRoles
+        ) else {
+            return false
+        }
+
+        var positionValue: AnyObject?
+        var sizeValue: AnyObject?
+        guard AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXPositionAttribute as CFString,
+            &positionValue
+        ) == .success,
+              AXUIElementCopyAttributeValue(
+                focusedElement,
+                kAXSizeAttribute as CFString,
+                &sizeValue
+              ) == .success,
+              let positionValue,
+              let sizeValue,
+              CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              CFGetTypeID(sizeValue) == AXValueGetTypeID() else {
+            return false
+        }
+
+        let positionAXValue = unsafeBitCast(positionValue, to: AXValue.self)
+        let sizeAXValue = unsafeBitCast(sizeValue, to: AXValue.self)
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionAXValue, .cgPoint, &position),
+              AXValueGetValue(sizeAXValue, .cgSize, &size) else {
+            return false
+        }
+
+        return CGRect(origin: position, size: size).contains(axPoint)
     }
     
     /// Check if the element at the specified screen coordinates is a text input field
@@ -421,14 +674,6 @@ final class AccessibilityManager {
         let hitResult = AXUIElementCopyElementAtPosition(systemWideElement, Float(axPoint.x), Float(axPoint.y), &hitElementRaw)
         
         guard hitResult == .success, let hitElement = hitElementRaw else { return false }
-        
-        // Hard-block file managers and desktop to prevent file clicking from triggering text selection
-        if let bundleID = getFocusedAppBundleID() {
-            if bundleID == "com.apple.finder" || bundleID == "com.apple.WindowManager" || bundleID == "com.apple.dock" {
-                NSLog("[OpenFire-Debug] Ignoring double click because frontmost app is Finder/Desktop")
-                return false
-            }
-        }
         
         // 2. Identify the role
         var roleValue: AnyObject?
@@ -621,8 +866,13 @@ final class AccessibilityManager {
             kAXRowRole,
             kAXListRole,
             kAXOutlineRole,
-            kAXTableRole,
-            "AXBrowser"
+            kAXTableRole
+        ]
+        let webContentAncestorRoles: Set<String> = [
+            "AXBrowser",
+            "AXWebArea",
+            "AXDocument",
+            "AXScrollArea"
         ]
 
         if forbiddenRoles.contains(role) {
@@ -635,6 +885,14 @@ final class AccessibilityManager {
                 return false
             }
             return true
+        }
+
+        if role == "AXGroup" {
+            let isWithinWebContent = ancestorRoles.contains(where: webContentAncestorRoles.contains)
+            let isWithinStructuralContainer = ancestorRoles.contains(where: structuralAncestorRoles.contains)
+            if isWithinWebContent && !isWithinStructuralContainer {
+                return true
+            }
         }
 
         if role == "AXGroup",

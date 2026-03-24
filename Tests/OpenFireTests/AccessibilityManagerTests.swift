@@ -82,6 +82,87 @@ final class AccessibilityManagerTests: XCTestCase {
         XCTAssertTrue(result)
     }
 
+    func testShouldTreatElementAsTextAllowsPageTextInsideAXBrowserWithoutAppWhitelist() {
+        let result = AccessibilityManager.shouldTreatElementAsText(
+            role: kAXStaticTextRole,
+            ancestorRoles: ["AXGroup", "AXBrowser", "AXScrollArea"],
+            bundleID: "com.example.webviewhost",
+            allowedRoles: [
+                kAXStaticTextRole,
+                kAXTextFieldRole,
+                kAXTextAreaRole,
+                "AXWebArea",
+                "AXHeading",
+                "AXParagraph",
+                "AXLink"
+            ],
+            forbiddenRoles: [
+                kAXImageRole,
+                kAXCellRole,
+                kAXRowRole,
+                kAXButtonRole,
+                kAXWindowRole,
+                kAXApplicationRole
+            ]
+        )
+
+        XCTAssertTrue(result)
+    }
+
+    func testShouldTreatElementAsTextAllowsGenericAXGroupInsideWebContent() {
+        let result = AccessibilityManager.shouldTreatElementAsText(
+            role: "AXGroup",
+            ancestorRoles: ["AXWebArea", "AXBrowser", "AXScrollArea"],
+            bundleID: "com.example.codexlikeapp",
+            allowedRoles: [
+                kAXStaticTextRole,
+                kAXTextFieldRole,
+                kAXTextAreaRole,
+                "AXWebArea",
+                "AXHeading",
+                "AXParagraph",
+                "AXLink"
+            ],
+            forbiddenRoles: [
+                kAXImageRole,
+                kAXCellRole,
+                kAXRowRole,
+                kAXButtonRole,
+                kAXWindowRole,
+                kAXApplicationRole
+            ]
+        )
+
+        XCTAssertTrue(result)
+    }
+
+    func testShouldTreatElementAsTextRejectsGenericAXGroupInsideStructuralContainers() {
+        let result = AccessibilityManager.shouldTreatElementAsText(
+            role: "AXGroup",
+            ancestorRoles: ["AXWebArea", kAXRowRole, kAXOutlineRole],
+            bundleID: "com.example.sidebar",
+            allowedRoles: [
+                kAXStaticTextRole,
+                kAXTextFieldRole,
+                kAXTextAreaRole,
+                "AXWebArea",
+                "AXHeading",
+                "AXParagraph",
+                "AXLink"
+            ],
+            forbiddenRoles: [
+                kAXImageRole,
+                kAXCellRole,
+                kAXRowRole,
+                kAXButtonRole,
+                kAXWindowRole,
+                kAXApplicationRole
+            ]
+        )
+
+        XCTAssertFalse(result)
+    }
+
     func testShouldRestorePasteboardSnapshotOnlyAfterFreshCopiedTextArrives() {
         XCTAssertTrue(AccessibilityManager.shouldRestorePasteboardSnapshot(
             initialChangeCount: 10,
@@ -100,7 +181,84 @@ final class AccessibilityManagerTests: XCTestCase {
         ))
     }
 
+    func testShouldTreatCopiedTextAsFreshWhenStringChangesWithoutChangeCount() {
+        XCTAssertTrue(AccessibilityManager.shouldTreatCopiedTextAsFresh(
+            initialChangeCount: 10,
+            observedChangeCount: 10,
+            initialString: "before",
+            observedString: "after"
+        ))
+        XCTAssertFalse(AccessibilityManager.shouldTreatCopiedTextAsFresh(
+            initialChangeCount: 10,
+            observedChangeCount: 10,
+            initialString: "before",
+            observedString: "before"
+        ))
+    }
+
     func testShouldAssumeFocusedTextInputContainsClickWhenBoundsUnavailableIsConservative() {
         XCTAssertFalse(AccessibilityManager.shouldAssumeFocusedTextInputContainsClickWhenBoundsUnavailable())
+    }
+
+    func testSelectionSnapshotTracksWhetherAccessibilitySelectionStateIsReadable() {
+        let unreadableSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: nil,
+            rangeLocation: nil,
+            rangeLength: nil
+        )
+        let textReadableSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: "selected",
+            rangeLocation: nil,
+            rangeLength: nil,
+            hasReadableSelectedTextAttribute: true
+        )
+        let rangeReadableSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: nil,
+            rangeLocation: 4,
+            rangeLength: 8,
+            hasReadableSelectedRangeAttribute: true
+        )
+
+        XCTAssertFalse(unreadableSnapshot.isReadable)
+        XCTAssertTrue(textReadableSnapshot.isReadable)
+        XCTAssertTrue(rangeReadableSnapshot.isReadable)
+        XCTAssertFalse(unreadableSnapshot.canReadSelectedTextViaAccessibility)
+        XCTAssertTrue(textReadableSnapshot.canReadSelectedTextViaAccessibility)
+        XCTAssertFalse(rangeReadableSnapshot.canReadSelectedTextViaAccessibility)
+    }
+
+    func testDidSelectionChangeDetectsTextAndRangeUpdates() {
+        let previousSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: "before",
+            rangeLocation: 0,
+            rangeLength: 6,
+            hasReadableSelectedTextAttribute: true,
+            hasReadableSelectedRangeAttribute: true
+        )
+        let changedTextSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: "after",
+            rangeLocation: 0,
+            rangeLength: 5,
+            hasReadableSelectedTextAttribute: true,
+            hasReadableSelectedRangeAttribute: true
+        )
+        let changedRangeSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: "before",
+            rangeLocation: 3,
+            rangeLength: 6,
+            hasReadableSelectedTextAttribute: true,
+            hasReadableSelectedRangeAttribute: true
+        )
+        let unchangedSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: "before",
+            rangeLocation: 0,
+            rangeLength: 6,
+            hasReadableSelectedTextAttribute: true,
+            hasReadableSelectedRangeAttribute: true
+        )
+
+        XCTAssertTrue(AccessibilityManager.didSelectionChange(from: previousSnapshot, to: changedTextSnapshot))
+        XCTAssertTrue(AccessibilityManager.didSelectionChange(from: previousSnapshot, to: changedRangeSnapshot))
+        XCTAssertFalse(AccessibilityManager.didSelectionChange(from: previousSnapshot, to: unchangedSnapshot))
     }
 }

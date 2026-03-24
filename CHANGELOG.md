@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.14
+- 修复网页与 WebView 富文本场景的文本选择回归：恢复 Chrome、Codex App、Telegram 及同类 Electron/WebView 应用中的选中文本触发，同时保持拖窗口、拖文件等非文本手势不再误触发圆环。
+- 将网页正文命中从按应用名猜测改为按 `AXBrowser`、`AXWebArea`、`AXDocument` 等富文本上下文识别，并为富文本 `AXGroup` 容器补充通用判定，减少对单个应用白名单的依赖。
+- 强化 `Cmd+C` 回退链路：改为在短窗口内轮询 pasteboard，等待异步复制真正写入新文本后再触发，提高 Chrome、Codex App 等浏览器/WebView 类应用的稳定性。
+- 补充 `AccessibilityManager` 与 `TextSelectionMonitor` 回归测试，覆盖网页/富文本上下文命中、异步 pasteboard 更新以及“从文本区域起手”的 fallback 触发条件。
+
+- Restored text-selection triggering in browser and WebView rich-text contexts, bringing back reliable selection handling in Chrome, Codex App, Telegram, and similar Electron/WebView hosts while still suppressing non-text gestures such as window drags and file drags.
+- Replaced app-name heuristics for page-text detection with richer `AXBrowser` / `AXWebArea` / `AXDocument` context checks and generalized `AXGroup` handling for rich-text containers, reducing dependence on per-app allowlists.
+- Hardened the `Cmd+C` fallback path by polling the pasteboard briefly for asynchronously written copied text before triggering, improving stability for Chrome, Codex App, and other browser/WebView-based apps.
+- Added regression coverage for rich-text context detection, asynchronous pasteboard updates, and the restored “started in text context” fallback gating in `AccessibilityManager` and `TextSelectionMonitor`.
+
 ## v0.3.13
 - 调整 Accessibility 旧记录清理逻辑：首次安装、同版本重装或升级后只要当前权限实际缺失，就会在弹出权限引导前先同步 reset，避免用户进入辅助功能页时仍看到旧的 OpenFire 授权记录。
 - 修复文件拖拽与文本拖选的判定冲突：文件拖拽抑制现在要求拖拽 pasteboard 在本次手势内确实发生变化，避免旧的拖拽残留把正常文本选中一直误判成文件拖拽。

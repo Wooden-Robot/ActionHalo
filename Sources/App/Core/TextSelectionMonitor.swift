@@ -96,6 +96,11 @@ final class TextSelectionMonitor {
     private var isMonitoring = false
     private var mouseDownLocation: NSPoint?
     private var mouseDownDragPasteboardChangeCount: Int?
+    private var mouseDownSelectionSnapshot: AccessibilityManager.SelectionSnapshot?
+    private var mouseDownStartedInTextContext = false
+    private var pendingSelectionBaselineSnapshot: AccessibilityManager.SelectionSnapshot?
+    private var pendingSelectionStartedInTextContext = false
+    private var pendingSelectionEndedInTextContext = false
     
     // AXObserver state for robust text selection detection
     private var currentObserver: AXObserver?
@@ -147,8 +152,11 @@ final class TextSelectionMonitor {
             }
             
             if type == .leftMouseDown {
-                monitor.mouseDownLocation = NSEvent.mouseLocation
+                let mouseLocation = NSEvent.mouseLocation
+                monitor.mouseDownLocation = mouseLocation
                 monitor.mouseDownDragPasteboardChangeCount = NSPasteboard(name: .drag).changeCount
+                monitor.mouseDownSelectionSnapshot = AccessibilityManager.shared.currentSelectionSnapshot()
+                monitor.mouseDownStartedInTextContext = TextSelectionMonitor.isTextSelectionContext(at: mouseLocation)
             } else if type == .leftMouseUp {
                 monitor.handleMouseUp()
             }
@@ -198,6 +206,11 @@ final class TextSelectionMonitor {
         isMonitoring = false
         mouseDownLocation = nil
         mouseDownDragPasteboardChangeCount = nil
+        mouseDownSelectionSnapshot = nil
+        mouseDownStartedInTextContext = false
+        pendingSelectionBaselineSnapshot = nil
+        pendingSelectionStartedInTextContext = false
+        pendingSelectionEndedInTextContext = false
         
         NSLog("[OpenFire] Text selection monitoring stopped")
     }
@@ -209,6 +222,40 @@ final class TextSelectionMonitor {
 
     static func shouldTreatMouseInteractionAsSelectionTrigger(distance: CGFloat, minimumDragDistance: CGFloat) -> Bool {
         distance >= minimumDragDistance
+    }
+
+    static func isTextSelectionContext(at point: NSPoint) -> Bool {
+        AccessibilityManager.shared.isTextElement(at: point) ||
+        AccessibilityManager.shared.isTextInputElement(at: point) ||
+        AccessibilityManager.shared.isFocusedTextSelectionContext(at: point)
+    }
+
+    static func shouldHandleAccessibilityDragSelection(
+        snapshotAtMouseDown: AccessibilityManager.SelectionSnapshot?,
+        currentSnapshot: AccessibilityManager.SelectionSnapshot?
+    ) -> Bool {
+        guard let currentSnapshot,
+              currentSnapshot.canReadSelectedTextViaAccessibility,
+              currentSnapshot.normalizedText != nil else { return false }
+        return AccessibilityManager.didSelectionChange(from: snapshotAtMouseDown, to: currentSnapshot)
+    }
+
+    static func shouldHandleCopiedDragSelection(
+        copiedText: String?,
+        snapshotAtMouseDown: AccessibilityManager.SelectionSnapshot?,
+        startedInTextContext: Bool,
+        endedInTextContext: Bool
+    ) -> Bool {
+        guard let copiedText else { return false }
+        let trimmed = copiedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        guard startedInTextContext || endedInTextContext else { return false }
+
+        if let snapshotAtMouseDown, snapshotAtMouseDown.canReadSelectedTextViaAccessibility {
+            return snapshotAtMouseDown.normalizedText != trimmed
+        }
+
+        return true
     }
     
     private func handleMouseUp() {
@@ -226,6 +273,8 @@ final class TextSelectionMonitor {
         ) {
             mouseDownLocation = nil
             mouseDownDragPasteboardChangeCount = nil
+            mouseDownSelectionSnapshot = nil
+            mouseDownStartedInTextContext = false
             return
         }
 
@@ -236,6 +285,9 @@ final class TextSelectionMonitor {
             isFocusedSelectionEditable: AccessibilityManager.shared.isFocusedSelectionEditable()
         ) {
             mouseDownLocation = nil
+            mouseDownDragPasteboardChangeCount = nil
+            mouseDownSelectionSnapshot = nil
+            mouseDownStartedInTextContext = false
             return
         }
         
@@ -244,6 +296,9 @@ final class TextSelectionMonitor {
             let excluded = UserDefaults.standard.stringArray(forKey: "ExcludedApps") ?? []
             if excluded.contains(bundleId) {
                 mouseDownLocation = nil
+                mouseDownDragPasteboardChangeCount = nil
+                mouseDownSelectionSnapshot = nil
+                mouseDownStartedInTextContext = false
                 return
             }
         }
@@ -252,17 +307,25 @@ final class TextSelectionMonitor {
         // ignore all global text selection events so drag-clicks don't spawn a new menu.
         if NSApplication.shared.windows.contains(where: { $0 is RadialMenuWindow && $0.isVisible }) {
             mouseDownLocation = nil
+            mouseDownDragPasteboardChangeCount = nil
+            mouseDownSelectionSnapshot = nil
+            mouseDownStartedInTextContext = false
             return
         }
         
         let upLocation = NSEvent.mouseLocation
+        let startedInTextContext = mouseDownStartedInTextContext
+        let endedInTextContext = Self.isTextSelectionContext(at: upLocation)
         
         let dx = upLocation.x - downLocation.x
         let dy = upLocation.y - downLocation.y
         let distance = sqrt(dx * dx + dy * dy)
+        let snapshotAtMouseDown = mouseDownSelectionSnapshot
         
         mouseDownLocation = nil
         mouseDownDragPasteboardChangeCount = nil
+        mouseDownSelectionSnapshot = nil
+        mouseDownStartedInTextContext = false
         
         // Clean up any pending observers or active tasks
         cleanupPendingTask()
@@ -276,6 +339,9 @@ final class TextSelectionMonitor {
         if isDrag {
             let taskID = UUID()
             self.pendingSelectionTaskID = taskID
+            self.pendingSelectionBaselineSnapshot = snapshotAtMouseDown
+            self.pendingSelectionStartedInTextContext = startedInTextContext
+            self.pendingSelectionEndedInTextContext = endedInTextContext
             
             // Wait a tiny bit then do a hybrid check: Observer + Polling
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
@@ -284,18 +350,28 @@ final class TextSelectionMonitor {
                     self.cleanupPendingTask()
                     return
                 }
-                
-                // Immediately check if text is already selected
-                if let text = AccessibilityManager.shared.getSelectedText(), !text.isEmpty {
+
+                let currentSnapshot = AccessibilityManager.shared.currentSelectionSnapshot()
+
+                if Self.shouldHandleAccessibilityDragSelection(
+                    snapshotAtMouseDown: snapshotAtMouseDown,
+                    currentSnapshot: currentSnapshot
+                ), let text = currentSnapshot?.normalizedText {
                     AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
                     self.handleSelectionFound(text: text, location: upLocation, taskID: taskID)
                 } else {
                     AccessibilityManager.shared.recordSelectionAttemptFailure(.accessibilityEmptySelection)
                     // Try to attach an observer
-                    self.startObserver(at: upLocation, taskID: taskID)
+                    let observerStarted = self.startObserver(taskID: taskID)
                     
-                    // Concurrently start polling (for apps that don't emit observer notifications)
-                    self.schedulePolling(at: upLocation, taskID: taskID)
+                    // Concurrently start polling. If native AX has not yielded selected text yet,
+                    // still allow Cmd+C fallback for browsers / webviews / Chromium apps.
+                    self.schedulePolling(
+                        at: upLocation,
+                        taskID: taskID,
+                        allowCopyFallback: true,
+                        observerStarted: observerStarted
+                    )
                 }
             }
         } else {
@@ -310,10 +386,10 @@ final class TextSelectionMonitor {
     
     // MARK: - Hybrid Detection Logic
     
-    private func startObserver(at mouseLocation: NSPoint, taskID: UUID) {
+    private func startObserver(taskID: UUID) -> Bool {
         guard let focusedApp = NSWorkspace.shared.frontmostApplication else {
             AccessibilityManager.shared.recordSelectionAttemptFailure(.noFocusedApplication)
-            return
+            return false
         }
         let pid = focusedApp.processIdentifier
         
@@ -328,7 +404,7 @@ final class TextSelectionMonitor {
         
         guard error == .success, let observer = observerRaw, let focusedElement = AccessibilityManager.shared.getFocusedElement() else {
             AccessibilityManager.shared.recordSelectionAttemptFailure(.observerSetupFailed)
-            return
+            return false
         }
         
         let addNotificationError = AXObserverAddNotification(
@@ -340,7 +416,7 @@ final class TextSelectionMonitor {
         guard addNotificationError == .success else {
             NSLog("[OpenFire-Debug] Failed to register AX selection observer: \(addNotificationError.rawValue)")
             AccessibilityManager.shared.recordSelectionAttemptFailure(.observerSetupFailed)
-            return
+            return false
         }
         
         self.currentObserver = observer
@@ -360,18 +436,29 @@ final class TextSelectionMonitor {
         }
         self.observationTimeout = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: workItem)
+        return true
     }
     
-    private func schedulePolling(at mouseLocation: NSPoint, taskID: UUID) {
+    private func schedulePolling(
+        at mouseLocation: NSPoint,
+        taskID: UUID,
+        allowCopyFallback: Bool,
+        observerStarted: Bool
+    ) {
         // Try native accessibility polling once at 0.1s
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             guard let self = self, self.pendingSelectionTaskID == taskID else { return }
-            
-            if let text = AccessibilityManager.shared.getSelectedText(), !text.isEmpty {
+
+            let currentSnapshot = AccessibilityManager.shared.currentSelectionSnapshot()
+
+            if Self.shouldHandleAccessibilityDragSelection(
+                snapshotAtMouseDown: self.pendingSelectionBaselineSnapshot,
+                currentSnapshot: currentSnapshot
+            ), let text = currentSnapshot?.normalizedText {
                 NSLog("[OpenFire-Debug] Text found via Polling Fallback at 0.1s.")
                 AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
                 self.handleSelectionFound(text: text, location: mouseLocation, taskID: taskID)
-            } else {
+            } else if allowCopyFallback {
                 AccessibilityManager.shared.recordSelectionAttemptFailure(.accessibilityEmptySelection)
                 // If native polling fails at 0.1s, immediately fire the Cmd+C fallback for Electron/Qt apps (e.g., Telegram)
                 // This eliminates the previous 0.4s waiting penalty.
@@ -380,7 +467,13 @@ final class TextSelectionMonitor {
                     
                     AccessibilityManager.shared.getSelectedTextViaCopy { [weak self] copiedText in
                         guard let self = self, self.pendingSelectionTaskID == taskID else { return }
-                        if let text = copiedText, !text.isEmpty {
+                        let copiedTextAllowed = Self.shouldHandleCopiedDragSelection(
+                            copiedText: copiedText,
+                            snapshotAtMouseDown: self.pendingSelectionBaselineSnapshot,
+                            startedInTextContext: self.pendingSelectionStartedInTextContext,
+                            endedInTextContext: self.pendingSelectionEndedInTextContext
+                        )
+                        if copiedTextAllowed, let text = copiedText, !text.isEmpty {
                             NSLog("[OpenFire-Debug] Text found via Cmd+C Fallback after 0.15s.")
                             AccessibilityManager.shared.recordSelectionAcquisition(source: .copyFallback, text: text)
                             self.handleSelectionFound(text: text, location: mouseLocation, taskID: taskID)
@@ -390,25 +483,28 @@ final class TextSelectionMonitor {
                         }
                     }
                 }
+            } else if !observerStarted {
+                self.cleanupPendingTask()
             }
         }
     }
     
-    private func handleSelectionChangedNotification(element: AXUIElement) {
+    private func handleSelectionChangedNotification(element _: AXUIElement) {
         let taskID = self.pendingSelectionTaskID
 
         guard !AccessibilityManager.shared.shouldSuppressSelectionPresentation() else {
             cleanupPendingTask()
             return
         }
-        
-        var selectedTextRaw: AnyObject?
-        let result = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selectedTextRaw)
-        
-        if result == .success, let text = selectedTextRaw as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+
+        let currentSnapshot = AccessibilityManager.shared.currentSelectionSnapshot()
+        if Self.shouldHandleAccessibilityDragSelection(
+            snapshotAtMouseDown: pendingSelectionBaselineSnapshot,
+            currentSnapshot: currentSnapshot
+        ), let text = currentSnapshot?.normalizedText {
             let location = NSEvent.mouseLocation
             AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
-            handleSelectionFound(text: text.trimmingCharacters(in: .whitespacesAndNewlines), location: location, taskID: taskID)
+            handleSelectionFound(text: text, location: location, taskID: taskID)
         }
     }
     
@@ -423,6 +519,9 @@ final class TextSelectionMonitor {
     
     private func cleanupPendingTask() {
         pendingSelectionTaskID = nil
+        pendingSelectionBaselineSnapshot = nil
+        pendingSelectionStartedInTextContext = false
+        pendingSelectionEndedInTextContext = false
         
         observationTimeout?.cancel()
         observationTimeout = nil

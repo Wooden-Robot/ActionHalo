@@ -56,6 +56,91 @@ final class TextSelectionMonitorTests: XCTestCase {
         XCTAssertTrue(TextSelectionMonitor.shouldTreatMouseInteractionAsSelectionTrigger(distance: 5, minimumDragDistance: 5))
     }
 
+    func testShouldHandleAccessibilityDragSelectionRequiresReadableChangedSelection() {
+        let snapshotAtMouseDown = AccessibilityManager.SelectionSnapshot(
+            text: nil,
+            rangeLocation: 0,
+            rangeLength: 0,
+            hasReadableSelectedRangeAttribute: true
+        )
+        let changedSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: "selected",
+            rangeLocation: 4,
+            rangeLength: 8,
+            hasReadableSelectedTextAttribute: true,
+            hasReadableSelectedRangeAttribute: true
+        )
+        let unchangedSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: "selected",
+            rangeLocation: 4,
+            rangeLength: 8,
+            hasReadableSelectedTextAttribute: true,
+            hasReadableSelectedRangeAttribute: true
+        )
+        let unreadableSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: "selected",
+            rangeLocation: 4,
+            rangeLength: 8
+        )
+
+        XCTAssertTrue(TextSelectionMonitor.shouldHandleAccessibilityDragSelection(
+            snapshotAtMouseDown: snapshotAtMouseDown,
+            currentSnapshot: changedSnapshot
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldHandleAccessibilityDragSelection(
+            snapshotAtMouseDown: changedSnapshot,
+            currentSnapshot: unchangedSnapshot
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldHandleAccessibilityDragSelection(
+            snapshotAtMouseDown: snapshotAtMouseDown,
+            currentSnapshot: unreadableSnapshot
+        ))
+    }
+
+    func testShouldHandleCopiedDragSelectionPreservesTelegramFallbackWhenAccessibilityIsUnreadable() {
+        let unreadableSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: nil,
+            rangeLocation: nil,
+            rangeLength: nil
+        )
+
+        XCTAssertTrue(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "selected",
+            snapshotAtMouseDown: unreadableSnapshot,
+            startedInTextContext: true,
+            endedInTextContext: false
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "selected",
+            snapshotAtMouseDown: unreadableSnapshot,
+            startedInTextContext: false,
+            endedInTextContext: false
+        ))
+    }
+
+    func testShouldHandleCopiedDragSelectionRejectsStaleCopiedTextWhenAccessibilityWasReadable() {
+        let readableSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: "selected",
+            rangeLocation: 4,
+            rangeLength: 8,
+            hasReadableSelectedTextAttribute: true,
+            hasReadableSelectedRangeAttribute: true
+        )
+
+        XCTAssertFalse(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "selected",
+            snapshotAtMouseDown: readableSnapshot,
+            startedInTextContext: true,
+            endedInTextContext: true
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "new selection",
+            snapshotAtMouseDown: readableSnapshot,
+            startedInTextContext: true,
+            endedInTextContext: false
+        ))
+    }
+
     func testShouldSuppressForFrontmostAppSuppressesOpenFireItself() {
         XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
             bundleID: "com.openfire.app",
