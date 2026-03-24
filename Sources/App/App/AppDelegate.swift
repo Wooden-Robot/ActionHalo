@@ -31,11 +31,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static func shouldResetAccessibilityPermissionsOnVersionChange(
         lastVersion: String?,
         currentVersion: String,
-        resetOptInEnabled: Bool
+        resetOptInEnabled: Bool,
+        hasAccessibilityPermission: Bool
     ) -> Bool {
-        guard resetOptInEnabled else { return false }
         guard let lastVersion, !lastVersion.isEmpty else { return false }
-        return lastVersion != currentVersion
+        guard lastVersion != currentVersion else { return false }
+        return resetOptInEnabled || !hasAccessibilityPermission
     }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -638,13 +639,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard Self.shouldResetAccessibilityPermissionsOnVersionChange(
             lastVersion: lastVersion,
             currentVersion: currentVersion,
-            resetOptInEnabled: resetOptInEnabled
+            resetOptInEnabled: resetOptInEnabled,
+            hasAccessibilityPermission: AccessibilityManager.shared.isAccessibilityEnabled
         ) else {
             NSLog("[OpenFire] App version changed from \(lastVersion ?? "none") to \(currentVersion). Keeping Accessibility permissions untouched.")
             return
         }
 
-        NSLog("[OpenFire] App updated from \(lastVersion ?? "none") to \(currentVersion). Resetting TCC permissions because the compatibility fallback is explicitly enabled.")
+        NSLog("[OpenFire] App updated from \(lastVersion ?? "none") to \(currentVersion). Resetting TCC permissions because Accessibility is currently unavailable or the compatibility fallback is explicitly enabled.")
 
         // Reset asynchronously to avoid blocking app launch on a shell task.
         DispatchQueue.global(qos: .utility).async {

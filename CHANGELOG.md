@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.11
+- 调整升级后的 Accessibility 权限恢复策略：不再对所有版本升级一刀切 reset，但如果升级后检测到当前权限已失效，仍会自动执行一次 reset，修复“权限面板里还是旧版本记录导致新版本不生效”的场景。
+- 补充 `AppDelegate` 回归测试，覆盖首启、同版本重启、显式兼容兜底和“升级后权限失效”这几种权限重置分支。
+
+- Refined the post-upgrade Accessibility recovery policy so version changes no longer reset permissions unconditionally, while still automatically resetting once when an upgraded build detects that Accessibility access is no longer effective.
+- Added `AppDelegate` regression coverage for first launch, same-version relaunch, explicit compatibility fallback, and the “permission missing after upgrade” recovery path.
+
 ## v0.3.10
 - 收紧前台应用抑制规则：Finder/Desktop 仍会被正确屏蔽，但不再误伤 `Telegram Desktop`、`Remote Desktop` 等名称包含 Desktop 的普通应用。
 - 优化选中文本回退复制链路：不再先清空系统剪贴板，只有在确实拿到新的复制结果时才恢复旧内容，减少剪贴板闪动和覆盖风险。
