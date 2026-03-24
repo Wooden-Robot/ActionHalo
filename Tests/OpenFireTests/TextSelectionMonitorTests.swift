@@ -57,6 +57,10 @@ final class TextSelectionMonitorTests: XCTestCase {
             bundleID: "com.apple.WindowManager",
             localizedName: "Desktop"
         ))
+        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.apple.dock",
+            localizedName: "Dock"
+        ))
     }
 
     func testShouldSuppressForFrontmostAppKeepsRegularEditorsEnabled() {

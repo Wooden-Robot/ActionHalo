@@ -4,8 +4,15 @@ import Cocoa
 final class TextSelectionMonitor {
     private static let suppressedFrontmostBundleIDs: Set<String> = [
         "comopenfireapp",
+        "comappledock",
         "comapplefinder",
         "comapplewindowmanager"
+    ]
+    private static let suppressedFrontmostNames: Set<String> = [
+        "openfire",
+        "finder",
+        "dock",
+        "desktop"
     ]
     
     static let shared = TextSelectionMonitor()
@@ -22,7 +29,7 @@ final class TextSelectionMonitor {
         let normalizedBundleID = normalizeFrontmostAppIdentifier(bundleID)
         let normalizedName = normalizeFrontmostAppIdentifier(localizedName)
 
-        if suppressedFrontmostBundleIDs.contains(normalizedBundleID) || normalizedName == "openfire" {
+        if suppressedFrontmostBundleIDs.contains(normalizedBundleID) || suppressedFrontmostNames.contains(normalizedName) {
             return true
         }
 

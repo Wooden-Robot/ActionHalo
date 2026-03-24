@@ -424,7 +424,7 @@ final class AccessibilityManager {
         
         // Hard-block file managers and desktop to prevent file clicking from triggering text selection
         if let bundleID = getFocusedAppBundleID() {
-            if bundleID == "com.apple.finder" || bundleID == "com.apple.WindowManager" {
+            if bundleID == "com.apple.finder" || bundleID == "com.apple.WindowManager" || bundleID == "com.apple.dock" {
                 NSLog("[OpenFire-Debug] Ignoring double click because frontmost app is Finder/Desktop")
                 return false
             }

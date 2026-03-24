@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.12
+- 修复文件拖拽误触发：将 `Dock` 也纳入文件管理场景抑制范围，避免拖动文件到桌面、Dock 或相关系统区域时错误弹出圆环。
+- 为 `TextSelectionMonitor` 补充 `Dock` 场景回归测试，同时保持 `Telegram Desktop`、`Remote Desktop` 等正常应用不受误伤。
+
+- Fixed file-drag false positives by treating `Dock` as another file-management context, preventing the radial menu from appearing while dragging files through the desktop, Dock, or related system surfaces.
+- Added regression coverage for the `Dock` suppression path while keeping normal apps such as Telegram Desktop and Remote Desktop unaffected.
+
 ## v0.3.11
 - 调整升级后的 Accessibility 权限恢复策略：不再对所有版本升级一刀切 reset，但如果升级后检测到当前权限已失效，仍会自动执行一次 reset，修复“权限面板里还是旧版本记录导致新版本不生效”的场景。
 - 补充 `AppDelegate` 回归测试，覆盖首启、同版本重启、显式兼容兜底和“升级后权限失效”这几种权限重置分支。
