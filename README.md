@@ -73,6 +73,56 @@ Once the wheel is already visible, there are **two ways to execute an action**:
 
 The second execution style is the signature interaction: as soon as the wheel appears, you can go straight into a weapon-wheel-like press-drag-release motion instead of pausing to click a slice.
 
+If you need to debug why the wheel did or did not appear, see the dedicated [Diagnostics Guide](./DIAGNOSTICS.md).
+
+### Trigger Logic Summary
+
+OpenFire does not simply fire on every mouse drag. The current trigger pipeline is intentionally conservative:
+
+1. A gesture must first look like an actual text-selection drag. Very short movements are treated as normal clicks instead of selection triggers.
+2. OpenFire suppresses obvious non-text scenarios before trying to acquire text:
+   - file drags detected through the drag pasteboard
+   - frontmost file-management or self contexts such as Finder, Dock, Desktop, and OpenFire itself
+   - known screenshot tools
+   - window drags, detected by checking whether the frontmost window frame actually moved during the gesture
+3. If the gesture survives those filters, OpenFire tries native Accessibility selection first.
+4. If Accessibility does not yield usable selected text quickly enough, OpenFire falls back to a guarded `Cmd+C` path and waits briefly for a fresh clipboard update.
+5. The wheel appears only after OpenFire has real non-empty selected text from one of those paths.
+
+In practice, this means:
+
+- normal text selection in native editors should usually trigger through Accessibility
+- browser and WebView selections may trigger through either Accessibility or the `Cmd+C` fallback, depending on what the host app exposes
+- Telegram is allowed to rely more heavily on the `Cmd+C` fallback because its AX hit/focus state is often unreliable at mouse-up time
+- dragging files or dragging windows should not trigger the wheel
+- editable text inside otherwise blocked contexts, such as Finder rename fields, can still trigger normally
+
+### What `Cmd+C` Fallback Actually Means
+
+`Cmd+C` fallback is OpenFire's backup acquisition path for apps that do not expose selected text reliably through the Accessibility API.
+
+Instead of guessing the selected text, OpenFire does the following:
+
+1. Save the current pasteboard snapshot.
+2. Wait very briefly so physical modifier keys from the user's gesture do not interfere with the synthetic copy event.
+3. Post a synthetic `Cmd+C`.
+4. Poll the system pasteboard for a short window and wait for a fresh non-empty text value to appear.
+5. If a fresh copied value really arrived, use that text as the selection and restore the previous pasteboard snapshot.
+
+This path exists mainly for apps such as:
+
+- Telegram
+- Electron-based apps
+- browser or WebView hosts whose Accessibility selection state is incomplete or delayed
+
+It is intentionally guarded and is **not** a blind "always copy on every drag" behavior. OpenFire still checks context before allowing the fallback result to trigger the wheel. It also restores the previous clipboard only when the synthetic copy actually produced a fresh copied value, which helps avoid unnecessary clipboard churn.
+
+So in short:
+
+- `Accessibility API` is the preferred path
+- `Cmd+C` fallback is the compatibility path
+- both still require OpenFire to conclude that the gesture looked like text selection rather than a file drag, window drag, or other non-text interaction
+
 ### Menu Bar Controls
 
 OpenFire lives in the macOS menu bar and exposes the main controls there:
