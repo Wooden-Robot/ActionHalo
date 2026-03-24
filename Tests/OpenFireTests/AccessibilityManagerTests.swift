@@ -81,4 +81,26 @@ final class AccessibilityManagerTests: XCTestCase {
 
         XCTAssertTrue(result)
     }
+
+    func testShouldRestorePasteboardSnapshotOnlyAfterFreshCopiedTextArrives() {
+        XCTAssertTrue(AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialChangeCount: 10,
+            observedChangeCount: 11,
+            copiedText: "copied"
+        ))
+        XCTAssertFalse(AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialChangeCount: 10,
+            observedChangeCount: 10,
+            copiedText: "copied"
+        ))
+        XCTAssertFalse(AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialChangeCount: 10,
+            observedChangeCount: 11,
+            copiedText: "   \n"
+        ))
+    }
+
+    func testShouldAssumeFocusedTextInputContainsClickWhenBoundsUnavailableIsConservative() {
+        XCTAssertFalse(AccessibilityManager.shouldAssumeFocusedTextInputContainsClickWhenBoundsUnavailable())
+    }
 }

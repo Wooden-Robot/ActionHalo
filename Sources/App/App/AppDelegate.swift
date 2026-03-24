@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let radialMenuExcludedPluginIDs: Set<String> = ["com.openfire.builtin.paste"]
     static let deletePluginID = "com.openfire.delete"
     static let menuDismissEventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .keyDown]
+    static let resetAccessibilityOnUpdateKey = "ResetAccessibilityPermissionsOnUpdate"
     
     private let statusBarController = StatusBarController()
     private var radialMenuWindow: RadialMenuWindow?
@@ -25,6 +26,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             plugin.isEnabled &&
             PluginManager.shared.isPluginEnabled(plugin.id, forAppBundleID: appBundleID)
         }
+    }
+
+    static func shouldResetAccessibilityPermissionsOnVersionChange(
+        lastVersion: String?,
+        currentVersion: String,
+        resetOptInEnabled: Bool
+    ) -> Bool {
+        guard resetOptInEnabled else { return false }
+        guard let lastVersion, !lastVersion.isEmpty else { return false }
+        return lastVersion != currentVersion
     }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -618,27 +629,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func checkAndUpdateAccessibilityState() {
         let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
         let lastVersion = UserDefaults.standard.string(forKey: "LastRunVersion")
-        
-        // If this is a new version running for the first time
-        if lastVersion != currentVersion {
-            NSLog("[OpenFire] App updated from \(lastVersion ?? "none") to \(currentVersion). Resetting TCC permissions.")
 
-            // Mark the new version first so repeated launches do not enqueue duplicate resets.
-            // Mark the new version as launched
-            UserDefaults.standard.set(currentVersion, forKey: "LastRunVersion")
+        guard lastVersion != currentVersion else { return }
 
-            // Reset asynchronously to avoid blocking app launch on a shell task.
-            DispatchQueue.global(qos: .utility).async {
-                let task = Process()
-                task.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
-                task.arguments = ["reset", "Accessibility", "com.openfire.app"]
+        UserDefaults.standard.set(currentVersion, forKey: "LastRunVersion")
 
-                do {
-                    try task.run()
-                    task.waitUntilExit()
-                } catch {
-                    NSLog("[OpenFire] Failed to reset Accessibility TCC: \(error.localizedDescription)")
-                }
+        let resetOptInEnabled = UserDefaults.standard.bool(forKey: Self.resetAccessibilityOnUpdateKey)
+        guard Self.shouldResetAccessibilityPermissionsOnVersionChange(
+            lastVersion: lastVersion,
+            currentVersion: currentVersion,
+            resetOptInEnabled: resetOptInEnabled
+        ) else {
+            NSLog("[OpenFire] App version changed from \(lastVersion ?? "none") to \(currentVersion). Keeping Accessibility permissions untouched.")
+            return
+        }
+
+        NSLog("[OpenFire] App updated from \(lastVersion ?? "none") to \(currentVersion). Resetting TCC permissions because the compatibility fallback is explicitly enabled.")
+
+        // Reset asynchronously to avoid blocking app launch on a shell task.
+        DispatchQueue.global(qos: .utility).async {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+            task.arguments = ["reset", "Accessibility", "com.openfire.app"]
+
+            do {
+                try task.run()
+                task.waitUntilExit()
+            } catch {
+                NSLog("[OpenFire] Failed to reset Accessibility TCC: \(error.localizedDescription)")
             }
         }
     }

@@ -2,6 +2,11 @@ import Cocoa
 
 /// Monitors global mouse events to detect text selection
 final class TextSelectionMonitor {
+    private static let suppressedFrontmostBundleIDs: Set<String> = [
+        "comopenfireapp",
+        "comapplefinder",
+        "comapplewindowmanager"
+    ]
     
     static let shared = TextSelectionMonitor()
     
@@ -17,20 +22,7 @@ final class TextSelectionMonitor {
         let normalizedBundleID = normalizeFrontmostAppIdentifier(bundleID)
         let normalizedName = normalizeFrontmostAppIdentifier(localizedName)
 
-        if normalizedBundleID == "comopenfireapp" || normalizedName == "openfire" {
-            return true
-        }
-
-        let knownFileManagerHints = [
-            "comapplefinder",
-            "comapplewindowmanager",
-            "finder",
-            "desktop"
-        ]
-
-        if knownFileManagerHints.contains(where: { hint in
-            normalizedBundleID.contains(hint) || normalizedName.contains(hint)
-        }) {
+        if suppressedFrontmostBundleIDs.contains(normalizedBundleID) || normalizedName == "openfire" {
             return true
         }
 
@@ -278,7 +270,17 @@ final class TextSelectionMonitor {
             return
         }
         
-        AXObserverAddNotification(observer, focusedElement, kAXSelectedTextChangedNotification as CFString, selfPointer)
+        let addNotificationError = AXObserverAddNotification(
+            observer,
+            focusedElement,
+            kAXSelectedTextChangedNotification as CFString,
+            selfPointer
+        )
+        guard addNotificationError == .success else {
+            NSLog("[OpenFire-Debug] Failed to register AX selection observer: \(addNotificationError.rawValue)")
+            AccessibilityManager.shared.recordSelectionAttemptFailure(.observerSetupFailed)
+            return
+        }
         
         self.currentObserver = observer
         self.observerRunLoopSource = AXObserverGetRunLoopSource(observer)

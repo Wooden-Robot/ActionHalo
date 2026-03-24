@@ -190,9 +190,8 @@ final class AccessibilityManager {
             usleep(50000) 
             
             let pasteboard = NSPasteboard.general
+            let initialChangeCount = pasteboard.changeCount
             let snapshot = Self.capturePasteboardSnapshot(from: pasteboard)
-            
-            pasteboard.clearContents()
             
             // Simulate Cmd+C via CGEvent
             let source = CGEventSource(stateID: .hidSystemState)
@@ -211,9 +210,16 @@ final class AccessibilityManager {
             
             // Read new content
             let newString = pasteboard.string(forType: .string)
+            let observedChangeCount = pasteboard.changeCount
             
-            // Restore old content so we don't unexpectedly blow away the user's clipboard
-            Self.restorePasteboardSnapshot(snapshot, to: pasteboard)
+            // Only restore when Cmd+C actually produced a fresh clipboard value.
+            if Self.shouldRestorePasteboardSnapshot(
+                initialChangeCount: initialChangeCount,
+                observedChangeCount: observedChangeCount,
+                copiedText: newString
+            ) {
+                Self.restorePasteboardSnapshot(snapshot, to: pasteboard)
+            }
             
             let trimmed = newString?.trimmingCharacters(in: .whitespacesAndNewlines)
             let result = (trimmed?.isEmpty == false) ? trimmed : nil
@@ -280,6 +286,20 @@ final class AccessibilityManager {
         }
         
         pasteboard.writeObjects(restoredItems)
+    }
+
+    static func shouldRestorePasteboardSnapshot(
+        initialChangeCount: Int,
+        observedChangeCount: Int,
+        copiedText: String?
+    ) -> Bool {
+        guard let copiedText else { return false }
+        guard !copiedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return observedChangeCount != initialChangeCount
+    }
+
+    static func shouldAssumeFocusedTextInputContainsClickWhenBoundsUnavailable() -> Bool {
+        false
     }
     
     /// Check if the element at the specified screen coordinates is a text input field
@@ -382,10 +402,10 @@ final class AccessibilityManager {
             return contains
         }
         
-        // Fallback: If we couldn't get bounding boxes but we know it's a focused text input, 
-        // return true as a best-effort.
-        NSLog("[OpenFire-Debug] Could not get element bounds. Assuming true.")
-        return true
+        // Fallback: If we couldn't get bounding boxes but we know it's a focused text input,
+        // refuse to guess so clicks outside the field don't spuriously trigger empty-input UI.
+        NSLog("[OpenFire-Debug] Could not get element bounds. Refusing to assume hit.")
+        return Self.shouldAssumeFocusedTextInputContainsClickWhenBoundsUnavailable()
     }
     
     /// Check if the element at the specified screen coordinates is purely text (like a webpage paragraph, a text field, or static text label),

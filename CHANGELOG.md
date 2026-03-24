@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.3.10
+- 收紧前台应用抑制规则：Finder/Desktop 仍会被正确屏蔽，但不再误伤 `Telegram Desktop`、`Remote Desktop` 等名称包含 Desktop 的普通应用。
+- 优化选中文本回退复制链路：不再先清空系统剪贴板，只有在确实拿到新的复制结果时才恢复旧内容，减少剪贴板闪动和覆盖风险。
+- 收紧空输入点击判定：拿不到输入框边界时不再乐观假定命中，降低 `Paste / Clear` 弹窗误触发概率。
+- 优化升级体验：版本变更时默认不再自动 reset Accessibility 权限，只保留显式开启的兼容兜底开关。
+- 补充 `TextSelectionMonitor`、`AccessibilityManager` 与 `AppDelegate` 相关回归测试，覆盖以上行为调整。
+
+- Tightened frontmost-app suppression so Finder/Desktop remain blocked without incorrectly disabling normal apps whose names include “Desktop”, such as Telegram Desktop or Remote Desktop.
+- Improved the fallback copy path by no longer clearing the system pasteboard first and only restoring the previous clipboard when a fresh copied value is actually observed.
+- Made empty-input hit testing conservative when field bounds are unavailable, reducing accidental `Paste / Clear` popup triggers.
+- Improved upgrade UX by no longer resetting Accessibility permissions on every version change unless the explicit compatibility fallback is enabled.
+- Added regression coverage for the updated `TextSelectionMonitor`, `AccessibilityManager`, and `AppDelegate` behaviors.
+
 ## v0.3.9
 - 修复 Finder/Desktop 文件管理场景的误触发：将 app 拖入“应用程序”文件夹等安装动作不再触发圆环。
 - 为 Finder 与 Desktop(WindowManager) 前台场景补充抑制回归测试，防止文件拖拽安装再次误判为文本选择。

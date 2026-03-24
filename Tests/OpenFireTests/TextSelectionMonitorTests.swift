@@ -69,4 +69,15 @@ final class TextSelectionMonitorTests: XCTestCase {
             localizedName: "Visual Studio Code"
         ))
     }
+
+    func testShouldSuppressForFrontmostAppDoesNotSuppressAppsJustBecauseNameContainsDesktop() {
+        XCTAssertFalse(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "ru.keepcoder.Telegram",
+            localizedName: "Telegram Desktop"
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.microsoft.rdc.macos",
+            localizedName: "Remote Desktop"
+        ))
+    }
 }

@@ -125,6 +125,46 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertTrue(appDelegate.beginMenuDismiss())
     }
 
+    func testShouldResetAccessibilityPermissionsOnVersionChangeIsDisabledByDefault() {
+        XCTAssertFalse(
+            AppDelegate.shouldResetAccessibilityPermissionsOnVersionChange(
+                lastVersion: "0.3.8",
+                currentVersion: "0.3.9",
+                resetOptInEnabled: false
+            )
+        )
+    }
+
+    func testShouldResetAccessibilityPermissionsOnVersionChangeSkipsFirstLaunch() {
+        XCTAssertFalse(
+            AppDelegate.shouldResetAccessibilityPermissionsOnVersionChange(
+                lastVersion: nil,
+                currentVersion: "0.3.9",
+                resetOptInEnabled: true
+            )
+        )
+    }
+
+    func testShouldResetAccessibilityPermissionsOnVersionChangeSkipsSameVersion() {
+        XCTAssertFalse(
+            AppDelegate.shouldResetAccessibilityPermissionsOnVersionChange(
+                lastVersion: "0.3.9",
+                currentVersion: "0.3.9",
+                resetOptInEnabled: true
+            )
+        )
+    }
+
+    func testShouldResetAccessibilityPermissionsOnVersionChangeAllowsExplicitOptInFallback() {
+        XCTAssertTrue(
+            AppDelegate.shouldResetAccessibilityPermissionsOnVersionChange(
+                lastVersion: "0.3.8",
+                currentVersion: "0.3.9",
+                resetOptInEnabled: true
+            )
+        )
+    }
+
     private func makePlugin(name: String, identifier: String, actionType: String, actionContent: String? = nil) throws -> Plugin {
         let extraActionFields = actionContent.map { ",\($0)" } ?? ""
         let json = """
