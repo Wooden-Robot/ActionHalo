@@ -25,6 +25,17 @@ final class TextSelectionMonitor {
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    static func shouldSuppressForFileDragPasteboard(typeIdentifiers: [String]) -> Bool {
+        let normalizedTypes = Set(typeIdentifiers.map { $0.lowercased() })
+        let fileDragTypeHints: Set<String> = [
+            NSPasteboard.PasteboardType.fileURL.rawValue.lowercased(),
+            "nsfilenamespboardtype",
+            "com.apple.pasteboard.promised-file-url"
+        ]
+
+        return !normalizedTypes.intersection(fileDragTypeHints).isEmpty
+    }
+
     static func shouldSuppressForFrontmostApp(bundleID: String?, localizedName: String?) -> Bool {
         let normalizedBundleID = normalizeFrontmostAppIdentifier(bundleID)
         let normalizedName = normalizeFrontmostAppIdentifier(localizedName)
@@ -55,11 +66,36 @@ final class TextSelectionMonitor {
             normalizedBundleID.contains(hint) || normalizedName.contains(hint)
         }
     }
+
+    static func shouldSuppressForFrontmostApp(
+        bundleID: String?,
+        localizedName: String?,
+        isFocusedSelectionEditable: Bool
+    ) -> Bool {
+        if isFocusedSelectionEditable {
+            return false
+        }
+
+        return shouldSuppressForFrontmostApp(bundleID: bundleID, localizedName: localizedName)
+    }
+
+    static func isFileDragInProgress(
+        dragPasteboardChangeCountAtMouseDown: Int,
+        currentDragPasteboardChangeCount: Int,
+        typeIdentifiers: [String]
+    ) -> Bool {
+        guard currentDragPasteboardChangeCount != dragPasteboardChangeCountAtMouseDown else {
+            return false
+        }
+
+        return shouldSuppressForFileDragPasteboard(typeIdentifiers: typeIdentifiers)
+    }
     
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var isMonitoring = false
     private var mouseDownLocation: NSPoint?
+    private var mouseDownDragPasteboardChangeCount: Int?
     
     // AXObserver state for robust text selection detection
     private var currentObserver: AXObserver?
@@ -112,6 +148,7 @@ final class TextSelectionMonitor {
             
             if type == .leftMouseDown {
                 monitor.mouseDownLocation = NSEvent.mouseLocation
+                monitor.mouseDownDragPasteboardChangeCount = NSPasteboard(name: .drag).changeCount
             } else if type == .leftMouseUp {
                 monitor.handleMouseUp()
             }
@@ -160,6 +197,7 @@ final class TextSelectionMonitor {
         runLoopSource = nil
         isMonitoring = false
         mouseDownLocation = nil
+        mouseDownDragPasteboardChangeCount = nil
         
         NSLog("[OpenFire] Text selection monitoring stopped")
     }
@@ -177,10 +215,25 @@ final class TextSelectionMonitor {
         guard let downLocation = mouseDownLocation else { return }
         cancelPendingSelectionPresentation()
 
+        let dragPasteboard = NSPasteboard(name: .drag)
+        let dragPasteboardTypes = dragPasteboard.types?.map(\.rawValue) ?? []
+        let dragPasteboardChangeCountAtMouseDown = mouseDownDragPasteboardChangeCount ?? dragPasteboard.changeCount
+
+        if Self.isFileDragInProgress(
+            dragPasteboardChangeCountAtMouseDown: dragPasteboardChangeCountAtMouseDown,
+            currentDragPasteboardChangeCount: dragPasteboard.changeCount,
+            typeIdentifiers: dragPasteboardTypes
+        ) {
+            mouseDownLocation = nil
+            mouseDownDragPasteboardChangeCount = nil
+            return
+        }
+
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         if Self.shouldSuppressForFrontmostApp(
             bundleID: frontmostApp?.bundleIdentifier,
-            localizedName: frontmostApp?.localizedName
+            localizedName: frontmostApp?.localizedName,
+            isFocusedSelectionEditable: AccessibilityManager.shared.isFocusedSelectionEditable()
         ) {
             mouseDownLocation = nil
             return
@@ -209,6 +262,7 @@ final class TextSelectionMonitor {
         let distance = sqrt(dx * dx + dy * dy)
         
         mouseDownLocation = nil
+        mouseDownDragPasteboardChangeCount = nil
         
         // Clean up any pending observers or active tasks
         cleanupPendingTask()

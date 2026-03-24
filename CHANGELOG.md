@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.13
+- 调整 Accessibility 旧记录清理逻辑：首次安装、同版本重装或升级后只要当前权限实际缺失，就会在弹出权限引导前先同步 reset，避免用户进入辅助功能页时仍看到旧的 OpenFire 授权记录。
+- 修复文件拖拽与文本拖选的判定冲突：文件拖拽抑制现在要求拖拽 pasteboard 在本次手势内确实发生变化，避免旧的拖拽残留把正常文本选中一直误判成文件拖拽。
+- 修复 Finder 中文本编辑场景被过度拦截的问题：普通文件拖拽仍不触发圆环，但在 Finder 重命名文件名时选中文本会恢复正常触发。
+- 补充 `AppDelegate` 与 `TextSelectionMonitor` 回归测试，覆盖同版本重装缺权限、拖拽 pasteboard 变化判定和 Finder 可编辑文本焦点等场景。
+
+- Refined stale Accessibility-entry cleanup so first installs, same-version reinstalls, and upgrades all reset before prompting whenever access is actually missing, preventing old OpenFire entries from misleading users in System Settings.
+- Fixed the conflict between file-drag suppression and normal text selection by requiring the drag pasteboard to change during the current gesture before treating it as a file drag.
+- Restored radial-menu triggering for editable Finder rename fields while continuing to suppress ordinary file-drag interactions.
+- Added regression coverage for the updated `AppDelegate` and `TextSelectionMonitor` behaviors, including same-version reinstalls without access, drag-pasteboard change gating, and editable Finder text focus.
+
 ## v0.3.12
 - 修复文件拖拽误触发：将 `Dock` 也纳入文件管理场景抑制范围，避免拖动文件到桌面、Dock 或相关系统区域时错误弹出圆环。
 - 为 `TextSelectionMonitor` 补充 `Dock` 场景回归测试，同时保持 `Telegram Desktop`、`Remote Desktop` 等正常应用不受误伤。

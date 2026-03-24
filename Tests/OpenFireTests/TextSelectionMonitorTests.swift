@@ -20,6 +20,36 @@ final class TextSelectionMonitorTests: XCTestCase {
         XCTAssertTrue(TextSelectionMonitor.hasUsableClipboardText("hello"))
     }
 
+    func testShouldSuppressForFileDragPasteboardDetectsDraggedFiles() {
+        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFileDragPasteboard(
+            typeIdentifiers: [NSPasteboard.PasteboardType.fileURL.rawValue]
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFileDragPasteboard(
+            typeIdentifiers: ["NSFilenamesPboardType"]
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldSuppressForFileDragPasteboard(
+            typeIdentifiers: [NSPasteboard.PasteboardType.string.rawValue]
+        ))
+    }
+
+    func testIsFileDragInProgressRequiresPasteboardChangeDuringGesture() {
+        XCTAssertTrue(TextSelectionMonitor.isFileDragInProgress(
+            dragPasteboardChangeCountAtMouseDown: 1,
+            currentDragPasteboardChangeCount: 2,
+            typeIdentifiers: [NSPasteboard.PasteboardType.fileURL.rawValue]
+        ))
+        XCTAssertFalse(TextSelectionMonitor.isFileDragInProgress(
+            dragPasteboardChangeCountAtMouseDown: 2,
+            currentDragPasteboardChangeCount: 2,
+            typeIdentifiers: [NSPasteboard.PasteboardType.fileURL.rawValue]
+        ))
+        XCTAssertFalse(TextSelectionMonitor.isFileDragInProgress(
+            dragPasteboardChangeCountAtMouseDown: 1,
+            currentDragPasteboardChangeCount: 2,
+            typeIdentifiers: [NSPasteboard.PasteboardType.string.rawValue]
+        ))
+    }
+
     func testSelectionTriggerRequiresActualDragDistance() {
         XCTAssertFalse(TextSelectionMonitor.shouldTreatMouseInteractionAsSelectionTrigger(distance: 0, minimumDragDistance: 5))
         XCTAssertFalse(TextSelectionMonitor.shouldTreatMouseInteractionAsSelectionTrigger(distance: 4.99, minimumDragDistance: 5))
@@ -82,6 +112,19 @@ final class TextSelectionMonitorTests: XCTestCase {
         XCTAssertFalse(TextSelectionMonitor.shouldSuppressForFrontmostApp(
             bundleID: "com.microsoft.rdc.macos",
             localizedName: "Remote Desktop"
+        ))
+    }
+
+    func testShouldSuppressForFrontmostAppAllowsEditableTextEvenInFinderContext() {
+        XCTAssertFalse(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.apple.finder",
+            localizedName: "Finder",
+            isFocusedSelectionEditable: true
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.apple.finder",
+            localizedName: "Finder",
+            isFocusedSelectionEditable: false
         ))
     }
 }

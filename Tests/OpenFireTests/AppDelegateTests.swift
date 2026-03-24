@@ -136,12 +136,23 @@ final class AppDelegateTests: XCTestCase {
         )
     }
 
-    func testShouldResetAccessibilityPermissionsOnVersionChangeSkipsFirstLaunch() {
-        XCTAssertFalse(
+    func testShouldResetAccessibilityPermissionsOnVersionChangeAllowsExplicitOptInOnFirstLaunch() {
+        XCTAssertTrue(
             AppDelegate.shouldResetAccessibilityPermissionsOnVersionChange(
                 lastVersion: nil,
                 currentVersion: "0.3.9",
                 resetOptInEnabled: true,
+                hasAccessibilityPermission: false
+            )
+        )
+    }
+
+    func testShouldResetAccessibilityPermissionsOnVersionChangeResetsFirstLaunchWhenPermissionIsMissing() {
+        XCTAssertTrue(
+            AppDelegate.shouldResetAccessibilityPermissionsOnVersionChange(
+                lastVersion: nil,
+                currentVersion: "0.3.12",
+                resetOptInEnabled: false,
                 hasAccessibilityPermission: false
             )
         )
@@ -153,7 +164,7 @@ final class AppDelegateTests: XCTestCase {
                 lastVersion: "0.3.9",
                 currentVersion: "0.3.9",
                 resetOptInEnabled: true,
-                hasAccessibilityPermission: false
+                hasAccessibilityPermission: true
             )
         )
     }
@@ -174,6 +185,17 @@ final class AppDelegateTests: XCTestCase {
             AppDelegate.shouldResetAccessibilityPermissionsOnVersionChange(
                 lastVersion: "0.3.9",
                 currentVersion: "0.3.10",
+                resetOptInEnabled: false,
+                hasAccessibilityPermission: false
+            )
+        )
+    }
+
+    func testShouldResetAccessibilityPermissionsOnSameVersionWhenPermissionIsMissing() {
+        XCTAssertTrue(
+            AppDelegate.shouldResetAccessibilityPermissionsOnVersionChange(
+                lastVersion: "0.3.12",
+                currentVersion: "0.3.12",
                 resetOptInEnabled: false,
                 hasAccessibilityPermission: false
             )
