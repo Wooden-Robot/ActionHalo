@@ -50,6 +50,25 @@ final class TextSelectionMonitorTests: XCTestCase {
         ))
     }
 
+    func testDidFrontmostWindowMoveDetectsWindowDragByFrameChange() {
+        let before = TextSelectionMonitor.FrontmostWindowSnapshot(
+            ownerPID: 42,
+            bounds: CGRect(x: 100, y: 100, width: 800, height: 600)
+        )
+        let afterMoved = TextSelectionMonitor.FrontmostWindowSnapshot(
+            ownerPID: 42,
+            bounds: CGRect(x: 160, y: 140, width: 800, height: 600)
+        )
+        let afterSame = TextSelectionMonitor.FrontmostWindowSnapshot(
+            ownerPID: 42,
+            bounds: CGRect(x: 101, y: 100, width: 800, height: 600)
+        )
+
+        XCTAssertTrue(TextSelectionMonitor.didFrontmostWindowMove(from: before, to: afterMoved))
+        XCTAssertFalse(TextSelectionMonitor.didFrontmostWindowMove(from: before, to: afterSame))
+        XCTAssertFalse(TextSelectionMonitor.didFrontmostWindowMove(from: before, to: nil))
+    }
+
     func testSelectionTriggerRequiresActualDragDistance() {
         XCTAssertFalse(TextSelectionMonitor.shouldTreatMouseInteractionAsSelectionTrigger(distance: 0, minimumDragDistance: 5))
         XCTAssertFalse(TextSelectionMonitor.shouldTreatMouseInteractionAsSelectionTrigger(distance: 4.99, minimumDragDistance: 5))
@@ -103,18 +122,82 @@ final class TextSelectionMonitorTests: XCTestCase {
             rangeLocation: nil,
             rangeLength: nil
         )
+        let changedRangeSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: nil,
+            rangeLocation: 4,
+            rangeLength: 8,
+            hasReadableSelectedRangeAttribute: true
+        )
 
         XCTAssertTrue(TextSelectionMonitor.shouldHandleCopiedDragSelection(
             copiedText: "selected",
             snapshotAtMouseDown: unreadableSnapshot,
+            currentSnapshot: nil,
+            frontmostBundleID: nil,
             startedInTextContext: true,
-            endedInTextContext: false
+            endedInTextContext: false,
+            startedInsideFocusedElementBounds: false,
+            endedInsideFocusedElementBounds: false
         ))
         XCTAssertFalse(TextSelectionMonitor.shouldHandleCopiedDragSelection(
             copiedText: "selected",
             snapshotAtMouseDown: unreadableSnapshot,
+            currentSnapshot: nil,
+            frontmostBundleID: nil,
             startedInTextContext: false,
-            endedInTextContext: false
+            endedInTextContext: false,
+            startedInsideFocusedElementBounds: false,
+            endedInsideFocusedElementBounds: false
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "selected",
+            snapshotAtMouseDown: unreadableSnapshot,
+            currentSnapshot: changedRangeSnapshot,
+            frontmostBundleID: nil,
+            startedInTextContext: false,
+            endedInTextContext: false,
+            startedInsideFocusedElementBounds: false,
+            endedInsideFocusedElementBounds: false
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "   \n",
+            snapshotAtMouseDown: unreadableSnapshot,
+            currentSnapshot: changedRangeSnapshot,
+            frontmostBundleID: nil,
+            startedInTextContext: false,
+            endedInTextContext: false,
+            startedInsideFocusedElementBounds: false,
+            endedInsideFocusedElementBounds: false
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "selected",
+            snapshotAtMouseDown: unreadableSnapshot,
+            currentSnapshot: nil,
+            frontmostBundleID: "ru.keepcoder.Telegram",
+            startedInTextContext: false,
+            endedInTextContext: false,
+            startedInsideFocusedElementBounds: false,
+            endedInsideFocusedElementBounds: false
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "selected",
+            snapshotAtMouseDown: unreadableSnapshot,
+            currentSnapshot: nil,
+            frontmostBundleID: "ru.keepcoder.Telegram",
+            startedInTextContext: false,
+            endedInTextContext: false,
+            startedInsideFocusedElementBounds: true,
+            endedInsideFocusedElementBounds: true
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "selected",
+            snapshotAtMouseDown: unreadableSnapshot,
+            currentSnapshot: nil,
+            frontmostBundleID: "com.apple.TextEdit",
+            startedInTextContext: false,
+            endedInTextContext: false,
+            startedInsideFocusedElementBounds: true,
+            endedInsideFocusedElementBounds: true
         ))
     }
 
@@ -130,14 +213,22 @@ final class TextSelectionMonitorTests: XCTestCase {
         XCTAssertFalse(TextSelectionMonitor.shouldHandleCopiedDragSelection(
             copiedText: "selected",
             snapshotAtMouseDown: readableSnapshot,
+            currentSnapshot: readableSnapshot,
+            frontmostBundleID: "ru.keepcoder.Telegram",
             startedInTextContext: true,
-            endedInTextContext: true
+            endedInTextContext: true,
+            startedInsideFocusedElementBounds: true,
+            endedInsideFocusedElementBounds: true
         ))
         XCTAssertTrue(TextSelectionMonitor.shouldHandleCopiedDragSelection(
             copiedText: "new selection",
             snapshotAtMouseDown: readableSnapshot,
+            currentSnapshot: readableSnapshot,
+            frontmostBundleID: "ru.keepcoder.Telegram",
             startedInTextContext: true,
-            endedInTextContext: false
+            endedInTextContext: false,
+            startedInsideFocusedElementBounds: true,
+            endedInsideFocusedElementBounds: true
         ))
     }
 

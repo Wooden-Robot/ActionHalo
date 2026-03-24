@@ -472,9 +472,30 @@ final class AccessibilityManager {
         false
     }
 
+    static func isLikelyRichTextSelectionHost(bundleID: String?) -> Bool {
+        guard let bundleID else { return false }
+        let normalizedBundleID = bundleID.lowercased()
+        let hostHints = [
+            "telegram",
+            "electron",
+            "discord",
+            "obsidian",
+            "chrome",
+            "chromium",
+            "brave",
+            "edge",
+            "code",
+            "codex",
+            "webview"
+        ]
+
+        return hostHints.contains(where: normalizedBundleID.contains)
+    }
+
     static func shouldTreatFocusedRoleAsTextSelectionContext(
         role: String,
-        ancestorRoles: [String]
+        ancestorRoles: [String],
+        bundleID: String?
     ) -> Bool {
         let allowedRoles = [
             kAXStaticTextRole,
@@ -494,10 +515,18 @@ final class AccessibilityManager {
             kAXApplicationRole
         ]
 
+        if role == "AXGroup", let bundleID {
+            let electronHeuristics = ["electron", "desktop", "telegram", "discord", "obsidian", "code"]
+            let lowerID = bundleID.lowercased()
+            if electronHeuristics.contains(where: lowerID.contains) {
+                return true
+            }
+        }
+
         return shouldTreatElementAsText(
             role: role,
             ancestorRoles: ancestorRoles,
-            bundleID: nil,
+            bundleID: bundleID,
             allowedRoles: allowedRoles,
             forbiddenRoles: forbiddenRoles
         )
@@ -517,12 +546,50 @@ final class AccessibilityManager {
               let role = roleValue as? String else { return false }
 
         let ancestorRoles = ancestorRoles(for: focusedElement)
+        let bundleID = getFocusedAppBundleID()
         guard Self.shouldTreatFocusedRoleAsTextSelectionContext(
             role: role,
-            ancestorRoles: ancestorRoles
+            ancestorRoles: ancestorRoles,
+            bundleID: bundleID
         ) else {
             return false
         }
+
+        var positionValue: AnyObject?
+        var sizeValue: AnyObject?
+        guard AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXPositionAttribute as CFString,
+            &positionValue
+        ) == .success,
+              AXUIElementCopyAttributeValue(
+                focusedElement,
+                kAXSizeAttribute as CFString,
+                &sizeValue
+              ) == .success,
+              let positionValue,
+              let sizeValue,
+              CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              CFGetTypeID(sizeValue) == AXValueGetTypeID() else {
+            return false
+        }
+
+        let positionAXValue = unsafeBitCast(positionValue, to: AXValue.self)
+        let sizeAXValue = unsafeBitCast(sizeValue, to: AXValue.self)
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionAXValue, .cgPoint, &position),
+              AXValueGetValue(sizeAXValue, .cgSize, &size) else {
+            return false
+        }
+
+        return CGRect(origin: position, size: size).contains(axPoint)
+    }
+
+    func isPointInsideFocusedElementBounds(at point: NSPoint) -> Bool {
+        guard isAccessibilityEnabled else { return false }
+        guard let axPoint = accessibilityScreenPoint(for: point) else { return false }
+        guard let focusedElement = getFocusedElement() else { return false }
 
         var positionValue: AnyObject?
         var sizeValue: AnyObject?

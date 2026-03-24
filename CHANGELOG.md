@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.15
+- 修复 Telegram 文本选择回归：恢复 Telegram 正文拖选后的圆环触发，同时继续拦截拖拽窗口导致的误触发。
+- 将“拖拽窗口误触发”的判断从脆弱的 AX 文本命中切换为前台窗口位移检测；只要本次手势导致前台窗口真的移动，就直接视为窗口拖拽并抑制。
+- 为富文本宿主补充更稳的焦点边界辅助判定，并为 Telegram 保留 `Cmd+C` 盲区 fallback，避免其在鼠标抬起瞬间拿不到 AX 命中/焦点时丢失正常触发能力。
+- 补充 `TextSelectionMonitor` 与 `AccessibilityManager` 回归测试，覆盖窗口位移检测、Telegram fallback 与富文本焦点上下文判定。
+
+- Restored Telegram text-selection triggering so dragging over Telegram message text brings up the radial menu again while window-drag false positives remain suppressed.
+- Replaced the fragile AX-hit-test-based window-drag guard with frontmost-window movement detection, treating any gesture that actually moves the active window as a window drag and suppressing it immediately.
+- Added a more resilient focused-element bounds signal for rich-text hosts and kept a Telegram-specific `Cmd+C` blind fallback so selection still works even when Telegram exposes no usable AX hit/focus element at mouse-up time.
+- Added regression coverage for frontmost-window movement detection, Telegram fallback gating, and rich-text focused-context handling in `TextSelectionMonitor` and `AccessibilityManager`.
+
 ## v0.3.14
 - 修复网页与 WebView 富文本场景的文本选择回归：恢复 Chrome、Codex App、Telegram 及同类 Electron/WebView 应用中的选中文本触发，同时保持拖窗口、拖文件等非文本手势不再误触发圆环。
 - 将网页正文命中从按应用名猜测改为按 `AXBrowser`、`AXWebArea`、`AXDocument` 等富文本上下文识别，并为富文本 `AXGroup` 容器补充通用判定，减少对单个应用白名单的依赖。

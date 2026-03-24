@@ -2,6 +2,11 @@ import Cocoa
 
 /// Monitors global mouse events to detect text selection
 final class TextSelectionMonitor {
+    struct FrontmostWindowSnapshot: Equatable {
+        let ownerPID: pid_t
+        let bounds: CGRect
+    }
+
     private static let suppressedFrontmostBundleIDs: Set<String> = [
         "comopenfireapp",
         "comappledock",
@@ -90,17 +95,65 @@ final class TextSelectionMonitor {
 
         return shouldSuppressForFileDragPasteboard(typeIdentifiers: typeIdentifiers)
     }
+
+    static func currentFrontmostWindowSnapshot(
+        frontmostApplication: NSRunningApplication? = NSWorkspace.shared.frontmostApplication,
+        windowInfoList: [[String: Any]]? = nil
+    ) -> FrontmostWindowSnapshot? {
+        guard let frontmostApplication else { return nil }
+        let windows = windowInfoList ?? ((CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? [])
+
+        for window in windows {
+            guard let ownerPID = window[kCGWindowOwnerPID as String] as? pid_t,
+                  ownerPID == frontmostApplication.processIdentifier else {
+                continue
+            }
+
+            let layer = window[kCGWindowLayer as String] as? Int ?? 0
+            guard layer == 0 else { continue }
+
+            guard let boundsDictionary = window[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDictionary) else {
+                continue
+            }
+
+            guard bounds.width > 40, bounds.height > 40 else { continue }
+
+            return FrontmostWindowSnapshot(ownerPID: ownerPID, bounds: bounds)
+        }
+
+        return nil
+    }
+
+    static func didFrontmostWindowMove(
+        from previous: FrontmostWindowSnapshot?,
+        to current: FrontmostWindowSnapshot?,
+        tolerance: CGFloat = 2
+    ) -> Bool {
+        guard let previous, let current, previous.ownerPID == current.ownerPID else {
+            return false
+        }
+
+        return abs(previous.bounds.minX - current.bounds.minX) > tolerance ||
+            abs(previous.bounds.minY - current.bounds.minY) > tolerance ||
+            abs(previous.bounds.width - current.bounds.width) > tolerance ||
+            abs(previous.bounds.height - current.bounds.height) > tolerance
+    }
     
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var isMonitoring = false
     private var mouseDownLocation: NSPoint?
     private var mouseDownDragPasteboardChangeCount: Int?
+    private var mouseDownWindowSnapshot: FrontmostWindowSnapshot?
     private var mouseDownSelectionSnapshot: AccessibilityManager.SelectionSnapshot?
     private var mouseDownStartedInTextContext = false
+    private var mouseDownInsideFocusedElementBounds = false
     private var pendingSelectionBaselineSnapshot: AccessibilityManager.SelectionSnapshot?
     private var pendingSelectionStartedInTextContext = false
     private var pendingSelectionEndedInTextContext = false
+    private var pendingSelectionStartedInsideFocusedElementBounds = false
+    private var pendingSelectionEndedInsideFocusedElementBounds = false
     
     // AXObserver state for robust text selection detection
     private var currentObserver: AXObserver?
@@ -155,8 +208,10 @@ final class TextSelectionMonitor {
                 let mouseLocation = NSEvent.mouseLocation
                 monitor.mouseDownLocation = mouseLocation
                 monitor.mouseDownDragPasteboardChangeCount = NSPasteboard(name: .drag).changeCount
+                monitor.mouseDownWindowSnapshot = TextSelectionMonitor.currentFrontmostWindowSnapshot()
                 monitor.mouseDownSelectionSnapshot = AccessibilityManager.shared.currentSelectionSnapshot()
                 monitor.mouseDownStartedInTextContext = TextSelectionMonitor.isTextSelectionContext(at: mouseLocation)
+                monitor.mouseDownInsideFocusedElementBounds = AccessibilityManager.shared.isPointInsideFocusedElementBounds(at: mouseLocation)
             } else if type == .leftMouseUp {
                 monitor.handleMouseUp()
             }
@@ -206,11 +261,15 @@ final class TextSelectionMonitor {
         isMonitoring = false
         mouseDownLocation = nil
         mouseDownDragPasteboardChangeCount = nil
+        mouseDownWindowSnapshot = nil
         mouseDownSelectionSnapshot = nil
         mouseDownStartedInTextContext = false
+        mouseDownInsideFocusedElementBounds = false
         pendingSelectionBaselineSnapshot = nil
         pendingSelectionStartedInTextContext = false
         pendingSelectionEndedInTextContext = false
+        pendingSelectionStartedInsideFocusedElementBounds = false
+        pendingSelectionEndedInsideFocusedElementBounds = false
         
         NSLog("[OpenFire] Text selection monitoring stopped")
     }
@@ -243,16 +302,31 @@ final class TextSelectionMonitor {
     static func shouldHandleCopiedDragSelection(
         copiedText: String?,
         snapshotAtMouseDown: AccessibilityManager.SelectionSnapshot?,
+        currentSnapshot: AccessibilityManager.SelectionSnapshot?,
+        frontmostBundleID: String?,
         startedInTextContext: Bool,
-        endedInTextContext: Bool
+        endedInTextContext: Bool,
+        startedInsideFocusedElementBounds: Bool,
+        endedInsideFocusedElementBounds: Bool
     ) -> Bool {
         guard let copiedText else { return false }
         let trimmed = copiedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        guard startedInTextContext || endedInTextContext else { return false }
-
+        let hasTextContext = startedInTextContext || endedInTextContext
+        let hasFocusedBoundsContext =
+            AccessibilityManager.isLikelyRichTextSelectionHost(bundleID: frontmostBundleID) &&
+            (startedInsideFocusedElementBounds || endedInsideFocusedElementBounds)
+        let hasTelegramBlindFallback = frontmostBundleID?.lowercased().contains("telegram") == true
+        let hasSelectionSignal =
+            (snapshotAtMouseDown?.isReadable == true || currentSnapshot?.isReadable == true) &&
+            AccessibilityManager.didSelectionChange(from: snapshotAtMouseDown, to: currentSnapshot)
+        guard hasTextContext || hasSelectionSignal || hasFocusedBoundsContext || hasTelegramBlindFallback else { return false }
         if let snapshotAtMouseDown, snapshotAtMouseDown.canReadSelectedTextViaAccessibility {
-            return snapshotAtMouseDown.normalizedText != trimmed
+            if let currentSnapshot, currentSnapshot.canReadSelectedTextViaAccessibility {
+                return snapshotAtMouseDown.normalizedText != trimmed
+            }
+
+            return hasSelectionSignal || hasFocusedBoundsContext || hasTelegramBlindFallback
         }
 
         return true
@@ -265,6 +339,7 @@ final class TextSelectionMonitor {
         let dragPasteboard = NSPasteboard(name: .drag)
         let dragPasteboardTypes = dragPasteboard.types?.map(\.rawValue) ?? []
         let dragPasteboardChangeCountAtMouseDown = mouseDownDragPasteboardChangeCount ?? dragPasteboard.changeCount
+        let windowSnapshotAtMouseDown = mouseDownWindowSnapshot
 
         if Self.isFileDragInProgress(
             dragPasteboardChangeCountAtMouseDown: dragPasteboardChangeCountAtMouseDown,
@@ -273,8 +348,10 @@ final class TextSelectionMonitor {
         ) {
             mouseDownLocation = nil
             mouseDownDragPasteboardChangeCount = nil
+            mouseDownWindowSnapshot = nil
             mouseDownSelectionSnapshot = nil
             mouseDownStartedInTextContext = false
+            mouseDownInsideFocusedElementBounds = false
             return
         }
 
@@ -286,8 +363,10 @@ final class TextSelectionMonitor {
         ) {
             mouseDownLocation = nil
             mouseDownDragPasteboardChangeCount = nil
+            mouseDownWindowSnapshot = nil
             mouseDownSelectionSnapshot = nil
             mouseDownStartedInTextContext = false
+            mouseDownInsideFocusedElementBounds = false
             return
         }
         
@@ -297,8 +376,10 @@ final class TextSelectionMonitor {
             if excluded.contains(bundleId) {
                 mouseDownLocation = nil
                 mouseDownDragPasteboardChangeCount = nil
+                mouseDownWindowSnapshot = nil
                 mouseDownSelectionSnapshot = nil
                 mouseDownStartedInTextContext = false
+                mouseDownInsideFocusedElementBounds = false
                 return
             }
         }
@@ -308,14 +389,31 @@ final class TextSelectionMonitor {
         if NSApplication.shared.windows.contains(where: { $0 is RadialMenuWindow && $0.isVisible }) {
             mouseDownLocation = nil
             mouseDownDragPasteboardChangeCount = nil
+            mouseDownWindowSnapshot = nil
             mouseDownSelectionSnapshot = nil
             mouseDownStartedInTextContext = false
+            mouseDownInsideFocusedElementBounds = false
+            return
+        }
+
+        if Self.didFrontmostWindowMove(
+            from: windowSnapshotAtMouseDown,
+            to: Self.currentFrontmostWindowSnapshot(frontmostApplication: frontmostApp)
+        ) {
+            mouseDownLocation = nil
+            mouseDownDragPasteboardChangeCount = nil
+            mouseDownWindowSnapshot = nil
+            mouseDownSelectionSnapshot = nil
+            mouseDownStartedInTextContext = false
+            mouseDownInsideFocusedElementBounds = false
             return
         }
         
         let upLocation = NSEvent.mouseLocation
         let startedInTextContext = mouseDownStartedInTextContext
         let endedInTextContext = Self.isTextSelectionContext(at: upLocation)
+        let startedInsideFocusedElementBounds = mouseDownInsideFocusedElementBounds
+        let endedInsideFocusedElementBounds = AccessibilityManager.shared.isPointInsideFocusedElementBounds(at: upLocation)
         
         let dx = upLocation.x - downLocation.x
         let dy = upLocation.y - downLocation.y
@@ -324,8 +422,10 @@ final class TextSelectionMonitor {
         
         mouseDownLocation = nil
         mouseDownDragPasteboardChangeCount = nil
+        mouseDownWindowSnapshot = nil
         mouseDownSelectionSnapshot = nil
         mouseDownStartedInTextContext = false
+        mouseDownInsideFocusedElementBounds = false
         
         // Clean up any pending observers or active tasks
         cleanupPendingTask()
@@ -342,6 +442,8 @@ final class TextSelectionMonitor {
             self.pendingSelectionBaselineSnapshot = snapshotAtMouseDown
             self.pendingSelectionStartedInTextContext = startedInTextContext
             self.pendingSelectionEndedInTextContext = endedInTextContext
+            self.pendingSelectionStartedInsideFocusedElementBounds = startedInsideFocusedElementBounds
+            self.pendingSelectionEndedInsideFocusedElementBounds = endedInsideFocusedElementBounds
             
             // Wait a tiny bit then do a hybrid check: Observer + Polling
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
@@ -470,8 +572,12 @@ final class TextSelectionMonitor {
                         let copiedTextAllowed = Self.shouldHandleCopiedDragSelection(
                             copiedText: copiedText,
                             snapshotAtMouseDown: self.pendingSelectionBaselineSnapshot,
+                            currentSnapshot: AccessibilityManager.shared.currentSelectionSnapshot(),
+                            frontmostBundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
                             startedInTextContext: self.pendingSelectionStartedInTextContext,
-                            endedInTextContext: self.pendingSelectionEndedInTextContext
+                            endedInTextContext: self.pendingSelectionEndedInTextContext,
+                            startedInsideFocusedElementBounds: self.pendingSelectionStartedInsideFocusedElementBounds,
+                            endedInsideFocusedElementBounds: self.pendingSelectionEndedInsideFocusedElementBounds
                         )
                         if copiedTextAllowed, let text = copiedText, !text.isEmpty {
                             NSLog("[OpenFire-Debug] Text found via Cmd+C Fallback after 0.15s.")
@@ -522,6 +628,8 @@ final class TextSelectionMonitor {
         pendingSelectionBaselineSnapshot = nil
         pendingSelectionStartedInTextContext = false
         pendingSelectionEndedInTextContext = false
+        pendingSelectionStartedInsideFocusedElementBounds = false
+        pendingSelectionEndedInsideFocusedElementBounds = false
         
         observationTimeout?.cancel()
         observationTimeout = nil

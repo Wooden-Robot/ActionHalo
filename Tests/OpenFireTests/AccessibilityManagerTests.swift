@@ -136,6 +136,16 @@ final class AccessibilityManagerTests: XCTestCase {
         XCTAssertTrue(result)
     }
 
+    func testShouldTreatFocusedRoleAsTextSelectionContextAllowsTelegramStyleAXGroup() {
+        let result = AccessibilityManager.shouldTreatFocusedRoleAsTextSelectionContext(
+            role: "AXGroup",
+            ancestorRoles: ["AXScrollArea", "AXWindow"],
+            bundleID: "ru.keepcoder.Telegram"
+        )
+
+        XCTAssertTrue(result)
+    }
+
     func testShouldTreatElementAsTextRejectsGenericAXGroupInsideStructuralContainers() {
         let result = AccessibilityManager.shouldTreatElementAsText(
             role: "AXGroup",
