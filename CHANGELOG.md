@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.9
+- 修复 Finder/Desktop 文件管理场景的误触发：将 app 拖入“应用程序”文件夹等安装动作不再触发圆环。
+- 为 Finder 与 Desktop(WindowManager) 前台场景补充抑制回归测试，防止文件拖拽安装再次误判为文本选择。
+
+- Fixed false positives in Finder/Desktop file-management contexts so drag-install flows such as dropping an app into Applications no longer trigger the radial menu.
+- Added regression coverage for Finder and Desktop (WindowManager) frontmost suppression to prevent file drag installs from being misclassified as text selection.
+
 ## v0.3.8
 - 修复截图工具兼容性：当前台应用是系统截图、Snipaste、CleanShot X、Shottr、Xnapper、Snagit、PixPin、iShot 等抓屏工具时，OpenFire 不再介入鼠标抬起后的选区/输入框检测，避免截图界面因为鼠标移动或状态切换被打断。
 - 同时屏蔽 OpenFire 自身作为前台应用时的全局触发检测，减少自干扰。

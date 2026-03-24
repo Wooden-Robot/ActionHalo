@@ -21,6 +21,19 @@ final class TextSelectionMonitor {
             return true
         }
 
+        let knownFileManagerHints = [
+            "comapplefinder",
+            "comapplewindowmanager",
+            "finder",
+            "desktop"
+        ]
+
+        if knownFileManagerHints.contains(where: { hint in
+            normalizedBundleID.contains(hint) || normalizedName.contains(hint)
+        }) {
+            return true
+        }
+
         let knownScreenCaptureHints = [
             "comapplescreencaptureui",
             "comapplescreenshot",

@@ -48,6 +48,17 @@ final class TextSelectionMonitorTests: XCTestCase {
         ))
     }
 
+    func testShouldSuppressForFrontmostAppSuppressesFinderAndDesktopContexts() {
+        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.apple.finder",
+            localizedName: "Finder"
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.apple.WindowManager",
+            localizedName: "Desktop"
+        ))
+    }
+
     func testShouldSuppressForFrontmostAppKeepsRegularEditorsEnabled() {
         XCTAssertFalse(TextSelectionMonitor.shouldSuppressForFrontmostApp(
             bundleID: "com.apple.TextEdit",
