@@ -2,7 +2,7 @@ import XCTest
 @testable import OpenFire
 
 final class AppDelegateTests: XCTestCase {
-    func testRadialMenuPluginsExcludesBuiltInPaste() throws {
+    func testRadialMenuPluginsIncludesBuiltInPaste() throws {
         let paste = try makePlugin(
             name: "Paste",
             identifier: "com.openfire.builtin.paste",
@@ -17,7 +17,7 @@ final class AppDelegateTests: XCTestCase {
 
         let filtered = AppDelegate.radialMenuPlugins(from: [paste, search])
 
-        XCTAssertEqual(filtered.map(\.id), ["com.openfire.search"])
+        XCTAssertEqual(filtered.map(\.id), ["com.openfire.builtin.paste", "com.openfire.search"])
     }
 
     func testRadialMenuPluginsKeepsNonPastePluginsInOrder() throws {
@@ -84,6 +84,31 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertTrue(
             AppDelegate.isPluginExecutable(
                 delete,
+                text: "selected",
+                appBundleID: nil,
+                isSelectionEditable: true
+            )
+        )
+    }
+
+    func testPastePluginRequiresEditableSelectionToBeExecutable() throws {
+        let paste = try makePlugin(
+            name: "Paste",
+            identifier: "com.openfire.builtin.paste",
+            actionType: "paste"
+        )
+
+        XCTAssertFalse(
+            AppDelegate.isPluginExecutable(
+                paste,
+                text: "selected",
+                appBundleID: nil,
+                isSelectionEditable: false
+            )
+        )
+        XCTAssertTrue(
+            AppDelegate.isPluginExecutable(
+                paste,
                 text: "selected",
                 appBundleID: nil,
                 isSelectionEditable: true

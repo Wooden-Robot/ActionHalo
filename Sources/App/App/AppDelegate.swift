@@ -2,8 +2,8 @@ import Cocoa
 
 /// Main application delegate — orchestrates all components
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    static let radialMenuExcludedPluginIDs: Set<String> = ["com.openfire.builtin.paste"]
     static let deletePluginID = "com.openfire.delete"
+    static let pastePluginID = "com.openfire.builtin.paste"
     static let menuDismissEventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .keyDown]
     static let resetAccessibilityOnUpdateKey = "ResetAccessibilityPermissionsOnUpdate"
     
@@ -22,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     static func emptyInputPastePlugin(from plugins: [Plugin], appBundleID: String?) -> Plugin? {
         plugins.first { plugin in
-            plugin.id == "com.openfire.builtin.paste" &&
+            plugin.id == pastePluginID &&
             plugin.isEnabled &&
             PluginManager.shared.isPluginEnabled(plugin.id, forAppBundleID: appBundleID)
         }
@@ -431,7 +431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     static func radialMenuPlugins(from plugins: [Plugin]) -> [Plugin] {
-        plugins.filter { !radialMenuExcludedPluginIDs.contains($0.id) }
+        plugins
     }
 
     static func isPluginExecutable(_ plugin: Plugin, text: String, appBundleID: String?, isSelectionEditable: Bool) -> Bool {
@@ -439,6 +439,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard matchesContext else { return false }
 
         if plugin.id == deletePluginID {
+            return isSelectionEditable
+        }
+
+        if plugin.id == pastePluginID {
             return isSelectionEditable
         }
 

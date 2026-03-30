@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.16
+- 允许内置 `Paste` 动作出现在主圆环中，不再只通过空输入框场景下的 `Paste / Clear` 胶囊入口访问。
+- 将 `Paste` 的可执行条件收紧为“当前焦点必须可编辑”，这样它在非输入上下文里仍可见但会保持灰态，避免误导点击。
+- 同步更新中英文 README，对 `Paste` 在圆环与空输入快捷入口中的分工做了重新说明。
+- 补充 `AppDelegate` 回归测试，覆盖 `Paste` 进入圆环以及其可执行条件。
+
+- Allowed the built-in `Paste` action to appear in the main radial menu instead of being restricted to the empty-input `Paste / Clear` capsule.
+- Tightened `Paste` executability so it only becomes active when the current focus is editable, keeping it visible but disabled in non-editable contexts.
+- Updated the English and Chinese READMEs to describe the new relationship between radial-menu paste and the empty-input shortcut.
+- Added `AppDelegate` regression coverage for paste-in-ring behavior and its executability rules.
+
 ## v0.3.15
 - 修复 Telegram 文本选择回归：恢复 Telegram 正文拖选后的圆环触发，同时继续拦截拖拽窗口导致的误触发。
 - 将“拖拽窗口误触发”的判断从脆弱的 AX 文本命中切换为前台窗口位移检测；只要本次手势导致前台窗口真的移动，就直接视为窗口拖拽并抑制。

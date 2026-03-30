@@ -40,10 +40,10 @@ Adjust the radial menu's **Ring Opacity** and **Max Items limit** (6, 8, 12, or 
 Supports custom `.openfireext` plugin packages. Features double-click installation, background thread asynchronous loading, and a package management mechanism supporting deletion and disabling.
 
 🧠 **Smart Trigger Context**
-Rewritten Accessibility recognition logic at the foundation. Text-selection actions stay focused on the selected content itself, while input-only actions such as paste are routed into editable-field shortcuts instead of polluting the main wheel.
+Rewritten Accessibility recognition logic at the foundation. Text-selection actions stay focused on the selected content itself, while input-related actions still respect whether the current focus is actually editable.
 
 ✂️ **Cleaner Quick Actions**
-When OpenFire detects that you clicked into an editable field and there is no active text selection, it can show a lightweight `Paste / Clear` capsule near the cursor for quick paste access or for clearing the current clipboard contents. When the clipboard is empty, this shortcut does not appear. This is also where the built-in `Paste` action now lives by default.
+When OpenFire detects that you clicked into an editable field and there is no active text selection, it can show a lightweight `Paste / Clear` capsule near the cursor for quick paste access or for clearing the current clipboard contents. When the clipboard is empty, this shortcut does not appear. The built-in `Paste` action can also appear in the radial menu for editable selections.
 
 🚫 **Customizable App Blacklist**
 Built-in automatic blacklist management UI. Supports dragging and dropping apps, or browsing via the `+` button to precisely block specific software.
@@ -151,7 +151,7 @@ OpenFire's true power lies in its plugin system. Plugins exist as `.openfireext`
 
 These default built-ins are part of OpenFire itself. They can be enabled, disabled, reordered, and also edited from the menu bar. Editing a built-in plugin creates your own override on top of the bundled default.
 Enabled plugins keep their slot in the wheel. If the current selection does not match a plugin's context, the action stays visible but disabled instead of disappearing before pagination.
-The built-in `Paste` action is handled separately through the empty-input `Paste / Clear` popup rather than appearing in the text-selection wheel.
+The built-in `Paste` action can appear in the text-selection wheel when the current focus is editable, and it is also reused by the empty-input `Paste / Clear` popup.
 
 ### Community Plugins
 Built into the package, they can be enabled or removed at any time via the "Plugin Management" interface:
