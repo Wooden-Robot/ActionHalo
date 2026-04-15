@@ -24,7 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         plugins.first { plugin in
             plugin.id == pastePluginID &&
             plugin.isEnabled &&
-            PluginManager.shared.isPluginEnabled(plugin.id, forAppBundleID: appBundleID)
+            PluginManager.shared.isPluginEnabled(plugin.id, forAppBundleID: appBundleID) &&
+            plugin.shouldShow(text: "", appBundleID: appBundleID)
         }
     }
 

@@ -146,6 +146,23 @@ final class AccessibilityManagerTests: XCTestCase {
         XCTAssertTrue(result)
     }
 
+    func testIsLikelyRichTextSelectionHostUsesPreciseBundleMatching() {
+        XCTAssertTrue(AccessibilityManager.isLikelyRichTextSelectionHost(bundleID: "com.microsoft.VSCode"))
+        XCTAssertTrue(AccessibilityManager.isLikelyRichTextSelectionHost(bundleID: "com.openai.codex"))
+        XCTAssertFalse(AccessibilityManager.isLikelyRichTextSelectionHost(bundleID: "com.apple.dt.Xcode"))
+        XCTAssertFalse(AccessibilityManager.isLikelyRichTextSelectionHost(bundleID: "com.microsoft.remotedesktop"))
+    }
+
+    func testShouldTreatFocusedRoleAsTextSelectionContextRejectsBroadCodeHeuristicMatches() {
+        let result = AccessibilityManager.shouldTreatFocusedRoleAsTextSelectionContext(
+            role: "AXGroup",
+            ancestorRoles: ["AXScrollArea", "AXWindow"],
+            bundleID: "com.apple.dt.Xcode"
+        )
+
+        XCTAssertFalse(result)
+    }
+
     func testShouldTreatElementAsTextRejectsGenericAXGroupInsideStructuralContainers() {
         let result = AccessibilityManager.shouldTreatElementAsText(
             role: "AXGroup",

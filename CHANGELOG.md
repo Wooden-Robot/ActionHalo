@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.3.17
+- 收紧富文本宿主 heuristic，避免 `code` / `desktop` 这类宽匹配把 `Xcode`、`Remote Desktop` 等应用误判成富文本选择宿主。
+- 统一空输入场景下 `Paste` 胶囊与主圆环的上下文判定，内置 `Paste` 现在也会遵守插件自身的显示规则。
+- 改进 diagnostics：在 AX 读不到当前选区时回退展示最近一次真实获取到的文本，并把插件状态区分为 `Shown`、`Shown, Disabled`、`Hidden`。
+- 将前台应用抑制也纳入 diagnostics readiness，避免 report 在 Finder / Dock / 截图工具等被抑制场景里误报可触发。
+- 补充 `AccessibilityManager`、`AppDelegate` 与新增 `DiagnosticsWindow` 回归测试，覆盖 heuristic 边界、Paste 上下文一致性和 diagnostics 状态表达。
+
+- Tightened rich-text host heuristics so broad `code` / `desktop` substring matches no longer misclassify apps like Xcode or Remote Desktop as rich-text selection hosts.
+- Unified the empty-input `Paste` capsule with the main radial-menu context rules so the built-in paste action now respects its plugin visibility filters in both entry points.
+- Improved diagnostics by falling back to the most recently acquired real selection text when AX cannot read the current selection, and by distinguishing plugin states as `Shown`, `Shown, Disabled`, and `Hidden`.
+- Added frontmost-app suppression to diagnostics readiness so the report no longer implies the menu is ready inside intentionally suppressed contexts such as Finder, Dock, or screenshot tools.
+- Added regression coverage for heuristic boundaries, paste-context consistency, and diagnostics presentation state across `AccessibilityManager`, `AppDelegate`, and `DiagnosticsWindow`.
+
 ## v0.3.16
 - 允许内置 `Paste` 动作出现在主圆环中，不再只通过空输入框场景下的 `Paste / Clear` 胶囊入口访问。
 - 将 `Paste` 的可执行条件收紧为“当前焦点必须可编辑”，这样它在非输入上下文里仍可见但会保持灰态，避免误导点击。

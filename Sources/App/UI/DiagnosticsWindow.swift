@@ -2,6 +2,21 @@ import Cocoa
 
 /// A lightweight diagnostics panel for selection context and plugin visibility.
 final class DiagnosticsWindow: NSWindowController {
+    enum PluginPresentationState: Equatable {
+        case shownExecutable
+        case shownDisabled
+        case hidden
+    }
+
+    enum ReadinessBlocker: Equatable {
+        case missingAccessibilityPermission
+        case appExcluded
+        case frontmostAppSuppressed
+        case noSelectionContext
+    }
+
+    private static let recentAcquisitionContextWindow: TimeInterval = 5
+
     private let summaryLabel = NSTextField(labelWithString: "")
     private let textView = NSTextView()
 
@@ -112,10 +127,64 @@ final class DiagnosticsWindow: NSWindowController {
         let report = buildReport()
         textView.string = report.text
         summaryLabel.stringValue = String(
-            format: "Visible plugins: %d / %d".localized,
+            format: "Shown plugins: %d / %d".localized,
             report.visibleCount,
             report.totalCount
         )
+    }
+
+    static func diagnosticContextText(
+        accessibilitySelectedText: String,
+        lastSelectionAcquiredText: String?,
+        acquisitionStatus: AccessibilityManager.SelectionAcquisitionStatus?,
+        now: Date = Date()
+    ) -> String {
+        let accessibilityText = accessibilitySelectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !accessibilityText.isEmpty {
+            return accessibilityText
+        }
+
+        guard let acquisitionStatus,
+              now.timeIntervalSince(acquisitionStatus.timestamp) <= recentAcquisitionContextWindow,
+              let lastSelectionAcquiredText else {
+            return ""
+        }
+
+        return lastSelectionAcquiredText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func pluginPresentationState(
+        pluginID: String,
+        shownPluginIDs: Set<String>,
+        executablePluginIDs: Set<String>
+    ) -> PluginPresentationState {
+        guard shownPluginIDs.contains(pluginID) else { return .hidden }
+        return executablePluginIDs.contains(pluginID) ? .shownExecutable : .shownDisabled
+    }
+
+    static func readinessState(
+        accessibilityEnabled: Bool,
+        isAppExcluded: Bool,
+        isFrontmostAppSuppressed: Bool,
+        selectedText: String,
+        emptyInputShortcutReady: Bool
+    ) -> (isReady: Bool, blockers: [ReadinessBlocker]) {
+        var blockers: [ReadinessBlocker] = []
+
+        if !accessibilityEnabled {
+            blockers.append(.missingAccessibilityPermission)
+        }
+        if isAppExcluded {
+            blockers.append(.appExcluded)
+        }
+        if isFrontmostAppSuppressed {
+            blockers.append(.frontmostAppSuppressed)
+        }
+        if selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !emptyInputShortcutReady {
+            blockers.append(.noSelectionContext)
+        }
+
+        return (blockers.isEmpty, blockers)
     }
 
     private func buildReport() -> (text: String, visibleCount: Int, totalCount: Int) {
@@ -126,29 +195,56 @@ final class DiagnosticsWindow: NSWindowController {
         let excludedApps = UserDefaults.standard.stringArray(forKey: "ExcludedApps") ?? []
         let isAppExcluded = excludedApps.contains(frontAppBundleID)
         let accessibilityEnabled = AccessibilityManager.shared.isAccessibilityEnabled
-        let selectedText = AccessibilityManager.shared.getSelectedText() ?? ""
-        let selectedPreview = previewText(selectedText)
+        let accessibilitySelectedText = AccessibilityManager.shared.getSelectedText() ?? ""
         let focusedRole = AccessibilityManager.shared.focusedElementRoleDescription() ?? "Unavailable".localized
         let acquisitionStatus = AccessibilityManager.shared.lastSelectionAcquisitionStatus
         let attemptStatus = AccessibilityManager.shared.lastSelectionAttemptStatus
+        let focusedSelectionEditable = AccessibilityManager.shared.isFocusedSelectionEditable()
+        let selectedText = Self.diagnosticContextText(
+            accessibilitySelectedText: accessibilitySelectedText,
+            lastSelectionAcquiredText: AccessibilityManager.shared.lastSelectionAcquiredText,
+            acquisitionStatus: acquisitionStatus
+        )
+        let selectedPreview = previewText(selectedText)
+        let isFrontmostAppSuppressed = TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: frontApp?.bundleIdentifier,
+            localizedName: frontApp?.localizedName,
+            isFocusedSelectionEditable: focusedSelectionEditable
+        )
         let emptyInputCheckLocation = TextSelectionMonitor.shared.lastEmptyInputCheckLocation ?? NSEvent.mouseLocation
         let clipboardHasText = TextSelectionMonitor.hasUsableClipboardText(
             NSPasteboard.general.string(forType: .string)
         )
         let emptyInputShortcutReady = accessibilityEnabled &&
             !isAppExcluded &&
+            !isFrontmostAppSuppressed &&
             selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             clipboardHasText &&
             AccessibilityManager.shared.isTextInputElement(at: emptyInputCheckLocation)
-        let readiness = readinessReasons(
+        let readiness = Self.readinessState(
             accessibilityEnabled: accessibilityEnabled,
             isAppExcluded: isAppExcluded,
+            isFrontmostAppSuppressed: isFrontmostAppSuppressed,
             selectedText: selectedText,
             emptyInputShortcutReady: emptyInputShortcutReady
         )
 
         let diagnostics = PluginManager.shared.visibilityDiagnostics(for: selectedText, appBundleID: frontApp?.bundleIdentifier)
-        let visibleCount = diagnostics.filter(\.isVisible).count
+        let shownPlugins = PluginManager.shared.availablePlugins(for: selectedText, appBundleID: frontApp?.bundleIdentifier)
+        let shownPluginIDs = Set(shownPlugins.map(\.id))
+        let executablePluginIDs = Set(
+            shownPlugins
+                .filter {
+                    AppDelegate.isPluginExecutable(
+                        $0,
+                        text: selectedText,
+                        appBundleID: frontApp?.bundleIdentifier,
+                        isSelectionEditable: focusedSelectionEditable
+                    )
+                }
+                .map(\.id)
+        )
+        let visibleCount = shownPluginIDs.count
 
         var lines: [String] = []
         lines.append("OpenFire Diagnostics".localized)
@@ -166,27 +262,40 @@ final class DiagnosticsWindow: NSWindowController {
         lines.append("\("Selection source".localized): \(selectionSourceText(from: acquisitionStatus))")
         lines.append("\("Last selection failure".localized): \(selectionFailureText(from: attemptStatus))")
         lines.append("\("Menu readiness".localized): \(readiness.isReady ? "Ready".localized : "Blocked".localized)")
-        if !readiness.reasons.isEmpty {
-            for reason in readiness.reasons {
-                lines.append("  - \(reason)")
+        if !readiness.blockers.isEmpty {
+            for blocker in readiness.blockers {
+                lines.append("  - \(localizedReadinessBlocker(blocker))")
             }
         }
         if emptyInputShortcutReady {
             lines.append("  - \("Empty-input Paste / Clear shortcut is currently available".localized)")
         }
         lines.append("")
-        lines.append("\("Plugins".localized) (\(visibleCount)/\(diagnostics.count) \("visible".localized))")
+        lines.append("\("Plugins".localized) (\(visibleCount)/\(diagnostics.count) \("shown".localized))")
         lines.append("")
 
         for diagnostic in diagnostics {
             let plugin = diagnostic.plugin
-            let visibility = diagnostic.isVisible ? "Visible".localized : "Hidden".localized
-            lines.append("[\(visibility)] \(plugin.name) (\(plugin.id))")
+            let state = Self.pluginPresentationState(
+                pluginID: plugin.id,
+                shownPluginIDs: shownPluginIDs,
+                executablePluginIDs: executablePluginIDs
+            )
+            lines.append("[\(localizedPluginPresentationState(state))] \(plugin.name) (\(plugin.id))")
             lines.append("  \("Type".localized): \(plugin.config.action.type.rawValue)")
 
-            if diagnostic.isVisible {
-                lines.append("  \("Reason".localized): \("Matches current context".localized)")
-            } else {
+            switch state {
+            case .shownExecutable:
+                lines.append("  \("Reason".localized): \("Executable in current context".localized)")
+            case .shownDisabled:
+                if diagnostic.reasons.isEmpty {
+                    lines.append("  - \("Requires an editable text context".localized)")
+                } else {
+                    for reason in diagnostic.reasons {
+                        lines.append("  - \(localizedReason(reason))")
+                    }
+                }
+            case .hidden:
                 for reason in diagnostic.reasons {
                     lines.append("  - \(localizedReason(reason))")
                 }
@@ -201,27 +310,6 @@ final class DiagnosticsWindow: NSWindowController {
         }
 
         return (lines.joined(separator: "\n"), visibleCount, diagnostics.count)
-    }
-
-    private func readinessReasons(
-        accessibilityEnabled: Bool,
-        isAppExcluded: Bool,
-        selectedText: String,
-        emptyInputShortcutReady: Bool
-    ) -> (isReady: Bool, reasons: [String]) {
-        var reasons: [String] = []
-
-        if !accessibilityEnabled {
-            reasons.append("Accessibility permission is missing".localized)
-        }
-        if isAppExcluded {
-            reasons.append("OpenFire is disabled in the current app".localized)
-        }
-        if selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !emptyInputShortcutReady {
-            reasons.append("No active selected text or empty-input shortcut is currently available".localized)
-        }
-
-        return (reasons.isEmpty, reasons)
     }
 
     private func previewText(_ text: String) -> String {
@@ -260,6 +348,30 @@ final class DiagnosticsWindow: NSWindowController {
             )
         case .appExcluded(let bundleID):
             return String(format: "Current app %@ is explicitly excluded".localized, bundleID)
+        }
+    }
+
+    private func localizedPluginPresentationState(_ state: PluginPresentationState) -> String {
+        switch state {
+        case .shownExecutable:
+            return "Shown".localized
+        case .shownDisabled:
+            return "Shown, Disabled".localized
+        case .hidden:
+            return "Hidden".localized
+        }
+    }
+
+    private func localizedReadinessBlocker(_ blocker: ReadinessBlocker) -> String {
+        switch blocker {
+        case .missingAccessibilityPermission:
+            return "Accessibility permission is missing".localized
+        case .appExcluded:
+            return "OpenFire is disabled in the current app".localized
+        case .frontmostAppSuppressed:
+            return "OpenFire is intentionally suppressed for the current frontmost app".localized
+        case .noSelectionContext:
+            return "No active selected text or empty-input shortcut is currently available".localized
         }
     }
 

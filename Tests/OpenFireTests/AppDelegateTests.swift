@@ -65,6 +65,37 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertEqual(finderPaste?.id, "com.openfire.builtin.paste")
     }
 
+    func testEmptyInputPastePluginRespectsVisibilityRules() throws {
+        let json = """
+        {
+            "name": "Paste",
+            "identifier": "com.openfire.builtin.paste",
+            "action": {
+                "type": "paste"
+            },
+            "filter": {
+                "apps": ["com.apple.finder"]
+            }
+        }
+        """
+        let paste = Plugin(
+            config: try JSONDecoder().decode(PluginConfig.self, from: Data(json.utf8)),
+            directoryURL: URL(fileURLWithPath: "/tmp/com.openfire.builtin.paste")
+        )
+
+        let safariPaste = AppDelegate.emptyInputPastePlugin(
+            from: [paste],
+            appBundleID: "com.apple.Safari"
+        )
+        let finderPaste = AppDelegate.emptyInputPastePlugin(
+            from: [paste],
+            appBundleID: "com.apple.finder"
+        )
+
+        XCTAssertNil(safariPaste)
+        XCTAssertEqual(finderPaste?.id, "com.openfire.builtin.paste")
+    }
+
     func testDeletePluginRequiresEditableSelectionToBeExecutable() throws {
         let delete = try makePlugin(
             name: "Delete",

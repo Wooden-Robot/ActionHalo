@@ -8,6 +8,26 @@ final class AccessibilityManager {
         "AXSecureTextField",
         "AXSecureTextArea"
     ]
+    private static let richTextHostBundleTokenHints: Set<String> = [
+        "telegram",
+        "electron",
+        "discord",
+        "obsidian",
+        "chrome",
+        "chromium",
+        "brave",
+        "edge",
+        "edgemac",
+        "codex",
+        "webview",
+        "vscode"
+    ]
+    private static let richTextHostBundleExactHints: Set<String> = [
+        "com.microsoft.vscode",
+        "com.microsoft.vscodeinsiders",
+        "com.visualstudio.code",
+        "com.visualstudio.code.oss"
+    ]
 
     private static let protectedTextBooleanAttributes: [CFString] = [
         "AXValueProtected" as CFString,
@@ -97,6 +117,7 @@ final class AccessibilityManager {
     private var permissionWatchdog: Timer?
     private(set) var lastSelectionAcquisitionStatus: SelectionAcquisitionStatus?
     private(set) var lastSelectionAttemptStatus: SelectionAttemptStatus?
+    private(set) var lastSelectionAcquiredText: String?
     
     private init() {
         systemWideElement = AXUIElementCreateSystemWide()
@@ -341,6 +362,7 @@ final class AccessibilityManager {
             timestamp: Date(),
             textLength: text.count
         )
+        lastSelectionAcquiredText = text
         lastSelectionAttemptStatus = nil
     }
 
@@ -475,21 +497,17 @@ final class AccessibilityManager {
     static func isLikelyRichTextSelectionHost(bundleID: String?) -> Bool {
         guard let bundleID else { return false }
         let normalizedBundleID = bundleID.lowercased()
-        let hostHints = [
-            "telegram",
-            "electron",
-            "discord",
-            "obsidian",
-            "chrome",
-            "chromium",
-            "brave",
-            "edge",
-            "code",
-            "codex",
-            "webview"
-        ]
+        if richTextHostBundleExactHints.contains(normalizedBundleID) {
+            return true
+        }
 
-        return hostHints.contains(where: normalizedBundleID.contains)
+        let bundleTokens = Set(
+            normalizedBundleID
+                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .map(String.init)
+        )
+
+        return !bundleTokens.intersection(richTextHostBundleTokenHints).isEmpty
     }
 
     static func shouldTreatFocusedRoleAsTextSelectionContext(
@@ -515,12 +533,9 @@ final class AccessibilityManager {
             kAXApplicationRole
         ]
 
-        if role == "AXGroup", let bundleID {
-            let electronHeuristics = ["electron", "desktop", "telegram", "discord", "obsidian", "code"]
-            let lowerID = bundleID.lowercased()
-            if electronHeuristics.contains(where: lowerID.contains) {
-                return true
-            }
+        if role == "AXGroup",
+           Self.isLikelyRichTextSelectionHost(bundleID: bundleID) {
+            return true
         }
 
         return shouldTreatElementAsText(
@@ -785,15 +800,9 @@ final class AccessibilityManager {
         // If it's an unknown group, we default to false to be safe and avoid misfires,
         // EXCEPT if it's Electron/Chromium (which often wrap text in generic AXGroups).
         // Let's explicitly check the app ID.
-        if role == "AXGroup" {
-            if let bundleID {
-                // Electron apps (VSCode, Telegram, Obsidian, Discord) and Chromium use massive AXGroups
-                let electronHeuristics = ["electron", "desktop", "telegram", "discord", "obsidian", "code", "chrome", "edge", "brave"]
-                let lowerID = bundleID.lowercased()
-                if electronHeuristics.contains(where: lowerID.contains) {
-                    return true
-                }
-            }
+        if role == "AXGroup",
+           Self.isLikelyRichTextSelectionHost(bundleID: bundleID) {
+            return true
         }
         
         return false
@@ -938,8 +947,7 @@ final class AccessibilityManager {
         let webContentAncestorRoles: Set<String> = [
             "AXBrowser",
             "AXWebArea",
-            "AXDocument",
-            "AXScrollArea"
+            "AXDocument"
         ]
 
         if forbiddenRoles.contains(role) {
