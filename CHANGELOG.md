@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.18
+- 默认将整套办公软件加入 `ExcludedApps`：Apple iWork（`Pages / Numbers / Keynote`，含旧版 iWork bundle id）、Microsoft Office（`Word / Excel / PowerPoint`）与 WPS。
+- 新增一次性迁移逻辑：新装和老用户升级都会补齐上述默认禁用项，但用户后续手动重新开启后不会在下次启动时被自动关回去。
+- 补充 `AppDelegate` 回归测试，覆盖首次迁移、合并已有排除项、避免重复写入以及迁移只执行一次的行为。
+
+- Default-added full office suites to `ExcludedApps`: Apple iWork (`Pages / Numbers / Keynote`, including legacy iWork bundle IDs), Microsoft Office (`Word / Excel / PowerPoint`), and WPS.
+- Added a one-time migration so fresh installs and upgrades both receive the default exclusions, while users who manually re-enable an app keep that choice on later launches.
+- Added `AppDelegate` regression coverage for first-run migration, merging with existing exclusions, avoiding duplicates, and ensuring the migration only runs once.
+
 ## v0.3.17
 - 收紧富文本宿主 heuristic，避免 `code` / `desktop` 这类宽匹配把 `Xcode`、`Remote Desktop` 等应用误判成富文本选择宿主。
 - 统一空输入场景下 `Paste` 胶囊与主圆环的上下文判定，内置 `Paste` 现在也会遵守插件自身的显示规则。

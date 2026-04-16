@@ -6,6 +6,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let pastePluginID = "com.openfire.builtin.paste"
     static let menuDismissEventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .keyDown]
     static let resetAccessibilityOnUpdateKey = "ResetAccessibilityPermissionsOnUpdate"
+    static let excludedAppsDefaultsKey = "ExcludedApps"
+    static let defaultOfficeSuiteExcludedAppsMigrationKey = "DefaultOfficeAppsExcludedMigrationVersion"
+    static let defaultOfficeSuiteExcludedAppsMigrationVersion = 1
+    static let defaultOfficeSuiteExcludedApps: [String] = [
+        "com.apple.Pages",
+        "com.apple.Numbers",
+        "com.apple.Keynote",
+        "com.apple.iWork.Pages",
+        "com.apple.iWork.Numbers",
+        "com.apple.iWork.Keynote",
+        "com.microsoft.Word",
+        "com.microsoft.Excel",
+        "com.microsoft.Powerpoint",
+        "com.kingsoft.wpsoffice.mac"
+    ]
     
     private let statusBarController = StatusBarController()
     private var radialMenuWindow: RadialMenuWindow?
@@ -44,11 +59,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         return false
     }
+
+    static func migratedExcludedApps(
+        existingExcludedApps: [String],
+        storedMigrationVersion: Int
+    ) -> (apps: [String], newMigrationVersion: Int) {
+        guard storedMigrationVersion < defaultOfficeSuiteExcludedAppsMigrationVersion else {
+            return (existingExcludedApps, storedMigrationVersion)
+        }
+
+        var mergedApps = existingExcludedApps
+        for bundleID in defaultOfficeSuiteExcludedApps where !mergedApps.contains(bundleID) {
+            mergedApps.append(bundleID)
+        }
+
+        return (mergedApps, defaultOfficeSuiteExcludedAppsMigrationVersion)
+    }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Automatically clear stale accessibility permissions if the app was updated
         // This prevents the macOS "permission toggle is on but doesn't work" bug for unsigned apps
         checkAndUpdateAccessibilityState()
+        applyDefaultOfficeSuiteExcludedAppsMigrationIfNeeded()
         
         // Hide dock icon (backup, Info.plist should handle this)
         NSApp.setActivationPolicy(.accessory)
@@ -133,6 +165,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSLog("[OpenFire] Hotkey registration issue: \(issue.message)")
             }
         }
+    }
+
+    private func applyDefaultOfficeSuiteExcludedAppsMigrationIfNeeded(userDefaults: UserDefaults = .standard) {
+        let existingExcludedApps = userDefaults.stringArray(forKey: Self.excludedAppsDefaultsKey) ?? []
+        let storedMigrationVersion = userDefaults.integer(forKey: Self.defaultOfficeSuiteExcludedAppsMigrationKey)
+        let migrated = Self.migratedExcludedApps(
+            existingExcludedApps: existingExcludedApps,
+            storedMigrationVersion: storedMigrationVersion
+        )
+
+        guard migrated.newMigrationVersion != storedMigrationVersion else {
+            return
+        }
+
+        userDefaults.set(migrated.apps, forKey: Self.excludedAppsDefaultsKey)
+        userDefaults.set(migrated.newMigrationVersion, forKey: Self.defaultOfficeSuiteExcludedAppsMigrationKey)
     }
     
     /// Called when the global hotkey is pressed

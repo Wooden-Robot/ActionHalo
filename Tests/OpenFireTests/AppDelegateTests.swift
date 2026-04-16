@@ -258,6 +258,54 @@ final class AppDelegateTests: XCTestCase {
         )
     }
 
+    func testMigrateDefaultExcludedAppsAddsOfficeSuitesOnFirstRun() {
+        let migrated = AppDelegate.migratedExcludedApps(
+            existingExcludedApps: [],
+            storedMigrationVersion: 0
+        )
+
+        XCTAssertEqual(Set(migrated.apps), Set(AppDelegate.defaultOfficeSuiteExcludedApps))
+        XCTAssertEqual(
+            migrated.newMigrationVersion,
+            AppDelegate.defaultOfficeSuiteExcludedAppsMigrationVersion
+        )
+    }
+
+    func testMigrateDefaultExcludedAppsMergesWithoutRemovingExistingExclusions() {
+        let migrated = AppDelegate.migratedExcludedApps(
+            existingExcludedApps: ["com.apple.Safari"],
+            storedMigrationVersion: 0
+        )
+
+        XCTAssertTrue(migrated.apps.contains("com.apple.Safari"))
+        XCTAssertTrue(
+            Set(AppDelegate.defaultOfficeSuiteExcludedApps).isSubset(of: Set(migrated.apps))
+        )
+    }
+
+    func testMigrateDefaultExcludedAppsDoesNotDuplicateExistingOfficeAppEntries() {
+        let migrated = AppDelegate.migratedExcludedApps(
+            existingExcludedApps: ["com.microsoft.Word", "com.apple.Pages"],
+            storedMigrationVersion: 0
+        )
+
+        XCTAssertEqual(migrated.apps.filter { $0 == "com.microsoft.Word" }.count, 1)
+        XCTAssertEqual(migrated.apps.filter { $0 == "com.apple.Pages" }.count, 1)
+    }
+
+    func testMigrateDefaultExcludedAppsDoesNothingAfterMigrationAlreadyRan() {
+        let migrated = AppDelegate.migratedExcludedApps(
+            existingExcludedApps: ["com.apple.Safari"],
+            storedMigrationVersion: AppDelegate.defaultOfficeSuiteExcludedAppsMigrationVersion
+        )
+
+        XCTAssertEqual(migrated.apps, ["com.apple.Safari"])
+        XCTAssertEqual(
+            migrated.newMigrationVersion,
+            AppDelegate.defaultOfficeSuiteExcludedAppsMigrationVersion
+        )
+    }
+
     private func makePlugin(name: String, identifier: String, actionType: String, actionContent: String? = nil) throws -> Plugin {
         let extraActionFields = actionContent.map { ",\($0)" } ?? ""
         let json = """
