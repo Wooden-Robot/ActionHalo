@@ -199,6 +199,30 @@ final class PluginManagerTests: XCTestCase {
         XCTAssertEqual(merged.first?.directoryURL.path, "/tmp/user")
     }
 
+    func testMergePluginsPreservingExistingKeepsBuiltInCorePluginWhenUserUsesCoreIdentifier() {
+        let userOverride = makePlugin(
+            name: "Fake Copy",
+            identifier: "com.openfire.copy",
+            order: 1,
+            directory: "/tmp/user-copy"
+        )
+        let builtInCopy = makePlugin(
+            name: "Copy",
+            identifier: "com.openfire.copy",
+            order: 1,
+            directory: "/Applications/OpenFire.app/Contents/Resources/Plugins/Copy.openfireext"
+        )
+
+        let merged = PluginManager.mergePluginsPreservingExisting(
+            user: [userOverride],
+            builtIn: [builtInCopy]
+        )
+
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.id, "com.openfire.copy")
+        XCTAssertEqual(merged.first?.directoryURL.path, builtInCopy.directoryURL.path)
+    }
+
     func testMergePluginsPreservingExistingKeepsFirstUserDuplicate() {
         let oldestPlugin = makePlugin(
             name: "Oldest",
@@ -221,6 +245,86 @@ final class PluginManagerTests: XCTestCase {
         XCTAssertEqual(merged.count, 1)
         XCTAssertEqual(merged.first?.name, "Oldest")
         XCTAssertEqual(merged.first?.directoryURL.path, "/tmp/oldest")
+    }
+
+    func testFilterSoftDeletedBuiltInsKeepsUserOverrideAndRemovesBundledCopy() {
+        let userPlugin = makePlugin(
+            name: "User Search",
+            identifier: "com.test.search",
+            order: 1,
+            directory: "/Users/me/Library/Application Support/OpenFire/Plugins/Search.openfireext"
+        )
+        let builtInDeletedPlugin = makePlugin(
+            name: "Built In Search",
+            identifier: "com.test.deleted",
+            order: 2,
+            directory: "/Applications/OpenFire.app/Contents/Resources/Plugins/Search.openfireext"
+        )
+        let coreBuiltIn = makePlugin(
+            name: "Copy",
+            identifier: "com.openfire.copy",
+            order: 3,
+            directory: "/Applications/OpenFire.app/Contents/Resources/Plugins/Copy.openfireext"
+        )
+
+        let filtered = PluginManager.filterSoftDeletedBuiltIns(
+            [
+                userPlugin,
+                builtInDeletedPlugin,
+                coreBuiltIn
+            ],
+            deletedBuiltInPluginIDs: ["com.test.search", "com.test.deleted", "com.openfire.copy"],
+            builtInPluginsURL: URL(fileURLWithPath: "/Applications/OpenFire.app/Contents/Resources/Plugins")
+        )
+
+        XCTAssertEqual(filtered.map(\.id), ["com.test.search", "com.openfire.copy"])
+    }
+
+    func testFilterSoftDeletedBuiltInsDoesNotTreatSiblingPathPrefixAsBuiltIn() {
+        let siblingPlugin = makePlugin(
+            name: "Sibling Search",
+            identifier: "com.test.sibling",
+            order: 1,
+            directory: "/Applications/OpenFire.app/Contents/Resources/PluginsBackup/Search.openfireext"
+        )
+
+        let filtered = PluginManager.filterSoftDeletedBuiltIns(
+            [siblingPlugin],
+            deletedBuiltInPluginIDs: ["com.test.sibling"],
+            builtInPluginsURL: URL(fileURLWithPath: "/Applications/OpenFire.app/Contents/Resources/Plugins")
+        )
+
+        XCTAssertEqual(filtered.map(\.id), ["com.test.sibling"])
+    }
+
+    func testPluginDirectoryContainmentRequiresDirectoryBoundary() {
+        let pluginsURL = URL(fileURLWithPath: "/Applications/OpenFire.app/Contents/Resources/Plugins")
+
+        XCTAssertTrue(PluginManager.isPluginDirectory(
+            URL(fileURLWithPath: "/Applications/OpenFire.app/Contents/Resources/Plugins/Search.openfireext"),
+            inside: pluginsURL
+        ))
+        XCTAssertFalse(PluginManager.isPluginDirectory(
+            URL(fileURLWithPath: "/Applications/OpenFire.app/Contents/Resources/PluginsBackup/Search.openfireext"),
+            inside: pluginsURL
+        ))
+        XCTAssertFalse(PluginManager.isPluginDirectory(
+            URL(fileURLWithPath: "/Applications/OpenFire.app/Contents/Resources/Plugins"),
+            inside: pluginsURL
+        ))
+    }
+
+    func testBuiltInPluginDirectoryUsesConfiguredBuiltInDirectory() {
+        let builtInPluginsURL = URL(fileURLWithPath: "/Applications/OpenFire.app/Contents/Resources/Plugins")
+
+        XCTAssertTrue(PluginManager.isBuiltInPluginDirectory(
+            URL(fileURLWithPath: "/Applications/OpenFire.app/Contents/Resources/Plugins/Search.openfireext"),
+            builtInPluginsURL: builtInPluginsURL
+        ))
+        XCTAssertFalse(PluginManager.isBuiltInPluginDirectory(
+            URL(fileURLWithPath: "/tmp/Other.app/Contents/Resources/Plugins/Search.openfireext"),
+            builtInPluginsURL: builtInPluginsURL
+        ))
     }
 
     func testExecutionTrustTracksCurrentFingerprint() throws {
@@ -262,6 +366,29 @@ final class PluginManagerTests: XCTestCase {
         XCTAssertEqual(resolvedURL?.lastPathComponent, "Legacy Name.openfireext")
     }
 
+    func testInstallPluginRejectsInvalidPluginPackage() throws {
+        let manager = PluginManager.shared
+        let invalidURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".openfireext")
+        let destinationURL = manager.userPluginsURL.appendingPathComponent(invalidURL.lastPathComponent)
+        temporaryDirectories.append(invalidURL)
+        temporaryDirectories.append(destinationURL)
+
+        try FileManager.default.createDirectory(at: invalidURL, withIntermediateDirectories: true)
+
+        XCTAssertFalse(manager.installPlugin(from: invalidURL))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
+    }
+
+    func testInstallPluginRejectsCorePluginIdentifierOverride() throws {
+        let manager = PluginManager.shared
+        let pluginURL = try makePluginBundle(identifier: "com.openfire.copy", name: "Fake Copy")
+        let destinationURL = manager.userPluginsURL.appendingPathComponent("com.openfire.copy.openfireext")
+        temporaryDirectories.append(destinationURL)
+
+        XCTAssertFalse(manager.installPlugin(from: pluginURL))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
+    }
+
     func testStalePluginLoadResultsAreDiscarded() {
         let manager = PluginManager.shared
 
@@ -270,6 +397,35 @@ final class PluginManagerTests: XCTestCase {
 
         XCTAssertFalse(manager.shouldApplyPluginLoadResult(firstLoad))
         XCTAssertTrue(manager.shouldApplyPluginLoadResult(secondLoad))
+    }
+
+    func testPluginProcessStderrSummaryDoesNotExposeOutputUnlessVerboseLoggingIsEnabled() {
+        XCTAssertEqual(
+            PluginManager.pluginProcessStderrLogMessage(
+                logPrefix: "Shell script",
+                stderr: "selected private text",
+                terminationStatus: 1,
+                verboseLoggingEnabled: false
+            ),
+            "Shell script produced stderr (21 bytes). Enable verbose plugin logging to inspect output."
+        )
+        XCTAssertNil(
+            PluginManager.pluginProcessStderrLogMessage(
+                logPrefix: "Shell script",
+                stderr: "selected private text",
+                terminationStatus: 0,
+                verboseLoggingEnabled: false
+            )
+        )
+        XCTAssertEqual(
+            PluginManager.pluginProcessStderrLogMessage(
+                logPrefix: "Shell script",
+                stderr: "selected private text",
+                terminationStatus: 0,
+                verboseLoggingEnabled: true
+            ),
+            "Shell script stderr: selected private text"
+        )
     }
 
     private func makePlugin(name: String, identifier: String, order: Int, directory: String) -> Plugin {
@@ -285,6 +441,23 @@ final class PluginManagerTests: XCTestCase {
 
         let config = try! JSONDecoder().decode(PluginConfig.self, from: Data(json.utf8))
         return Plugin(config: config, directoryURL: URL(fileURLWithPath: directory))
+    }
+
+    private func makePluginBundle(identifier: String, name: String) throws -> URL {
+        let bundleURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".openfireext")
+        temporaryDirectories.append(bundleURL)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        let config = """
+        {
+            "name": "\(name)",
+            "identifier": "\(identifier)",
+            "action": { "type": "copy" }
+        }
+        """
+
+        try config.write(to: bundleURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+        return bundleURL
     }
 
     private func makeScriptPluginBundle(identifier: String, scriptContent: String) throws -> URL {

@@ -14,6 +14,7 @@ final class PluginManager {
     static let pluginsReloadedNotification = Notification.Name("OpenFirePluginsReloaded")
     static let trustedPluginFingerprintsKey = "trustedPluginFingerprints"
     static let perAppDisabledPluginsKey = "perAppDisabledPlugins"
+    static let verbosePluginLoggingKey = "VerbosePluginLoggingEnabled"
     
     /// Core default plugins that can never be deleted
     static let coreDefaultPluginIDs: Set<String> = [
@@ -57,17 +58,78 @@ final class PluginManager {
     private init() {}
 
     static func mergePluginsPreservingExisting(user: [Plugin], builtIn: [Plugin]) -> [Plugin] {
-        var merged: [String: Plugin] = [:]
+        var merged: [Plugin] = []
+        var seenIDs: Set<String> = []
 
-        for plugin in user where merged[plugin.id] == nil {
-            merged[plugin.id] = plugin
+        for plugin in builtIn where coreDefaultPluginIDs.contains(plugin.id) && !seenIDs.contains(plugin.id) {
+            merged.append(plugin)
+            seenIDs.insert(plugin.id)
         }
 
-        for plugin in builtIn where merged[plugin.id] == nil {
-            merged[plugin.id] = plugin
+        for plugin in user where !coreDefaultPluginIDs.contains(plugin.id) && !seenIDs.contains(plugin.id) {
+            merged.append(plugin)
+            seenIDs.insert(plugin.id)
         }
 
-        return Array(merged.values)
+        for plugin in builtIn where !seenIDs.contains(plugin.id) {
+            merged.append(plugin)
+            seenIDs.insert(plugin.id)
+        }
+
+        return merged
+    }
+
+    static func isVerbosePluginLoggingEnabled(userDefaults: UserDefaults = .standard) -> Bool {
+        userDefaults.bool(forKey: verbosePluginLoggingKey)
+    }
+
+    static func pluginProcessStderrLogMessage(
+        logPrefix: String,
+        stderr: String,
+        terminationStatus: Int32,
+        verboseLoggingEnabled: Bool
+    ) -> String? {
+        let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if verboseLoggingEnabled {
+            return "\(logPrefix) stderr: \(stderr)"
+        }
+
+        guard terminationStatus != 0 else { return nil }
+        return "\(logPrefix) produced stderr (\(stderr.utf8.count) bytes). Enable verbose plugin logging to inspect output."
+    }
+
+    static func filterSoftDeletedBuiltIns(
+        _ plugins: [Plugin],
+        deletedBuiltInPluginIDs: [String],
+        builtInPluginsURL: URL
+    ) -> [Plugin] {
+        let deletedIDs = Set(deletedBuiltInPluginIDs).subtracting(coreDefaultPluginIDs)
+        guard !deletedIDs.isEmpty else { return plugins }
+
+        return plugins.filter { plugin in
+            guard deletedIDs.contains(plugin.id),
+                  isBuiltInPluginDirectory(plugin.directoryURL, builtInPluginsURL: builtInPluginsURL) else {
+                return true
+            }
+            return false
+        }
+    }
+
+    static func isPluginDirectory(_ pluginURL: URL, inside parentURL: URL) -> Bool {
+        let parentPath = parentURL.standardizedFileURL.path
+        let pluginPath = pluginURL.standardizedFileURL.path
+        let parentPrefix = parentPath.hasSuffix("/") ? parentPath : parentPath + "/"
+
+        return pluginPath.hasPrefix(parentPrefix)
+    }
+
+    static func isBuiltInPluginDirectory(
+        _ pluginURL: URL,
+        builtInPluginsURL: URL = PluginManager.shared.builtInPluginsURL
+    ) -> Bool {
+        isPluginDirectory(pluginURL, inside: builtInPluginsURL)
     }
     
     // MARK: - Loading
@@ -97,25 +159,13 @@ final class PluginManager {
             // Load user plugins
             let user = PluginLoader.scanDirectory(self.userPluginsURL)
             
-            // Merge deterministically: preserve existing user plugins and keep older duplicates.
-            var mergedPlugins = Dictionary(
-                uniqueKeysWithValues: Self.mergePluginsPreservingExisting(user: user, builtIn: builtIn).map { ($0.id, $0) }
-            )
-            
-            // Filter out softly deleted bundled plugins
+            let mergedPlugins = Self.mergePluginsPreservingExisting(user: user, builtIn: builtIn)
             let deletedBuiltIns = UserDefaults.standard.stringArray(forKey: "deletedBuiltInPlugins") ?? []
-            for id in deletedBuiltIns {
-                if !PluginManager.coreDefaultPluginIDs.contains(id) {
-                    // Only remove it if it's currently a built-in one (meaning not overridden by user)
-                    // If a user re-installed an override after deleting the built-in, we still load it.
-                    if let p = mergedPlugins[id], p.directoryURL.path.hasPrefix(self.builtInPluginsURL.path) {
-                        mergedPlugins.removeValue(forKey: id)
-                    }
-                }
-            }
-            
-            // Convert back to array
-            let newPlugins = Array(mergedPlugins.values)
+            let newPlugins = Self.filterSoftDeletedBuiltIns(
+                mergedPlugins,
+                deletedBuiltInPluginIDs: deletedBuiltIns,
+                builtInPluginsURL: self.builtInPluginsURL
+            )
             
             DispatchQueue.main.async {
                 guard self.shouldApplyPluginLoadResult(loadID) else {
@@ -380,8 +430,7 @@ final class PluginManager {
             return
         }
         
-        let pathStr = plugin.directoryURL.path
-        let isBuiltIn = pathStr.hasPrefix(Bundle.main.bundlePath) || pathStr.contains("/Resources/Plugins/")
+        let isBuiltIn = Self.isBuiltInPluginDirectory(plugin.directoryURL, builtInPluginsURL: builtInPluginsURL)
         let userOverrideURL = userPluginURL(for: plugin.id)
         
         if let userOverrideURL {
@@ -686,16 +735,19 @@ final class PluginManager {
         // Create plugins directory if needed
         try? fileManager.createDirectory(at: userPluginsURL, withIntermediateDirectories: true)
 
-        let sourcePlugin = PluginLoader.load(from: sourceURL)
-        let canonicalFileName: String
-        if let plugin = sourcePlugin {
-            canonicalFileName = "\(plugin.id).openfireext"
-        } else {
-            canonicalFileName = sourceURL.lastPathComponent
+        guard let sourcePlugin = PluginLoader.load(from: sourceURL) else {
+            NSLog("[OpenFire] Refusing to install invalid plugin package: \(sourceURL.path)")
+            return false
         }
 
+        guard !Self.coreDefaultPluginIDs.contains(sourcePlugin.id) else {
+            NSLog("[OpenFire] Refusing to install plugin with reserved core identifier: \(sourcePlugin.id)")
+            return false
+        }
+
+        let canonicalFileName = "\(sourcePlugin.id).openfireext"
         let destinationURL = userPluginsURL.appendingPathComponent(canonicalFileName)
-        if let existingURL = sourcePlugin.flatMap({ userPluginURL(for: $0.id) }),
+        if let existingURL = userPluginURL(for: sourcePlugin.id),
            existingURL != destinationURL,
            fileManager.fileExists(atPath: existingURL.path) {
             try? fileManager.removeItem(at: existingURL)
@@ -708,9 +760,7 @@ final class PluginManager {
         
         do {
             try fileManager.copyItem(at: sourceURL, to: destinationURL)
-            if let plugin = sourcePlugin {
-                removeDuplicateUserPlugins(for: plugin.id, keeping: destinationURL)
-            }
+            removeDuplicateUserPlugins(for: sourcePlugin.id, keeping: destinationURL)
             NSLog("[OpenFire] Plugin installed: \(sourceURL.lastPathComponent)")
             reloadPlugins()
             return true
@@ -749,13 +799,20 @@ final class PluginManager {
             }
         }
 
-        NSLog("[OpenFire-Debug] \(logPrefix) process finished with exit code: \(process.terminationStatus)")
+        if Self.isVerbosePluginLoggingEnabled() {
+            NSLog("[OpenFire-Debug] \(logPrefix) process finished with exit code: \(process.terminationStatus)")
+        }
 
         let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
         if !errorData.isEmpty,
            let errorStr = String(data: errorData, encoding: .utf8),
-           !errorStr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            NSLog("[OpenFire] \(logPrefix) stderr: \(errorStr)")
+           let message = Self.pluginProcessStderrLogMessage(
+            logPrefix: logPrefix,
+            stderr: errorStr,
+            terminationStatus: process.terminationStatus,
+            verboseLoggingEnabled: Self.isVerbosePluginLoggingEnabled()
+           ) {
+            NSLog("[OpenFire] %@", message)
         }
     }
 }

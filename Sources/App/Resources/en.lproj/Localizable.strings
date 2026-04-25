@@ -157,6 +157,7 @@
 "Name and Identifier cannot be empty." = "Name and Identifier cannot be empty.";
 "Identifier must use only letters, numbers, dots, and hyphens." = "Identifier must use only letters, numbers, dots, and hyphens.";
 "Identifier should contain at least one dot." = "Identifier should contain at least one dot.";
+"Identifier is reserved for a built-in plugin." = "Identifier is reserved for a built-in plugin.";
 "URL cannot be empty" = "URL cannot be empty";
 "URL must be a valid absolute URL." = "URL must be a valid absolute URL.";
 "Script cannot be empty" = "Script cannot be empty";

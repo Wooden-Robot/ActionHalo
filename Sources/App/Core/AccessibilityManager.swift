@@ -342,8 +342,15 @@ final class AccessibilityManager {
                 initialString: initialString
             )
             
-            // Only restore when Cmd+C actually produced a fresh clipboard value.
-            if copyObservation.hasFreshCopiedText {
+            // Only restore if the pasteboard still contains the value created by this fallback.
+            if Self.shouldRestorePasteboardSnapshot(
+                initialChangeCount: initialChangeCount,
+                observedChangeCount: copyObservation.observedChangeCount,
+                copiedText: copyObservation.copiedText,
+                initialString: initialString,
+                currentChangeCount: pasteboard.changeCount,
+                currentString: pasteboard.string(forType: .string)
+            ) {
                 Self.restorePasteboardSnapshot(snapshot, to: pasteboard)
             }
             
@@ -418,6 +425,7 @@ final class AccessibilityManager {
     private struct CopyObservation {
         let copiedText: String?
         let hasFreshCopiedText: Bool
+        let observedChangeCount: Int
     }
 
     private static func pollPasteboardForCopiedText(
@@ -441,14 +449,16 @@ final class AccessibilityManager {
             ) {
                 return CopyObservation(
                     copiedText: latestString,
-                    hasFreshCopiedText: true
+                    hasFreshCopiedText: true,
+                    observedChangeCount: latestChangeCount
                 )
             }
         }
 
         return CopyObservation(
             copiedText: latestString,
-            hasFreshCopiedText: false
+            hasFreshCopiedText: false,
+            observedChangeCount: latestChangeCount
         )
     }
 
@@ -488,6 +498,28 @@ final class AccessibilityManager {
             initialString: initialString,
             observedString: copiedText
         )
+    }
+
+    static func shouldRestorePasteboardSnapshot(
+        initialChangeCount: Int,
+        observedChangeCount: Int,
+        copiedText: String?,
+        initialString: String? = nil,
+        currentChangeCount: Int,
+        currentString: String?
+    ) -> Bool {
+        guard shouldRestorePasteboardSnapshot(
+            initialChangeCount: initialChangeCount,
+            observedChangeCount: observedChangeCount,
+            copiedText: copiedText,
+            initialString: initialString
+        ) else {
+            return false
+        }
+
+        return currentChangeCount == observedChangeCount &&
+            currentString?.trimmingCharacters(in: .whitespacesAndNewlines) ==
+            copiedText?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func shouldAssumeFocusedTextInputContainsClickWhenBoundsUnavailable() -> Bool {

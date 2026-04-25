@@ -76,7 +76,7 @@ final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableVie
     }
     
     private func loadData() {
-        excludedApps = UserDefaults.standard.stringArray(forKey: "ExcludedApps") ?? []
+        excludedApps = AppExclusionStore.excludedApps()
         tableView.reloadData()
     }
     
@@ -151,7 +151,7 @@ final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableVie
         guard row >= 0 && row < excludedApps.count else { return }
         
         excludedApps.remove(at: row)
-        UserDefaults.standard.set(excludedApps, forKey: "ExcludedApps")
+        AppExclusionStore.setExcludedApps(excludedApps)
         
         tableView.removeRows(at: IndexSet(integer: row), withAnimation: .slideUp)
     }
@@ -179,7 +179,7 @@ final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableVie
                 }
                 
                 if addedCount > 0 {
-                    UserDefaults.standard.set(self.excludedApps, forKey: "ExcludedApps")
+                    AppExclusionStore.setExcludedApps(self.excludedApps)
                     self.tableView.reloadData()
                 }
             }

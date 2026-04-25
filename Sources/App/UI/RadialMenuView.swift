@@ -65,18 +65,16 @@ final class RadialMenuView: NSView {
     
     // MARK: - Prewarming
     
-    /// Prewarms the asset cache on a background thread to prevent stutter on first popup
+    /// Prewarms the asset cache on the main thread because AppKit image objects are not thread-safe.
     static func prewarm(plugins: [Plugin]) {
-        DispatchQueue.global(qos: .utility).async {
+        DispatchQueue.main.async {
             for plugin in plugins {
                 // 1. Prewarm custom icons (triggers disk IO if needed)
                 _ = plugin.customIcon
                 
                 // 2. Prewarm SF Symbol rasterization
                 let cacheKey = plugin.iconName
-                // Thread-safe dictionary read check (swift dictionaries aren't fully thread safe but assuming population only appends here)
-                // Better approach to just jump to main thread for the dictionary write
-                let needsRasterization = DispatchQueue.main.sync { symbolCache[cacheKey] == nil }
+                let needsRasterization = symbolCache[cacheKey] == nil
                 
                 if needsRasterization {
                     let iconSize: CGFloat = 24.0
@@ -87,13 +85,9 @@ final class RadialMenuView: NSView {
                         let img = configured ?? symbolImage
                         img.isTemplate = true
                         let contents = img.layerContents(forContentsScale: 2.0)
-                        DispatchQueue.main.async {
-                            symbolCache[cacheKey] = contents
-                        }
+                        symbolCache[cacheKey] = contents
                     } else {
-                        DispatchQueue.main.async {
-                            symbolCache[cacheKey] = NSNull()
-                        }
+                        symbolCache[cacheKey] = NSNull()
                     }
                 }
             }

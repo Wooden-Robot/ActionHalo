@@ -316,8 +316,7 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         guard row >= 0 && row < orderedPlugins.count else { return }
         let plugin = orderedPlugins[row]
         
-        let pathStr = plugin.directoryURL.path
-        let isBuiltIn = pathStr.hasPrefix(Bundle.main.bundlePath) || pathStr.contains("/Resources/Plugins/")
+        let isBuiltIn = PluginManager.isBuiltInPluginDirectory(plugin.directoryURL)
         let hasUserOverride = PluginManager.shared.userPluginURL(for: plugin.id) != nil
         
         // If it's a core default plugin, it can never be deleted

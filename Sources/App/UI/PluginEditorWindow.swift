@@ -413,8 +413,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         
         var deleteBtn: NSButton?
         if let p = editingPlugin {
-            let pathStr = p.directoryURL.path
-            let isBuiltIn = pathStr.hasPrefix(Bundle.main.bundlePath) || pathStr.contains("/Resources/Plugins/")
+            let isBuiltIn = PluginManager.isBuiltInPluginDirectory(p.directoryURL)
             
             let btnTitle = isBuiltIn ? "Restore Default".localized : "Delete".localized
             let btn = NSButton(title: btnTitle, target: self, action: #selector(deleteClicked))
@@ -713,13 +712,17 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         updateSaveAvailability()
     }
 
-    private func currentValidationMessage() -> String? {
-        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let id = identifierField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let typeIndex = typePopUp.indexOfSelectedItem
-        let content = typeIndex == 3
-            ? shortcutField.rawComboString.trimmingCharacters(in: .whitespacesAndNewlines)
-            : contentTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func validationMessage(
+        name: String,
+        identifier id: String,
+        typeIndex: Int,
+        content: String,
+        isEditingExistingPlugin: Bool,
+        existingPluginIDs: [String]
+    ) -> String? {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        let content = content.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if name.isEmpty || id.isEmpty {
             return "Name and Identifier cannot be empty.".localized
@@ -734,8 +737,11 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             return "Identifier should contain at least one dot.".localized
         }
 
-        if editingPlugin == nil,
-           PluginManager.shared.plugins.contains(where: { $0.id == id }) {
+        if !isEditingExistingPlugin, PluginManager.coreDefaultPluginIDs.contains(id) {
+            return "Identifier is reserved for a built-in plugin.".localized
+        }
+
+        if !isEditingExistingPlugin, existingPluginIDs.contains(id) {
             return "A plugin with this identifier already exists".localized
         }
 
@@ -759,6 +765,24 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         default:
             return nil
         }
+    }
+
+    private func currentValidationMessage() -> String? {
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = identifierField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let typeIndex = typePopUp.indexOfSelectedItem
+        let content = typeIndex == 3
+            ? shortcutField.rawComboString.trimmingCharacters(in: .whitespacesAndNewlines)
+            : contentTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return Self.validationMessage(
+            name: name,
+            identifier: id,
+            typeIndex: typeIndex,
+            content: content,
+            isEditingExistingPlugin: editingPlugin != nil,
+            existingPluginIDs: PluginManager.shared.plugins.map(\.id)
+        )
     }
 
     private func updateSaveAvailability() {
@@ -891,7 +915,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         // Create Plugin Bundle
         let pluginsURL = PluginManager.shared.userPluginsURL
         let bundleURL: URL
-        if let p = editingPlugin, p.directoryURL.path.hasPrefix(pluginsURL.path) {
+        if let p = editingPlugin, PluginManager.isPluginDirectory(p.directoryURL, inside: pluginsURL) {
             bundleURL = p.directoryURL
         } else {
             bundleURL = pluginsURL.appendingPathComponent("\(id).openfireext")
@@ -970,8 +994,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             return
         }
         
-        let pathStr = p.directoryURL.path
-        let isBuiltIn = pathStr.hasPrefix(Bundle.main.bundlePath) || pathStr.contains("/Resources/Plugins/")
+        let isBuiltIn = PluginManager.isBuiltInPluginDirectory(p.directoryURL)
         let hasUserOverride = PluginManager.shared.userPluginURL(for: p.id) != nil
         
         // Let PluginManager handle the actual file/soft deletion logic depending on whether it has an override

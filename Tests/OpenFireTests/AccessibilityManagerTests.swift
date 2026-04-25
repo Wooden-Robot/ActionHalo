@@ -208,6 +208,33 @@ final class AccessibilityManagerTests: XCTestCase {
         ))
     }
 
+    func testShouldRestorePasteboardSnapshotRequiresClipboardToStillContainObservedCopy() {
+        XCTAssertTrue(AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialChangeCount: 10,
+            observedChangeCount: 11,
+            copiedText: "copied",
+            initialString: "before",
+            currentChangeCount: 11,
+            currentString: "copied"
+        ))
+        XCTAssertFalse(AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialChangeCount: 10,
+            observedChangeCount: 11,
+            copiedText: "copied",
+            initialString: "before",
+            currentChangeCount: 12,
+            currentString: "other app update"
+        ))
+        XCTAssertFalse(AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialChangeCount: 10,
+            observedChangeCount: 11,
+            copiedText: "copied",
+            initialString: "before",
+            currentChangeCount: 11,
+            currentString: "different text"
+        ))
+    }
+
     func testShouldTreatCopiedTextAsFreshWhenStringChangesWithoutChangeCount() {
         XCTAssertTrue(AccessibilityManager.shouldTreatCopiedTextAsFresh(
             initialChangeCount: 10,

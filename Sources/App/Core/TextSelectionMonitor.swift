@@ -372,8 +372,7 @@ final class TextSelectionMonitor {
         
         // Check blacklist
         if let bundleId = frontmostApp?.bundleIdentifier {
-            let excluded = UserDefaults.standard.stringArray(forKey: "ExcludedApps") ?? []
-            if excluded.contains(bundleId) {
+            if AppExclusionStore.isExcluded(bundleId) {
                 mouseDownLocation = nil
                 mouseDownDragPasteboardChangeCount = nil
                 mouseDownWindowSnapshot = nil

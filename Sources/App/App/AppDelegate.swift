@@ -6,7 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let pastePluginID = "com.openfire.builtin.paste"
     static let menuDismissEventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .keyDown]
     static let resetAccessibilityOnUpdateKey = "ResetAccessibilityPermissionsOnUpdate"
-    static let excludedAppsDefaultsKey = "ExcludedApps"
+    static let excludedAppsDefaultsKey = AppExclusionStore.defaultsKey
     static let defaultOfficeSuiteExcludedAppsMigrationKey = "DefaultOfficeAppsExcludedMigrationVersion"
     static let defaultOfficeSuiteExcludedAppsMigrationVersion = 1
     static let defaultOfficeSuiteExcludedApps: [String] = [
@@ -168,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func applyDefaultOfficeSuiteExcludedAppsMigrationIfNeeded(userDefaults: UserDefaults = .standard) {
-        let existingExcludedApps = userDefaults.stringArray(forKey: Self.excludedAppsDefaultsKey) ?? []
+        let existingExcludedApps = AppExclusionStore.excludedApps(userDefaults: userDefaults)
         let storedMigrationVersion = userDefaults.integer(forKey: Self.defaultOfficeSuiteExcludedAppsMigrationKey)
         let migrated = Self.migratedExcludedApps(
             existingExcludedApps: existingExcludedApps,
@@ -179,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        userDefaults.set(migrated.apps, forKey: Self.excludedAppsDefaultsKey)
+        AppExclusionStore.setExcludedApps(migrated.apps, userDefaults: userDefaults)
         userDefaults.set(migrated.newMigrationVersion, forKey: Self.defaultOfficeSuiteExcludedAppsMigrationKey)
     }
     

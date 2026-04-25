@@ -157,6 +157,7 @@
 "Name and Identifier cannot be empty." = "名称和标识符不能为空。";
 "Identifier must use only letters, numbers, dots, and hyphens." = "标识符只能包含字母、数字、点和连字符。";
 "Identifier should contain at least one dot." = "标识符至少应包含一个点。";
+"Identifier is reserved for a built-in plugin." = "该标识符已保留给内置插件使用。";
 "URL cannot be empty" = "URL 不能为空";
 "URL must be a valid absolute URL." = "URL 必须是合法的绝对地址。";
 "Script cannot be empty" = "脚本不能为空";

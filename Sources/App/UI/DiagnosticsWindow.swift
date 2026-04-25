@@ -192,8 +192,7 @@ final class DiagnosticsWindow: NSWindowController {
         let frontAppName = frontApp?.localizedName ?? "Unknown".localized
         let frontAppBundleID = frontApp?.bundleIdentifier ?? "Unavailable".localized
 
-        let excludedApps = UserDefaults.standard.stringArray(forKey: "ExcludedApps") ?? []
-        let isAppExcluded = excludedApps.contains(frontAppBundleID)
+        let isAppExcluded = AppExclusionStore.isExcluded(frontApp?.bundleIdentifier)
         let accessibilityEnabled = AccessibilityManager.shared.isAccessibilityEnabled
         let accessibilitySelectedText = AccessibilityManager.shared.getSelectedText() ?? ""
         let focusedRole = AccessibilityManager.shared.focusedElementRoleDescription() ?? "Unavailable".localized
