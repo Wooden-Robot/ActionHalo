@@ -30,7 +30,7 @@ final class PluginManager {
     ]
     
     var plugins: [Plugin] = []
-    private var fileWatchers: [DispatchSourceFileSystemObject] = []
+    private var directoryWatchers: [String: DispatchSourceFileSystemObject] = [:]
     private var pendingReloadWorkItem: DispatchWorkItem?
     private let loadStateQueue = DispatchQueue(label: "com.openfire.plugin-load-state")
     private var latestScheduledLoadID: UInt64 = 0
@@ -130,6 +130,33 @@ final class PluginManager {
         builtInPluginsURL: URL = PluginManager.shared.builtInPluginsURL
     ) -> Bool {
         isPluginDirectory(pluginURL, inside: builtInPluginsURL)
+    }
+
+    static func pluginPackageDirectories(
+        in directoryURL: URL,
+        fileManager: FileManager = .default
+    ) -> [URL] {
+        let contents = (try? fileManager.contentsOfDirectory(
+            at: directoryURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        return contents
+            .filter { url in
+                guard url.pathExtension == "openfireext" else { return false }
+                return (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+            }
+            .sorted {
+                $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+            }
+    }
+
+    static func watchablePluginDirectories(
+        userPluginsURL: URL,
+        fileManager: FileManager = .default
+    ) -> [URL] {
+        [userPluginsURL] + pluginPackageDirectories(in: userPluginsURL, fileManager: fileManager)
     }
     
     // MARK: - Loading
@@ -455,21 +482,50 @@ final class PluginManager {
     // MARK: - Hot Reload (File System Watching)
     
     func startWatchingPluginDirectories() {
-        watchDirectory(userPluginsURL)
+        for directoryURL in Self.watchablePluginDirectories(userPluginsURL: userPluginsURL) {
+            watchDirectory(
+                directoryURL,
+                refreshPackageWatchersOnEvent: Self.watchPath(for: directoryURL) == Self.watchPath(for: userPluginsURL)
+            )
+        }
     }
     
     func stopWatchingPluginDirectories() {
         pendingReloadWorkItem?.cancel()
         pendingReloadWorkItem = nil
-        for watcher in fileWatchers {
+        for watcher in directoryWatchers.values {
             watcher.cancel()
         }
-        fileWatchers.removeAll()
+        directoryWatchers.removeAll()
     }
     
-    private func watchDirectory(_ url: URL) {
+    private static func watchPath(for url: URL) -> String {
+        url.standardizedFileURL.path
+    }
+
+    private func refreshUserPluginPackageWatchers() {
+        let userPluginsPath = Self.watchPath(for: userPluginsURL)
+        let packageURLs = Self.pluginPackageDirectories(in: userPluginsURL)
+        let packagePaths = Set(packageURLs.map { Self.watchPath(for: $0) })
+
+        let stalePackagePaths = directoryWatchers.keys.filter { path in
+            path != userPluginsPath && !packagePaths.contains(path)
+        }
+        for path in stalePackagePaths {
+            directoryWatchers[path]?.cancel()
+            directoryWatchers.removeValue(forKey: path)
+        }
+
+        for packageURL in packageURLs {
+            watchDirectory(packageURL, refreshPackageWatchersOnEvent: false)
+        }
+    }
+
+    private func watchDirectory(_ url: URL, refreshPackageWatchersOnEvent: Bool) {
         // Ensure directory exists
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let watchPath = Self.watchPath(for: url)
+        guard directoryWatchers[watchPath] == nil else { return }
         
         let fd = open(url.path, O_EVTONLY)
         guard fd >= 0 else {
@@ -485,6 +541,9 @@ final class PluginManager {
         
         source.setEventHandler { [weak self] in
             NSLog("[OpenFire] Plugin directory changed, reloading...")
+            if refreshPackageWatchersOnEvent {
+                self?.refreshUserPluginPackageWatchers()
+            }
             self?.scheduleReloadPlugins()
         }
         
@@ -493,7 +552,7 @@ final class PluginManager {
         }
         
         source.resume()
-        fileWatchers.append(source)
+        directoryWatchers[watchPath] = source
         
         NSLog("[OpenFire] Watching plugin directory: \(url.path)")
     }

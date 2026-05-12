@@ -327,6 +327,24 @@ final class PluginManagerTests: XCTestCase {
         ))
     }
 
+    func testWatchablePluginDirectoriesIncludesExistingPluginPackages() throws {
+        let pluginsURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(pluginsURL)
+
+        let packageURL = pluginsURL.appendingPathComponent("Custom.openfireext")
+        let regularDirectoryURL = pluginsURL.appendingPathComponent("Notes")
+        let fakePackageFileURL = pluginsURL.appendingPathComponent("NotADirectory.openfireext")
+
+        try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: regularDirectoryURL, withIntermediateDirectories: true)
+        try Data().write(to: fakePackageFileURL)
+
+        let watchableNames = PluginManager.watchablePluginDirectories(userPluginsURL: pluginsURL)
+            .map(\.lastPathComponent)
+
+        XCTAssertEqual(watchableNames, [pluginsURL.lastPathComponent, "Custom.openfireext"])
+    }
+
     func testExecutionTrustTracksCurrentFingerprint() throws {
         let manager = PluginManager.shared
         let bundleURL = try makeScriptPluginBundle(

@@ -39,9 +39,10 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         let scrollView = NSScrollView()
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = false
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
-        scrollView.scrollerStyle = .overlay
+        scrollView.scrollerStyle = .legacy
         
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("plugin"))
         col.width = viewWidth - 20

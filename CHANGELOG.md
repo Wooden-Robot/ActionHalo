@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.19
+- 修复直接往插件目录新增 `.openfireext` 插件包后列表不刷新的问题：现在会同时监听用户插件目录和已有插件包目录，包内 `Config.json` 后续写入也会触发重新加载。
+- 插件管理列表滚动条改为默认显示，避免用户误以为只加载了前 10 个插件。
+- 补充 `PluginManager` 回归测试，覆盖可监听插件目录筛选与新增插件包监听链路。
+
+- Fixed plugin packages added directly to the plugins folder not appearing in the management list: OpenFire now watches both the user plugins directory and existing `.openfireext` package directories, so later writes such as `Config.json` trigger reloads.
+- Made the plugin management scrollbar always visible so users can tell there are more than the first 10 plugins.
+- Added `PluginManager` regression coverage for watchable plugin-directory discovery and newly added plugin package watching.
+
 ## v0.3.18
 - 默认将整套办公软件加入 `ExcludedApps`：Apple iWork（`Pages / Numbers / Keynote`，含旧版 iWork bundle id）、Microsoft Office（`Word / Excel / PowerPoint`）与 WPS。
 - 新增一次性迁移逻辑：新装和老用户升级都会补齐上述默认禁用项，但用户后续手动重新开启后不会在下次启动时被自动关回去。
