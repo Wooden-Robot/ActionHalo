@@ -34,8 +34,19 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         super.init(coder: coder)
         setupUI()
     }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
     
     private func setupUI() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(pluginsChanged),
+            name: PluginManager.pluginsReloadedNotification,
+            object: nil
+        )
+
         let scrollView = NSScrollView()
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
@@ -77,6 +88,16 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         editor.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         editorWindow = editor
+    }
+
+    @objc private func pluginsChanged() {
+        if Thread.isMainThread {
+            reloadPlugins()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.reloadPlugins()
+            }
+        }
     }
     
     /// Reload with current plugins

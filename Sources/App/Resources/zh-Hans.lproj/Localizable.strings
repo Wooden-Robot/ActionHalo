@@ -127,7 +127,7 @@
 "Eng Desc:" = "英文描述 (可选):";
 "Optional English description" = "选填，切换语言时显示此描述";
 "Identifier:" = "标识符:";
-"e.g.: com.openfire.search" = "例如: com.openfire.search";
+"e.g.: z-lib" = "例如: z-lib";
 "Icon:" = "图标:";
 "Custom..." = "自定义...";
 "Type:" = "类型:";
@@ -156,7 +156,7 @@
 "Save Failed" = "保存失败";
 "Name and Identifier cannot be empty." = "名称和标识符不能为空。";
 "Identifier must use only letters, numbers, dots, and hyphens." = "标识符只能包含字母、数字、点和连字符。";
-"Identifier should contain at least one dot." = "标识符至少应包含一个点。";
+"Identifier cannot start or end with dots or hyphens." = "标识符不能以点或连字符开头或结尾。";
 "Identifier is reserved for a built-in plugin." = "该标识符已保留给内置插件使用。";
 "URL cannot be empty" = "URL 不能为空";
 "URL must be a valid absolute URL." = "URL 必须是合法的绝对地址。";

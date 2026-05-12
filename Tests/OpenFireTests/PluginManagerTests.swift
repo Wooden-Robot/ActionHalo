@@ -7,6 +7,9 @@ final class PluginManagerTests: XCTestCase {
     override func setUp() {
         super.setUp()
         UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
+        let userPluginsURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        PluginManager.shared.userPluginsDirectoryOverride = userPluginsURL
+        temporaryDirectories.append(userPluginsURL)
     }
     
     override func tearDown() {
@@ -14,6 +17,7 @@ final class PluginManagerTests: XCTestCase {
             try? FileManager.default.removeItem(at: url)
         }
         temporaryDirectories.removeAll()
+        PluginManager.shared.userPluginsDirectoryOverride = nil
         UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
         super.tearDown()
     }
@@ -327,6 +331,34 @@ final class PluginManagerTests: XCTestCase {
         ))
     }
 
+    func testVisibleUserPluginFileNameDoesNotCreateHiddenPackageNames() {
+        XCTAssertEqual(PluginManager.visibleUserPluginFileName(for: ".book"), "book.openfireext")
+        XCTAssertEqual(PluginManager.visibleUserPluginFileName(for: "com.test.book"), "com.test.book.openfireext")
+    }
+
+    func testRepairHiddenUserPluginPackagesRenamesDotPrefixedPackage() throws {
+        let pluginsURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let hiddenPackageURL = pluginsURL.appendingPathComponent(".book.openfireext")
+        let visiblePackageURL = pluginsURL.appendingPathComponent("book.openfireext")
+        temporaryDirectories.append(pluginsURL)
+
+        try FileManager.default.createDirectory(at: hiddenPackageURL, withIntermediateDirectories: true)
+        let config = """
+        {
+            "name": "Book",
+            "identifier": ".book",
+            "action": { "type": "url", "url": "https://example.com?q={text}" }
+        }
+        """
+        try config.write(to: hiddenPackageURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+
+        PluginManager.repairHiddenUserPluginPackages(in: pluginsURL)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: hiddenPackageURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: visiblePackageURL.path))
+        XCTAssertEqual(PluginLoader.load(from: visiblePackageURL)?.id, ".book")
+    }
+
     func testWatchablePluginDirectoriesIncludesExistingPluginPackages() throws {
         let pluginsURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         temporaryDirectories.append(pluginsURL)
@@ -382,6 +414,27 @@ final class PluginManagerTests: XCTestCase {
         let resolvedURL = manager.userPluginURL(for: "com.test.legacy")
 
         XCTAssertEqual(resolvedURL?.lastPathComponent, "Legacy Name.openfireext")
+    }
+
+    func testRemoveDuplicateUserPluginsPreservesNewlySavedPackageURL() throws {
+        let manager = PluginManager.shared
+        let identifier = "z-lib-test-\(UUID().uuidString.lowercased())"
+        let packageURL = manager.userPluginsURL.appendingPathComponent("\(identifier).openfireext")
+        temporaryDirectories.append(packageURL)
+
+        try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
+        let config = """
+        {
+            "name": "Z-Lib",
+            "identifier": "\(identifier)",
+            "action": { "type": "url", "url": "https://z-library.sk/s/{text}" }
+        }
+        """
+        try config.write(to: packageURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+
+        manager.removeDuplicateUserPlugins(for: identifier, keeping: packageURL)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: packageURL.path))
     }
 
     func testInstallPluginRejectsInvalidPluginPackage() throws {

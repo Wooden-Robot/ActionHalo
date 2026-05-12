@@ -34,9 +34,13 @@ final class PluginManager {
     private var pendingReloadWorkItem: DispatchWorkItem?
     private let loadStateQueue = DispatchQueue(label: "com.openfire.plugin-load-state")
     private var latestScheduledLoadID: UInt64 = 0
+    var userPluginsDirectoryOverride: URL?
     
     /// User plugins directory
     var userPluginsURL: URL {
+        if let userPluginsDirectoryOverride {
+            return userPluginsDirectoryOverride
+        }
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return appSupport.appendingPathComponent("OpenFire/Plugins")
     }
@@ -158,6 +162,52 @@ final class PluginManager {
     ) -> [URL] {
         [userPluginsURL] + pluginPackageDirectories(in: userPluginsURL, fileManager: fileManager)
     }
+
+    static func sameFileURL(_ lhs: URL, _ rhs: URL) -> Bool {
+        lhs.standardizedFileURL.resolvingSymlinksInPath().path ==
+            rhs.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    static func visibleUserPluginFileName(for identifier: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-"))
+        let sanitizedScalars = identifier.unicodeScalars.map { scalar -> String in
+            allowed.contains(scalar) ? String(scalar) : "-"
+        }
+        let sanitized = sanitizedScalars.joined()
+        let visibleBase = sanitized
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
+            .isEmpty ? "custom-plugin" : sanitized.trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
+
+        return "\(visibleBase).openfireext"
+    }
+
+    static func repairHiddenUserPluginPackages(in userPluginsURL: URL, fileManager: FileManager = .default) {
+        let contents = (try? fileManager.contentsOfDirectory(
+            at: userPluginsURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: []
+        )) ?? []
+
+        for packageURL in contents where packageURL.lastPathComponent.hasPrefix(".") && packageURL.pathExtension == "openfireext" {
+            guard (try? packageURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+                  let plugin = PluginLoader.load(from: packageURL) else {
+                continue
+            }
+
+            let visibleURL = userPluginsURL.appendingPathComponent(visibleUserPluginFileName(for: plugin.id))
+            guard !Self.sameFileURL(visibleURL, packageURL),
+                  !fileManager.fileExists(atPath: visibleURL.path) else {
+                continue
+            }
+
+            do {
+                try fileManager.moveItem(at: packageURL, to: visibleURL)
+                NSLog("[OpenFire] Repaired hidden plugin package: \(packageURL.lastPathComponent) -> \(visibleURL.lastPathComponent)")
+            } catch {
+                NSLog("[OpenFire] Failed to repair hidden plugin package \(packageURL.path): \(error.localizedDescription)")
+            }
+        }
+    }
     
     // MARK: - Loading
 
@@ -184,6 +234,7 @@ final class PluginManager {
             let builtIn = PluginLoader.scanDirectory(self.builtInPluginsURL)
             
             // Load user plugins
+            Self.repairHiddenUserPluginPackages(in: self.userPluginsURL)
             let user = PluginLoader.scanDirectory(self.userPluginsURL)
             
             let mergedPlugins = Self.mergePluginsPreservingExisting(user: user, builtIn: builtIn)
@@ -446,9 +497,14 @@ final class PluginManager {
     }
 
     func removeDuplicateUserPlugins(for identifier: String, keeping preservedURL: URL? = nil) {
-        for url in userPluginURLs(for: identifier) where url != preservedURL {
+        for url in userPluginURLs(for: identifier) where !Self.shouldPreservePluginURL(url, preservedURL: preservedURL) {
             try? FileManager.default.removeItem(at: url)
         }
+    }
+
+    private static func shouldPreservePluginURL(_ url: URL, preservedURL: URL?) -> Bool {
+        guard let preservedURL else { return false }
+        return sameFileURL(url, preservedURL)
     }
     
     func deletePlugin(_ plugin: Plugin) throws {
@@ -804,10 +860,10 @@ final class PluginManager {
             return false
         }
 
-        let canonicalFileName = "\(sourcePlugin.id).openfireext"
+        let canonicalFileName = Self.visibleUserPluginFileName(for: sourcePlugin.id)
         let destinationURL = userPluginsURL.appendingPathComponent(canonicalFileName)
         if let existingURL = userPluginURL(for: sourcePlugin.id),
-           existingURL != destinationURL,
+           !Self.sameFileURL(existingURL, destinationURL),
            fileManager.fileExists(atPath: existingURL.path) {
             try? fileManager.removeItem(at: existingURL)
         }

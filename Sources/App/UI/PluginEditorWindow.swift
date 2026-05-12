@@ -291,7 +291,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         // Identifier
         let idLabel = makeLabel("Identifier:".localized)
         identifierField.translatesAutoresizingMaskIntoConstraints = false
-        identifierField.placeholderString = "e.g.: com.openfire.search".localized
+        identifierField.placeholderString = "e.g.: z-lib".localized
         identifierField.delegate = self
         if editingPlugin != nil {
             identifierField.isEnabled = false // Cannot change ID of existing plugin easily
@@ -733,8 +733,9 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             return "Identifier must use only letters, numbers, dots, and hyphens.".localized
         }
 
-        if !id.contains(".") {
-            return "Identifier should contain at least one dot.".localized
+        if !isEditingExistingPlugin,
+           (id.hasPrefix(".") || id.hasPrefix("-") || id.hasSuffix(".") || id.hasSuffix("-") || id.contains("..")) {
+            return "Identifier cannot start or end with dots or hyphens.".localized
         }
 
         if !isEditingExistingPlugin, PluginManager.coreDefaultPluginIDs.contains(id) {
@@ -918,7 +919,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         if let p = editingPlugin, PluginManager.isPluginDirectory(p.directoryURL, inside: pluginsURL) {
             bundleURL = p.directoryURL
         } else {
-            bundleURL = pluginsURL.appendingPathComponent("\(id).openfireext")
+            bundleURL = pluginsURL.appendingPathComponent(PluginManager.visibleUserPluginFileName(for: id))
         }
         let editingPluginWasNil = (editingPlugin == nil)
         

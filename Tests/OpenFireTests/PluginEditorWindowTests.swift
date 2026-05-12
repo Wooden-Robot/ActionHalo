@@ -40,4 +40,43 @@ final class PluginEditorWindowTests: XCTestCase {
 
         XCTAssertEqual(message, "A plugin with this identifier already exists".localized)
     }
+
+    func testValidationAllowsSimpleCustomPluginIdentifiers() {
+        let message = PluginEditorWindow.validationMessage(
+            name: "Book",
+            identifier: "book",
+            typeIndex: 0,
+            content: "https://example.com?q={text}",
+            isEditingExistingPlugin: false,
+            existingPluginIDs: []
+        )
+
+        XCTAssertNil(message)
+    }
+
+    func testValidationAllowsHyphenatedSimpleCustomPluginIdentifiers() {
+        let message = PluginEditorWindow.validationMessage(
+            name: "Z-Lib",
+            identifier: "z-lib",
+            typeIndex: 0,
+            content: "https://z-library.sk/s/{text}",
+            isEditingExistingPlugin: false,
+            existingPluginIDs: []
+        )
+
+        XCTAssertNil(message)
+    }
+
+    func testValidationRejectsIdentifiersThatWouldCreateHiddenPluginPackages() {
+        let message = PluginEditorWindow.validationMessage(
+            name: "Book",
+            identifier: ".book",
+            typeIndex: 0,
+            content: "https://example.com?q={text}",
+            isEditingExistingPlugin: false,
+            existingPluginIDs: []
+        )
+
+        XCTAssertEqual(message, "Identifier cannot start or end with dots or hyphens.".localized)
+    }
 }

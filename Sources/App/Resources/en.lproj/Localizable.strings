@@ -127,7 +127,7 @@
 "Eng Desc:" = "Eng Desc:";
 "Optional English description" = "Optional English description";
 "Identifier:" = "Identifier:";
-"e.g.: com.openfire.search" = "e.g.: com.openfire.search";
+"e.g.: z-lib" = "e.g.: z-lib";
 "Icon:" = "Icon:";
 "Custom..." = "Custom...";
 "Type:" = "Type:";
@@ -156,7 +156,7 @@
 "Save Failed" = "Save Failed";
 "Name and Identifier cannot be empty." = "Name and Identifier cannot be empty.";
 "Identifier must use only letters, numbers, dots, and hyphens." = "Identifier must use only letters, numbers, dots, and hyphens.";
-"Identifier should contain at least one dot." = "Identifier should contain at least one dot.";
+"Identifier cannot start or end with dots or hyphens." = "Identifier cannot start or end with dots or hyphens.";
 "Identifier is reserved for a built-in plugin." = "Identifier is reserved for a built-in plugin.";
 "URL cannot be empty" = "URL cannot be empty";
 "URL must be a valid absolute URL." = "URL must be a valid absolute URL.";
