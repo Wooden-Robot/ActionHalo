@@ -316,17 +316,17 @@ final class TextSelectionMonitor {
         let hasFocusedBoundsContext =
             AccessibilityManager.isLikelyRichTextSelectionHost(bundleID: frontmostBundleID) &&
             (startedInsideFocusedElementBounds || endedInsideFocusedElementBounds)
-        let hasTelegramBlindFallback = frontmostBundleID?.lowercased().contains("telegram") == true
+        let hasBlindCopyFallbackHost = AccessibilityManager.shouldAllowBlindCopyFallback(bundleID: frontmostBundleID)
         let hasSelectionSignal =
             (snapshotAtMouseDown?.isReadable == true || currentSnapshot?.isReadable == true) &&
             AccessibilityManager.didSelectionChange(from: snapshotAtMouseDown, to: currentSnapshot)
-        guard hasTextContext || hasSelectionSignal || hasFocusedBoundsContext || hasTelegramBlindFallback else { return false }
+        guard hasTextContext || hasSelectionSignal || hasFocusedBoundsContext || hasBlindCopyFallbackHost else { return false }
         if let snapshotAtMouseDown, snapshotAtMouseDown.canReadSelectedTextViaAccessibility {
             if let currentSnapshot, currentSnapshot.canReadSelectedTextViaAccessibility {
                 return snapshotAtMouseDown.normalizedText != trimmed
             }
 
-            return hasSelectionSignal || hasFocusedBoundsContext || hasTelegramBlindFallback
+            return hasSelectionSignal || hasFocusedBoundsContext || hasBlindCopyFallbackHost
         }
 
         return true

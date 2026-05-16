@@ -189,6 +189,26 @@ final class TextSelectionMonitorTests: XCTestCase {
             startedInsideFocusedElementBounds: true,
             endedInsideFocusedElementBounds: true
         ))
+        XCTAssertTrue(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "selected",
+            snapshotAtMouseDown: unreadableSnapshot,
+            currentSnapshot: nil,
+            frontmostBundleID: "com.google.Chrome",
+            startedInTextContext: false,
+            endedInTextContext: false,
+            startedInsideFocusedElementBounds: false,
+            endedInsideFocusedElementBounds: false
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "selected",
+            snapshotAtMouseDown: unreadableSnapshot,
+            currentSnapshot: nil,
+            frontmostBundleID: "company.thebrowser.Browser",
+            startedInTextContext: false,
+            endedInTextContext: false,
+            startedInsideFocusedElementBounds: false,
+            endedInsideFocusedElementBounds: false
+        ))
         XCTAssertFalse(TextSelectionMonitor.shouldHandleCopiedDragSelection(
             copiedText: "selected",
             snapshotAtMouseDown: unreadableSnapshot,
@@ -198,6 +218,16 @@ final class TextSelectionMonitorTests: XCTestCase {
             endedInTextContext: false,
             startedInsideFocusedElementBounds: true,
             endedInsideFocusedElementBounds: true
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "selected",
+            snapshotAtMouseDown: unreadableSnapshot,
+            currentSnapshot: nil,
+            frontmostBundleID: "com.microsoft.remotedesktop",
+            startedInTextContext: false,
+            endedInTextContext: false,
+            startedInsideFocusedElementBounds: false,
+            endedInsideFocusedElementBounds: false
         ))
     }
 

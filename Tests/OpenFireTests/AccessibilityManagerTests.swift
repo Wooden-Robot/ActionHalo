@@ -153,6 +153,16 @@ final class AccessibilityManagerTests: XCTestCase {
         XCTAssertFalse(AccessibilityManager.isLikelyRichTextSelectionHost(bundleID: "com.microsoft.remotedesktop"))
     }
 
+    func testShouldAllowBlindCopyFallbackCoversBrowsersWithoutMatchingRemoteDesktop() {
+        XCTAssertTrue(AccessibilityManager.shouldAllowBlindCopyFallback(bundleID: "com.google.Chrome"))
+        XCTAssertTrue(AccessibilityManager.shouldAllowBlindCopyFallback(bundleID: "com.brave.Browser"))
+        XCTAssertTrue(AccessibilityManager.shouldAllowBlindCopyFallback(bundleID: "company.thebrowser.Browser"))
+        XCTAssertTrue(AccessibilityManager.shouldAllowBlindCopyFallback(bundleID: "com.openai.codex"))
+        XCTAssertTrue(AccessibilityManager.shouldAllowBlindCopyFallback(bundleID: "ru.keepcoder.Telegram"))
+        XCTAssertFalse(AccessibilityManager.shouldAllowBlindCopyFallback(bundleID: "com.apple.TextEdit"))
+        XCTAssertFalse(AccessibilityManager.shouldAllowBlindCopyFallback(bundleID: "com.microsoft.remotedesktop"))
+    }
+
     func testShouldTreatFocusedRoleAsTextSelectionContextRejectsBroadCodeHeuristicMatches() {
         let result = AccessibilityManager.shouldTreatFocusedRoleAsTextSelectionContext(
             role: "AXGroup",

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.20
+- 修复 Chrome 等浏览器里选中文本无法唤起圆环的问题：当 AX 焦点元素不可读时，允许受控的浏览器/Chromium 富文本宿主走 Cmd+C 回退获取选中文本。
+- 保留文件拖拽、窗口拖拽和普通编辑器的保护逻辑，避免为了修复浏览器触发而重新引入误触发。
+- 补充 `AccessibilityManager` 与 `TextSelectionMonitor` 回归测试，覆盖 Chrome、Arc/Codex、Telegram 与 Remote Desktop 边界。
+
+- Fixed text selection not opening the radial menu in Chrome and similar browsers by allowing controlled browser/Chromium rich-text hosts to use the Cmd+C fallback when AX focused elements are unreadable.
+- Kept file-drag, window-drag, and regular-editor safeguards in place so the browser fix does not reintroduce false triggers.
+- Added `AccessibilityManager` and `TextSelectionMonitor` regression coverage for Chrome, Arc/Codex, Telegram, and Remote Desktop boundaries.
+
 ## v0.3.19
 - 修复直接往插件目录新增 `.openfireext` 插件包后列表不刷新的问题：现在会同时监听用户插件目录和已有插件包目录，包内 `Config.json` 后续写入也会触发重新加载。
 - 插件管理列表滚动条改为默认显示，避免用户误以为只加载了前 10 个插件。

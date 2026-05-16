@@ -28,6 +28,32 @@ final class AccessibilityManager {
         "com.visualstudio.code",
         "com.visualstudio.code.oss"
     ]
+    private static let blindCopyFallbackBundleTokenHints: Set<String> = [
+        "telegram",
+        "chrome",
+        "chromium",
+        "brave",
+        "edge",
+        "edgemac",
+        "browser",
+        "firefox",
+        "safari",
+        "webkit",
+        "vivaldi",
+        "opera",
+        "arc",
+        "codex"
+    ]
+    private static let blindCopyFallbackBundleExactHints: Set<String> = [
+        "ru.keepcoder.telegram",
+        "com.google.chrome",
+        "com.google.chrome.canary",
+        "org.chromium.chromium",
+        "com.brave.browser",
+        "com.microsoft.edgemac",
+        "company.thebrowser.browser",
+        "com.openai.codex"
+    ]
 
     private static let protectedTextBooleanAttributes: [CFString] = [
         "AXValueProtected" as CFString,
@@ -533,13 +559,25 @@ final class AccessibilityManager {
             return true
         }
 
-        let bundleTokens = Set(
+        return !bundleTokens(for: normalizedBundleID).intersection(richTextHostBundleTokenHints).isEmpty
+    }
+
+    static func shouldAllowBlindCopyFallback(bundleID: String?) -> Bool {
+        guard let bundleID else { return false }
+        let normalizedBundleID = bundleID.lowercased()
+        if blindCopyFallbackBundleExactHints.contains(normalizedBundleID) {
+            return true
+        }
+
+        return !bundleTokens(for: normalizedBundleID).intersection(blindCopyFallbackBundleTokenHints).isEmpty
+    }
+
+    private static func bundleTokens(for normalizedBundleID: String) -> Set<String> {
+        Set(
             normalizedBundleID
                 .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
                 .map(String.init)
         )
-
-        return !bundleTokens.intersection(richTextHostBundleTokenHints).isEmpty
     }
 
     static func shouldTreatFocusedRoleAsTextSelectionContext(
