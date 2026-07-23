@@ -229,7 +229,7 @@ final class DiagnosticsWindow: NSWindowController {
         )
 
         let diagnostics = PluginManager.shared.visibilityDiagnostics(for: selectedText, appBundleID: frontApp?.bundleIdentifier)
-        let shownPlugins = PluginManager.shared.availablePlugins(for: selectedText, appBundleID: frontApp?.bundleIdentifier)
+        let shownPlugins = PluginManager.shared.presentationPlugins(appBundleID: frontApp?.bundleIdentifier)
         let shownPluginIDs = Set(shownPlugins.map(\.id))
         let executablePluginIDs = Set(
             shownPlugins

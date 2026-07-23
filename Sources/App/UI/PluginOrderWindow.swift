@@ -3,6 +3,10 @@ import Cocoa
 /// Custom NSView embedded inside a menu item to provide an interactive plugin list
 /// with click-to-toggle and drag-to-reorder functionality
 final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSource {
+    struct ReorderResult {
+        let plugins: [Plugin]
+        let targetRow: Int
+    }
     
     private let tableView = NSTableView()
     private var orderedPlugins: [Plugin] = []
@@ -18,6 +22,8 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
     private let trailingPadding: CGFloat = 8
     
     private var editorWindow: PluginEditorWindow?
+    private var trustStatuses: [String: Bool] = [:]
+    private var trustStatusGeneration: UInt64 = 0
     
     /// Flag to suppress notification-triggered reload during drag reorder
     private var isReordering = false
@@ -37,6 +43,29 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+    }
+
+    static func reorderedPlugins(_ plugins: [Plugin], sourceRow: Int, proposedRow: Int) -> ReorderResult? {
+        guard plugins.indices.contains(sourceRow),
+              proposedRow >= 0,
+              proposedRow <= plugins.count else {
+            return nil
+        }
+
+        var reordered = plugins
+        let plugin = reordered.remove(at: sourceRow)
+        let targetRow = sourceRow < proposedRow ? proposedRow - 1 : proposedRow
+
+        guard targetRow >= 0, targetRow <= reordered.count else {
+            return nil
+        }
+
+        reordered.insert(plugin, at: targetRow)
+        return ReorderResult(plugins: reordered, targetRow: targetRow)
+    }
+
+    static func shouldAllowEditing(_ plugin: Plugin) -> Bool {
+        !PluginManager.isReservedCorePluginIdentifier(plugin.id)
     }
     
     private func setupUI() {
@@ -106,6 +135,7 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         guard !isReordering else { return }
         
         orderedPlugins = getOrderedPlugins()
+        refreshTrustStatuses()
         
         // Resize view to fit all plugins (max 10 visible) + Add button
         let visibleCount = min(orderedPlugins.count, 10)
@@ -121,20 +151,31 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         
         tableView.reloadData()
     }
+
+    private func refreshTrustStatuses() {
+        trustStatusGeneration &+= 1
+        let generation = trustStatusGeneration
+        let protectedPlugins = orderedPlugins.filter(\.requiresExecutionTrust)
+        trustStatuses = [:]
+
+        guard !protectedPlugins.isEmpty else { return }
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var statuses: [String: Bool] = [:]
+            for plugin in protectedPlugins {
+                statuses[plugin.id] = PluginManager.shared.isExecutionTrusted(for: plugin)
+            }
+
+            DispatchQueue.main.async {
+                guard let self, self.trustStatusGeneration == generation else { return }
+                self.trustStatuses = statuses
+                self.tableView.reloadData()
+            }
+        }
+    }
     
     private func getOrderedPlugins() -> [Plugin] {
-        let savedOrder = UserDefaults.standard.stringArray(forKey: "pluginOrder") ?? []
-        let allPlugins = PluginManager.shared.plugins
-        
-        if savedOrder.isEmpty {
-            return allPlugins.sorted { $0.order < $1.order }
-        }
-        var ordered: [Plugin] = []
-        for id in savedOrder {
-            if let p = allPlugins.first(where: { $0.id == id }) { ordered.append(p) }
-        }
-        for p in allPlugins where !ordered.contains(where: { $0.id == p.id }) { ordered.append(p) }
-        return ordered
+        PluginManager.shared.orderedPluginsForDisplay()
     }
     
     private func saveOrder() {
@@ -156,6 +197,7 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         let row = tableView.row(for: sender)
         guard row >= 0 && row < orderedPlugins.count else { return }
         let plugin = orderedPlugins[row]
+        guard Self.shouldAllowEditing(plugin) else { return }
         
         let editor = PluginEditorWindow(plugin: plugin)
         editor.makeKeyAndOrderFront(nil)
@@ -167,12 +209,16 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         let row = tableView.row(for: sender)
         guard row >= 0 && row < orderedPlugins.count else { return }
         let plugin = orderedPlugins[row]
-        let isTrusted = PluginManager.shared.isExecutionTrusted(for: plugin)
+        guard let isTrusted = trustStatuses[plugin.id] else {
+            NSSound.beep()
+            refreshTrustStatuses()
+            return
+        }
 
         let alert = NSAlert()
         alert.messageText = "Plugin Trust".localized
         alert.informativeText = String(
-            format: "Plugin '%@' uses script execution.\n\nCurrent status: %@\nLocation: %@".localized,
+            format: "Plugin '%@' uses protected actions.\n\nCurrent status: %@\nLocation: %@".localized,
             plugin.name,
             isTrusted ? "Trusted".localized : "Not Trusted".localized,
             plugin.directoryURL.path
@@ -189,25 +235,31 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         let response = alert.runModal()
         if isTrusted, response == .alertFirstButtonReturn {
             PluginManager.shared.setExecutionTrusted(false, for: plugin)
+            trustStatuses[plugin.id] = false
             tableView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: 0))
         }
     }
 
-    private func styleTrustButton(_ button: NSButton, trusted: Bool) {
+    private func styleTrustButton(_ button: NSButton, trusted: Bool?) {
         button.wantsLayer = true
         button.isBordered = false
         button.bezelStyle = .inline
         button.layer?.cornerRadius = 7
         button.layer?.masksToBounds = false
 
-        let tint = trusted ? NSColor.systemGreen : NSColor.systemOrange
+        let tint: NSColor
+        if let trusted {
+            tint = trusted ? .systemGreen : .systemOrange
+        } else {
+            tint = .tertiaryLabelColor
+        }
         button.contentTintColor = tint
-        button.layer?.backgroundColor = tint.withAlphaComponent(trusted ? 0.16 : 0.22).cgColor
+        button.layer?.backgroundColor = tint.withAlphaComponent(trusted == true ? 0.16 : 0.22).cgColor
         button.layer?.borderWidth = 1
-        button.layer?.borderColor = tint.withAlphaComponent(trusted ? 0.28 : 0.4).cgColor
+        button.layer?.borderColor = tint.withAlphaComponent(trusted == true ? 0.28 : 0.4).cgColor
         button.layer?.shadowColor = tint.cgColor
-        button.layer?.shadowOpacity = trusted ? 0.18 : 0.28
-        button.layer?.shadowRadius = trusted ? 4 : 6
+        button.layer?.shadowOpacity = trusted == true ? 0.18 : 0.28
+        button.layer?.shadowRadius = trusted == true ? 4 : 6
         button.layer?.shadowOffset = .zero
     }
     
@@ -253,12 +305,18 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
             iconView.contentTintColor = plugin.isEnabled ? .labelColor : .quaternaryLabelColor
         }
         cell.addSubview(iconView)
-        let showDeleteButton = !PluginManager.coreDefaultPluginIDs.contains(plugin.id)
+        let isCoreDefaultPlugin = PluginManager.isReservedCorePluginIdentifier(plugin.id)
+        let showDeleteButton = !isCoreDefaultPlugin
+        let showEditButton = Self.shouldAllowEditing(plugin)
         let showsTrustButton = plugin.requiresExecutionTrust
-        let actionButtonCount = 1 + (showDeleteButton ? 1 : 0) + (showsTrustButton ? 1 : 0)
+        let actionButtonCount =
+            (showEditButton ? 1 : 0) +
+            (showDeleteButton ? 1 : 0) +
+            (showsTrustButton ? 1 : 0)
         let actionAreaWidth =
             CGFloat(actionButtonCount) * actionButtonSize +
             CGFloat(max(0, actionButtonCount - 1)) * actionButtonSpacing +
+            CGFloat(actionButtonCount > 0 ? actionButtonSpacing : 0) +
             dragHandleWidth +
             trailingPadding
         
@@ -275,8 +333,15 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         cell.toolTip = "\(plugin.name)\n\(plugin.id)"
 
         let handleX = viewWidth - trailingPadding - dragHandleWidth
-        let editX = handleX - actionButtonSpacing - actionButtonSize
-        var actionX = editX - actionButtonSpacing - actionButtonSize
+        var actionX = handleX - actionButtonSpacing - actionButtonSize
+
+        let editX: CGFloat?
+        if showEditButton {
+            editX = actionX
+            actionX -= actionButtonSize + actionButtonSpacing
+        } else {
+            editX = nil
+        }
 
         if showDeleteButton {
             // Delete Button (Trash)
@@ -298,30 +363,43 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         if showsTrustButton {
             let trustBtn = NSButton(frame: NSRect(x: actionX, y: 2, width: 24, height: 24))
             trustBtn.title = ""
-            let trusted = PluginManager.shared.isExecutionTrusted(for: plugin)
-            let symbolName = trusted ? "checkmark.shield" : "exclamationmark.shield"
+            let trusted = trustStatuses[plugin.id]
+            let symbolName: String
+            if let trusted {
+                symbolName = trusted ? "checkmark.shield" : "exclamationmark.shield"
+            } else {
+                symbolName = "ellipsis.circle"
+            }
             if let trustImg = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Plugin Trust".localized) {
                 trustBtn.image = trustImg.withSymbolConfiguration(.init(pointSize: 13, weight: .bold))
             }
             styleTrustButton(trustBtn, trusted: trusted)
             trustBtn.target = self
             trustBtn.action = #selector(showTrustStatus(_:))
-            trustBtn.toolTip = trusted ? "Trusted script plugin".localized : "Script plugin needs trust before running".localized
+            if let trusted {
+                trustBtn.toolTip = trusted
+                    ? "Trusted protected-action plugin".localized
+                    : "Plugin needs trust before running".localized
+            } else {
+                trustBtn.toolTip = "Checking plugin trust status".localized
+            }
             cell.addSubview(trustBtn)
         }
         
-        // Edit Button (Pencil)
-        let editBtn = NSButton(frame: NSRect(x: editX, y: 2, width: 24, height: 24))
-        editBtn.bezelStyle = .inline
-        editBtn.isBordered = false
-        editBtn.title = ""
-        if let editImg = NSImage(systemSymbolName: "pencil", accessibilityDescription: "Edit") {
-            editBtn.image = editImg.withSymbolConfiguration(.init(pointSize: 15, weight: .bold)) // Thickened pencil
+        if let editX {
+            // Edit Button (Pencil)
+            let editBtn = NSButton(frame: NSRect(x: editX, y: 2, width: 24, height: 24))
+            editBtn.bezelStyle = .inline
+            editBtn.isBordered = false
+            editBtn.title = ""
+            if let editImg = NSImage(systemSymbolName: "pencil", accessibilityDescription: "Edit") {
+                editBtn.image = editImg.withSymbolConfiguration(.init(pointSize: 15, weight: .bold)) // Thickened pencil
+            }
+            editBtn.toolTip = "Edit".localized
+            editBtn.target = self
+            editBtn.action = #selector(editPluginClicked(_:))
+            cell.addSubview(editBtn)
         }
-        editBtn.toolTip = "Edit".localized
-        editBtn.target = self
-        editBtn.action = #selector(editPluginClicked(_:))
-        cell.addSubview(editBtn)
         
         // Drag handle hint
         let handle = NSTextField(labelWithString: "⋮⋮")
@@ -417,16 +495,17 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
     func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
         guard let item = info.draggingPasteboard.pasteboardItems?.first,
               let rowStr = item.string(forType: dragType),
-              let sourceRow = Int(rowStr) else { return false }
+              let sourceRow = Int(rowStr),
+              let reorderResult = Self.reorderedPlugins(orderedPlugins, sourceRow: sourceRow, proposedRow: row) else {
+            return false
+        }
         
-        let plugin = orderedPlugins.remove(at: sourceRow)
-        let targetRow = sourceRow < row ? row - 1 : row
-        orderedPlugins.insert(plugin, at: targetRow)
+        orderedPlugins = reorderResult.plugins
         
         // Suppress notification-triggered reload during reorder
         isReordering = true
         
-        tableView.moveRow(at: sourceRow, to: targetRow)
+        tableView.moveRow(at: sourceRow, to: reorderResult.targetRow)
         
         // Remember which row was at the top of the visible area
         let firstVisibleRow = tableView.rows(in: tableView.visibleRect).location

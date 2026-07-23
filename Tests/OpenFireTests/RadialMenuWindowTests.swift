@@ -74,6 +74,34 @@ final class RadialMenuWindowTests: XCTestCase {
         window.hideMenu()
     }
 
+    func testDismissRequestIsDelegatedToWindowOwner() {
+        let window = RadialMenuWindow()
+        window.showMenu(
+            at: NSPoint(x: 400, y: 300),
+            items: makeItems(count: 4),
+            selectedText: "hello"
+        )
+        var requestCount = 0
+        window.onDismissRequested = {
+            requestCount += 1
+        }
+
+        window.requestDismissal()
+
+        XCTAssertEqual(requestCount, 1)
+        XCTAssertTrue(window.isVisible)
+        window.hideMenu()
+    }
+
+    func testInvalidStoredPageSizeFallsBackToDefault() {
+        XCTAssertEqual(RadialMenuWindow.validatedPageSize(0), 12)
+        XCTAssertEqual(RadialMenuWindow.validatedPageSize(1), 12)
+        XCTAssertEqual(RadialMenuWindow.validatedPageSize(2), 12)
+        XCTAssertEqual(RadialMenuWindow.validatedPageSize(999), 12)
+        XCTAssertEqual(RadialMenuWindow.validatedPageSize(6), 6)
+        XCTAssertEqual(RadialMenuWindow.validatedPageSize(16), 16)
+    }
+
     private func renderedMenuView(in window: RadialMenuWindow) -> RadialMenuView? {
         window.contentView?.subviews.compactMap { $0 as? RadialMenuView }.first
     }

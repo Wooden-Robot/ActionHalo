@@ -5,6 +5,9 @@ import Carbon
 /// 1) open the radial menu for the current selection
 /// 2) toggle automatic text-selection triggering on/off
 final class HotkeyManager {
+    private static let maximumVirtualKeyCode: UInt32 = 0x7E
+    private static let supportedModifierMask = UInt32(cmdKey | shiftKey | optionKey | controlKey)
+
     private enum Defaults {
         static let menuHotkeyConfiguredKey = "hotkeyConfigured"
         static let toggleHotkeyConfiguredKey = "toggleHotkeyConfigured"
@@ -18,6 +21,7 @@ final class HotkeyManager {
 
         enum Kind: Equatable {
             case duplicateAssignment
+            case invalidModifiers
             case registerFailed(OSStatus)
         }
     }
@@ -76,6 +80,43 @@ final class HotkeyManager {
     private init() {
         loadHotkey()
     }
+
+    static func hasRequiredGlobalHotkeyModifier(_ modifiers: UInt32) -> Bool {
+        modifiers & UInt32(cmdKey | optionKey | controlKey) != 0
+    }
+
+    static func validatedStoredHotkey(
+        keyCode: Int?,
+        modifiers: Int?
+    ) -> (keyCode: UInt32, modifiers: UInt32)? {
+        guard let keyCode,
+              let modifiers,
+              keyCode >= 0,
+              keyCode <= Int(maximumVirtualKeyCode),
+              modifiers >= 0,
+              modifiers <= Int(UInt32.max) else {
+            return nil
+        }
+
+        let validatedModifiers = UInt32(modifiers)
+        guard validatedModifiers & ~supportedModifierMask == 0,
+              hasRequiredGlobalHotkeyModifier(validatedModifiers) else {
+            return nil
+        }
+        return (UInt32(keyCode), validatedModifiers)
+    }
+
+    private static func validatedHotkey(
+        _ hotkey: (keyCode: UInt32, modifiers: UInt32)?
+    ) -> (keyCode: UInt32, modifiers: UInt32)? {
+        guard let hotkey,
+              hotkey.keyCode <= maximumVirtualKeyCode,
+              hotkey.modifiers & ~supportedModifierMask == 0,
+              hasRequiredGlobalHotkeyModifier(hotkey.modifiers) else {
+            return nil
+        }
+        return hotkey
+    }
     
     /// Register all global hotkeys
     @discardableResult
@@ -83,7 +124,27 @@ final class HotkeyManager {
         unregisterHotkeys()
         var issues: [RegistrationIssue] = []
 
-        if let hk = hotkey, let thk = toggleHotkey, hk == thk {
+        let menuHotkey = Self.validatedHotkey(hotkey)
+        let autoTriggerHotkey = Self.validatedHotkey(toggleHotkey)
+
+        if hotkey != nil, menuHotkey == nil {
+            issues.append(
+                RegistrationIssue(
+                    kind: .invalidModifiers,
+                    message: "Open Menu Hotkey must include Command, Option, or Control.".localized
+                )
+            )
+        }
+        if toggleHotkey != nil, autoTriggerHotkey == nil {
+            issues.append(
+                RegistrationIssue(
+                    kind: .invalidModifiers,
+                    message: "Auto Trigger Toggle Hotkey must include Command, Option, or Control.".localized
+                )
+            )
+        }
+
+        if let hk = menuHotkey, let thk = autoTriggerHotkey, hk == thk {
             let issue = RegistrationIssue(
                 kind: .duplicateAssignment,
                 message: "Open Menu Hotkey and Auto Trigger Toggle Hotkey cannot use the same shortcut.".localized
@@ -92,6 +153,8 @@ final class HotkeyManager {
             NSLog("[OpenFire] Hotkey registration skipped: duplicate assignment")
             return issues
         }
+
+        guard menuHotkey != nil || autoTriggerHotkey != nil else { return issues }
         
         let handler: EventHandlerUPP = { _, event, _ -> OSStatus in
             var hotkeyID = EventHotKeyID()
@@ -118,7 +181,7 @@ final class HotkeyManager {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         InstallEventHandler(GetApplicationEventTarget(), handler, 1, &eventType, nil, &eventHandler)
         
-        if let hk = hotkey {
+        if let hk = menuHotkey {
             let hotkeyID = EventHotKeyID(signature: fourCharCode("OFIR"), id: 1)
             let status = RegisterEventHotKey(hk.keyCode, hk.modifiers, hotkeyID, GetApplicationEventTarget(), 0, &hotkeyRef)
             if status == noErr {
@@ -134,7 +197,7 @@ final class HotkeyManager {
             }
         }
         
-        if let thk = toggleHotkey {
+        if let thk = autoTriggerHotkey {
             let toggleHotkeyID = EventHotKeyID(signature: fourCharCode("OFIR"), id: 2)
             let status = RegisterEventHotKey(thk.keyCode, thk.modifiers, toggleHotkeyID, GetApplicationEventTarget(), 0, &toggleHotkeyRef)
             if status == noErr {
@@ -197,8 +260,12 @@ final class HotkeyManager {
         let menuHotkeyConfigured = UserDefaults.standard.object(forKey: Defaults.menuHotkeyConfiguredKey) as? Bool ?? false
         let keyCode = UserDefaults.standard.object(forKey: "hotkeyKeyCode") as? Int
         let modifiers = UserDefaults.standard.object(forKey: "hotkeyModifiers") as? Int
-        if let kc = keyCode, let mod = modifiers {
-            hotkey = (UInt32(kc), UInt32(mod))
+        if let storedHotkey = Self.validatedStoredHotkey(keyCode: keyCode, modifiers: modifiers) {
+            hotkey = storedHotkey
+        } else if keyCode != nil || modifiers != nil {
+            UserDefaults.standard.removeObject(forKey: "hotkeyKeyCode")
+            UserDefaults.standard.removeObject(forKey: "hotkeyModifiers")
+            UserDefaults.standard.set(true, forKey: Defaults.menuHotkeyConfiguredKey)
         } else if !menuHotkeyConfigured {
             hotkey = Defaults.defaultMenuHotkey
         }
@@ -206,8 +273,12 @@ final class HotkeyManager {
         let toggleHotkeyConfigured = UserDefaults.standard.object(forKey: Defaults.toggleHotkeyConfiguredKey) as? Bool ?? false
         let tKeyCode = UserDefaults.standard.object(forKey: "toggleHotkeyKeyCode") as? Int
         let tModifiers = UserDefaults.standard.object(forKey: "toggleHotkeyModifiers") as? Int
-        if let tkc = tKeyCode, let tmod = tModifiers {
-            toggleHotkey = (UInt32(tkc), UInt32(tmod))
+        if let storedToggleHotkey = Self.validatedStoredHotkey(keyCode: tKeyCode, modifiers: tModifiers) {
+            toggleHotkey = storedToggleHotkey
+        } else if tKeyCode != nil || tModifiers != nil {
+            UserDefaults.standard.removeObject(forKey: "toggleHotkeyKeyCode")
+            UserDefaults.standard.removeObject(forKey: "toggleHotkeyModifiers")
+            UserDefaults.standard.set(true, forKey: Defaults.toggleHotkeyConfiguredKey)
         } else if !toggleHotkeyConfigured {
             toggleHotkey = Defaults.defaultToggleHotkey
         }
@@ -237,9 +308,6 @@ final class HotkeyManager {
     }
 }
 
-    // We will update ShortcutRecorderField to support this in the next step.
-    // For now, let's view it.
-
 /// A simple window for recording a new hotkey
 final class HotkeyRecorderWindow: NSWindow {
     
@@ -264,6 +332,7 @@ final class HotkeyRecorderWindow: NSWindow {
             self?.onHotkeyRecorded?(keyCode, modifiers)
             self?.close()
         }
+        recorderField.requiresGlobalHotkeyModifier = true
         cv.addSubview(recorderField)
         
         let hint = NSTextField(labelWithString: "Needs to include ⌘/⌥/⌃ modifiers".localized)

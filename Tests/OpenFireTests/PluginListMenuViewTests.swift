@@ -30,6 +30,47 @@ final class PluginListMenuViewTests: XCTestCase {
         XCTAssertEqual(listView.numberOfRows(in: NSTableView()), 2)
     }
 
+    func testReorderedPluginsMovesRowsUsingTableDropSemantics() throws {
+        let first = makePlugin(name: "First", identifier: "com.test.first", order: 1)
+        let second = makePlugin(name: "Second", identifier: "com.test.second", order: 2)
+        let third = makePlugin(name: "Third", identifier: "com.test.third", order: 3)
+
+        let movedDown = try XCTUnwrap(PluginListMenuView.reorderedPlugins(
+            [first, second, third],
+            sourceRow: 0,
+            proposedRow: 3
+        ))
+        XCTAssertEqual(movedDown.plugins.map(\.id), ["com.test.second", "com.test.third", "com.test.first"])
+        XCTAssertEqual(movedDown.targetRow, 2)
+
+        let movedUp = try XCTUnwrap(PluginListMenuView.reorderedPlugins(
+            [first, second, third],
+            sourceRow: 2,
+            proposedRow: 0
+        ))
+        XCTAssertEqual(movedUp.plugins.map(\.id), ["com.test.third", "com.test.first", "com.test.second"])
+        XCTAssertEqual(movedUp.targetRow, 0)
+    }
+
+    func testReorderedPluginsRejectsInvalidRows() {
+        let first = makePlugin(name: "First", identifier: "com.test.first", order: 1)
+        let second = makePlugin(name: "Second", identifier: "com.test.second", order: 2)
+        let plugins = [first, second]
+
+        XCTAssertNil(PluginListMenuView.reorderedPlugins(plugins, sourceRow: -1, proposedRow: 1))
+        XCTAssertNil(PluginListMenuView.reorderedPlugins(plugins, sourceRow: 2, proposedRow: 1))
+        XCTAssertNil(PluginListMenuView.reorderedPlugins(plugins, sourceRow: 0, proposedRow: -1))
+        XCTAssertNil(PluginListMenuView.reorderedPlugins(plugins, sourceRow: 0, proposedRow: 3))
+    }
+
+    func testCorePluginsCannotBeEditedFromPluginList() {
+        let corePlugin = makePlugin(name: "Copy", identifier: "com.openfire.copy", order: 1)
+        let customPlugin = makePlugin(name: "Custom", identifier: "com.test.custom", order: 2)
+
+        XCTAssertFalse(PluginListMenuView.shouldAllowEditing(corePlugin))
+        XCTAssertTrue(PluginListMenuView.shouldAllowEditing(customPlugin))
+    }
+
     private func makePlugin(name: String, identifier: String, order: Int) -> Plugin {
         let json = """
         {

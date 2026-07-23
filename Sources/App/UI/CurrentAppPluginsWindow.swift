@@ -89,19 +89,7 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
     }
 
     private func loadData() {
-        let savedOrder = UserDefaults.standard.stringArray(forKey: "pluginOrder") ?? []
-        let allPlugins = PluginManager.shared.plugins
-
-        if savedOrder.isEmpty {
-            orderedPlugins = allPlugins.sorted { $0.order < $1.order }
-        } else {
-            orderedPlugins = allPlugins.sorted { a, b in
-                let indexA = savedOrder.firstIndex(of: a.id) ?? Int.max
-                let indexB = savedOrder.firstIndex(of: b.id) ?? Int.max
-                return indexA < indexB
-            }
-        }
-
+        orderedPlugins = PluginManager.shared.orderedPluginsForDisplay()
         applyFilter()
     }
 

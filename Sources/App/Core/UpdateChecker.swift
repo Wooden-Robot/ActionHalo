@@ -1,6 +1,6 @@
 import Cocoa
 
-final class UpdateChecker {
+final class UpdateChecker: @unchecked Sendable {
     static let shared = UpdateChecker()
     static let autoCheckEnabledKey = "AutoCheckUpdates"
 
@@ -132,6 +132,7 @@ final class UpdateChecker {
         }.resume()
     }
 
+    @MainActor
     private func presentUpdateAlert(latestVersion: String, currentVersion: String, url: URL) {
         let alert = NSAlert()
         alert.messageText = "New Version Available".localized
@@ -150,6 +151,7 @@ final class UpdateChecker {
         }
     }
 
+    @MainActor
     private func presentUpToDateAlert(currentVersion: String) {
         let alert = NSAlert()
         alert.messageText = "Up to Date".localized
@@ -163,6 +165,7 @@ final class UpdateChecker {
         alert.runModal()
     }
 
+    @MainActor
     private func presentUpdateErrorAlert(message: String) {
         let alert = NSAlert()
         alert.messageText = "Update Check Failed".localized

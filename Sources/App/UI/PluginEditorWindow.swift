@@ -9,6 +9,7 @@ class ShortcutRecorderField: NSView {
     
     // For Carbon-based global hotkey registration
     var onKeyComboRecorded: ((UInt32, UInt32) -> Void)?
+    var requiresGlobalHotkeyModifier = false
     private var carbonKeyCode: UInt32?
     private var carbonModifiers: UInt32?
     
@@ -180,6 +181,13 @@ class ShortcutRecorderField: NSView {
         if flags.contains(.shift) { carbonMods |= 0x0200 }   // shiftKey
         if flags.contains(.option) { carbonMods |= 0x0800 }  // optionKey
         if flags.contains(.control) { carbonMods |= 0x1000 } // controlKey
+
+        if requiresGlobalHotkeyModifier,
+           !HotkeyManager.hasRequiredGlobalHotkeyModifier(carbonMods) {
+            label.stringValue = "Needs to include ⌘/⌥/⌃ modifiers".localized
+            label.textColor = .systemOrange
+            return
+        }
         
         self.carbonKeyCode = UInt32(event.keyCode)
         self.carbonModifiers = carbonMods
@@ -215,9 +223,11 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
     private var riskLabelHeightConstraint: NSLayoutConstraint?
     private var statusLabelHeightConstraint: NSLayoutConstraint?
     private var contentViewMinHeightConstraint: NSLayoutConstraint?
-    
+
     private var customIconURL: URL?
-    
+    private var editingPluginTrustStatus: Bool?
+    private var trustStatusGeneration: UInt64 = 0
+
     /// Initializes the editor. If `plugin` is nil, it starts in "New Plugin" mode.
     init(plugin: Plugin? = nil) {
         self.editingPlugin = plugin
@@ -238,6 +248,42 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         
         setupUI()
         populate(with: plugin)
+        refreshEditingPluginTrustStatus()
+    }
+
+    private func refreshEditingPluginTrustStatus() {
+        trustStatusGeneration &+= 1
+        let generation = trustStatusGeneration
+        guard let plugin = editingPlugin, plugin.requiresExecutionTrust else {
+            editingPluginTrustStatus = nil
+            return
+        }
+
+        editingPluginTrustStatus = nil
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let isTrusted = PluginManager.shared.isExecutionTrusted(for: plugin)
+            DispatchQueue.main.async {
+                guard let self, self.trustStatusGeneration == generation else { return }
+                self.editingPluginTrustStatus = isTrusted
+                self.typeChanged()
+            }
+        }
+    }
+
+    private func editingTrustStatusText() -> String? {
+        guard let plugin = editingPlugin, plugin.requiresExecutionTrust else { return nil }
+        let status: String
+        if let editingPluginTrustStatus {
+            status = editingPluginTrustStatus ? "Trusted".localized : "Not Trusted".localized
+        } else {
+            status = "Checking plugin trust status".localized
+        }
+
+        return String(
+            format: "Trust status: %@\nSource: %@".localized,
+            status,
+            plugin.directoryURL.path
+        )
     }
     
     private func setupUI() {
@@ -633,13 +679,10 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         let scriptRiskMessage = editingPlugin?.requiresExecutionTrust == true
             ? "Scripts can run commands on your Mac. Only keep this plugin if you trust its source. Saving changes will require trust again on next run.".localized
             : "Scripts can run commands on your Mac. Only create or install them if you trust their source.".localized
-        let scriptStatus = editingPlugin.map {
-            String(
-                format: "Trust status: %@\nSource: %@".localized,
-                PluginManager.shared.isExecutionTrusted(for: $0) ? "Trusted".localized : "Not Trusted".localized,
-                $0.directoryURL.path
-            )
-        }
+        let scriptStatus = editingTrustStatusText()
+        let keyComboRiskMessage = editingPlugin?.requiresExecutionTrust == true
+            ? "Key combos can control the current app. Only keep this plugin if you trust its source. Saving changes will require trust again on next run.".localized
+            : "Key combos can control the current app. Only create or install them if you trust their source.".localized
         
         switch index {
         case 0: // URL
@@ -672,6 +715,14 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             contentTextView.isEditable = true
         case 3: // Key combo
             infoLabel.stringValue = "Record key combo\n(Click the box on the right and press keyboard)".localized
+            riskLabel.stringValue = keyComboRiskMessage
+            riskLabel.isHidden = false
+            riskLabelHeightConstraint?.constant = 34
+            if let scriptStatus, editingPlugin?.requiresExecutionTrust == true {
+                statusLabel.stringValue = scriptStatus
+                statusLabel.isHidden = false
+                statusLabelHeightConstraint?.constant = 28
+            }
             contentViewMinHeightConstraint?.constant = 44
             contentViewScroll.isHidden = true
             shortcutField.isHidden = false
@@ -718,31 +769,41 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         typeIndex: Int,
         content: String,
         isEditingExistingPlugin: Bool,
-        existingPluginIDs: [String]
+        existingPluginIDs: [String],
+        originalIdentifier: String? = nil
     ) -> String? {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let id = id.trimmingCharacters(in: .whitespacesAndNewlines)
         let content = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let originalIdentifier = originalIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if name.isEmpty || id.isEmpty {
             return "Name and Identifier cannot be empty.".localized
         }
 
-        let identifierPattern = #"^[A-Za-z0-9.-]+$"#
-        if id.range(of: identifierPattern, options: .regularExpression) == nil {
-            return "Identifier must use only letters, numbers, dots, and hyphens.".localized
+        if isEditingExistingPlugin {
+            let effectiveOriginalIdentifier = originalIdentifier ?? id
+            if PluginManager.isReservedCorePluginIdentifier(effectiveOriginalIdentifier) {
+                return "Core plugins cannot be edited. Disable them instead if you do not want to use them.".localized
+            }
+
+            if let originalIdentifier, id != originalIdentifier {
+                return "Identifier cannot be changed after the plugin is created.".localized
+            }
         }
 
-        if !isEditingExistingPlugin,
-           (id.hasPrefix(".") || id.hasPrefix("-") || id.hasSuffix(".") || id.hasSuffix("-") || id.contains("..")) {
-            return "Identifier cannot start or end with dots or hyphens.".localized
+        if let identifierMessage = PluginManager.pluginIdentifierValidationMessage(
+            id,
+            allowReservedCoreIdentifier: isEditingExistingPlugin,
+            allowLegacyBoundaryCharacters: isEditingExistingPlugin
+        ) {
+            return identifierMessage
         }
 
-        if !isEditingExistingPlugin, PluginManager.coreDefaultPluginIDs.contains(id) {
-            return "Identifier is reserved for a built-in plugin.".localized
+        let duplicatePluginExists = existingPluginIDs.contains { existingID in
+            existingID == id && existingID != originalIdentifier
         }
-
-        if !isEditingExistingPlugin, existingPluginIDs.contains(id) {
+        if duplicatePluginExists {
             return "A plugin with this identifier already exists".localized
         }
 
@@ -782,7 +843,8 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             typeIndex: typeIndex,
             content: content,
             isEditingExistingPlugin: editingPlugin != nil,
-            existingPluginIDs: PluginManager.shared.plugins.map(\.id)
+            existingPluginIDs: PluginManager.shared.plugins.map(\.id),
+            originalIdentifier: editingPlugin?.id
         )
     }
 
@@ -793,12 +855,9 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
 
         let baseStatus = {
             let index = typePopUp.indexOfSelectedItem
-            guard (index == 1 || index == 2), let plugin = editingPlugin else { return "" }
-            return String(
-                format: "Trust status: %@\nSource: %@".localized,
-                PluginManager.shared.isExecutionTrusted(for: plugin) ? "Trusted".localized : "Not Trusted".localized,
-                plugin.directoryURL.path
-            )
+            guard let plugin = editingPlugin, plugin.requiresExecutionTrust else { return "" }
+            guard index == 1 || index == 2 || (index == 3 && plugin.requiresExecutionTrust) else { return "" }
+            return editingTrustStatusText() ?? ""
         }()
 
         let combinedStatus = [validationMessage, baseStatus]
@@ -836,6 +895,10 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             alert.informativeText = "Name and Identifier cannot be empty.".localized
             alert.runModal()
             return
+        }
+
+        if let validationMessage = currentValidationMessage() {
+            return showError(validationMessage)
         }
         
         let isCustomIcon = (iconPopUp.titleOfSelectedItem == "Custom Image".localized)
@@ -922,48 +985,26 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             bundleURL = pluginsURL.appendingPathComponent(PluginManager.visibleUserPluginFileName(for: id))
         }
         let editingPluginWasNil = (editingPlugin == nil)
+        let templateURL = editingPlugin?.directoryURL
         
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             do {
-                if FileManager.default.fileExists(atPath: bundleURL.path) {
-                    if editingPluginWasNil {
-                        DispatchQueue.main.async { self?.showError("A plugin with this identifier already exists".localized) }
-                        return
-                    }
-                } else {
-                    try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+                if editingPluginWasNil, FileManager.default.fileExists(atPath: bundleURL.path) {
+                    DispatchQueue.main.async { self?.showError("A plugin with this identifier already exists".localized) }
+                    return
                 }
 
-                // Write Config.json
-                let configURL = bundleURL.appendingPathComponent("Config.json")
                 let data = try JSONSerialization.data(withJSONObject: configDict, options: .prettyPrinted)
-                try data.write(to: configURL, options: .atomic)
-                
-                // Write Script Files if applicable
-                if typeIndex == 1 {
-                    let scriptURL = bundleURL.appendingPathComponent("script.sh")
-                    try content.write(to: scriptURL, atomically: true, encoding: .utf8)
-                } else if typeIndex == 2 {
-                    let scriptURL = bundleURL.appendingPathComponent("script.applescript")
-                    try content.write(to: scriptURL, atomically: true, encoding: .utf8)
-                }
-                
-                // Handle custom icon image
-                let iconDestURL = bundleURL.appendingPathComponent("icon.png")
-                let safeIconURL = self?.customIconURL
-                if isCustomIcon {
-                    if let srcURL = safeIconURL, srcURL != iconDestURL {
-                        if FileManager.default.fileExists(atPath: iconDestURL.path) {
-                            try? FileManager.default.removeItem(at: iconDestURL)
-                        }
-                        try FileManager.default.copyItem(at: srcURL, to: iconDestURL)
-                    }
-                } else {
-                    // Not using custom image, delete if it exists
-                    if FileManager.default.fileExists(atPath: iconDestURL.path) {
-                        try? FileManager.default.removeItem(at: iconDestURL)
-                    }
-                }
+
+                try Self.writePluginPackageAtomically(
+                    bundleURL: bundleURL,
+                    templateURL: templateURL,
+                    configData: data,
+                    scriptFileName: Self.scriptFileName(for: typeIndex),
+                    scriptContent: Self.scriptFileName(for: typeIndex) == nil ? nil : content,
+                    customIconSourceURL: self?.customIconURL,
+                    shouldKeepCustomIcon: isCustomIcon
+                )
 
                 PluginManager.shared.removeDuplicateUserPlugins(for: id, keeping: bundleURL)
 
@@ -979,6 +1020,89 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
                     self?.showError(String(format: "Failed to write plugin: %@".localized, error.localizedDescription))
                 }
             }
+        }
+    }
+
+    static func scriptFileName(for typeIndex: Int) -> String? {
+        switch typeIndex {
+        case 1:
+            return "script.sh"
+        case 2:
+            return "script.applescript"
+        default:
+            return nil
+        }
+    }
+
+    static func writePluginPackageAtomically(
+        bundleURL: URL,
+        templateURL: URL?,
+        configData: Data,
+        scriptFileName: String?,
+        scriptContent: String?,
+        customIconSourceURL: URL?,
+        shouldKeepCustomIcon: Bool,
+        fileManager: FileManager = .default
+    ) throws {
+        let parentURL = bundleURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+
+        let stagingURL = parentURL.appendingPathComponent(".save-\(UUID().uuidString).openfireext.pending")
+        let backupURL = parentURL.appendingPathComponent(".backup-\(UUID().uuidString).openfireext.pending")
+        var didMoveBundleToBackup = false
+        var shouldRemoveBackup = true
+
+        defer {
+            try? fileManager.removeItem(at: stagingURL)
+            if shouldRemoveBackup {
+                try? fileManager.removeItem(at: backupURL)
+            }
+        }
+
+        if let templateURL, fileManager.fileExists(atPath: templateURL.path) {
+            try fileManager.copyItem(at: templateURL, to: stagingURL)
+        } else {
+            try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
+        }
+
+        try configData.write(to: stagingURL.appendingPathComponent("Config.json"), options: .atomic)
+
+        if let scriptFileName, let scriptContent {
+            try scriptContent.write(
+                to: stagingURL.appendingPathComponent(scriptFileName),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+
+        let iconDestURL = stagingURL.appendingPathComponent("icon.png")
+        if shouldKeepCustomIcon {
+            if let customIconSourceURL {
+                if fileManager.fileExists(atPath: iconDestURL.path) {
+                    try fileManager.removeItem(at: iconDestURL)
+                }
+                try fileManager.copyItem(at: customIconSourceURL, to: iconDestURL)
+            }
+        } else if fileManager.fileExists(atPath: iconDestURL.path) {
+            try fileManager.removeItem(at: iconDestURL)
+        }
+
+        if fileManager.fileExists(atPath: bundleURL.path) {
+            try fileManager.moveItem(at: bundleURL, to: backupURL)
+            didMoveBundleToBackup = true
+        }
+
+        do {
+            try fileManager.moveItem(at: stagingURL, to: bundleURL)
+        } catch {
+            shouldRemoveBackup = PluginManager.restoreBackedUpPackageIfNeeded(
+                backupURL: backupURL,
+                destinationURL: bundleURL,
+                didMoveDestinationToBackup: didMoveBundleToBackup,
+                fileManager: fileManager,
+                logPrefix: "Plugin save"
+            )
+            throw error
         }
     }
     

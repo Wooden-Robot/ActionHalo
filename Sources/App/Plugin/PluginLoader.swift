@@ -2,18 +2,28 @@ import Foundation
 
 /// Loads and parses .openfireext plugin packages
 final class PluginLoader {
+    static let maximumConfigBytes = 1 * 1024 * 1024
     
     /// Load a plugin from a .openfireext directory
     static func load(from directoryURL: URL) -> Plugin? {
         let configURL = directoryURL.appendingPathComponent("Config.json")
-        
-        guard FileManager.default.fileExists(atPath: configURL.path) else {
-            NSLog("[OpenFire] Plugin config not found: \(configURL.path)")
+
+        let resourceKeys: Set<URLResourceKey> = [
+            .fileSizeKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+        ]
+        guard let values = try? configURL.resourceValues(forKeys: resourceKeys),
+              values.isRegularFile == true,
+              values.isSymbolicLink != true,
+              let fileSize = values.fileSize,
+              fileSize <= maximumConfigBytes else {
+            NSLog("[OpenFire] Plugin config is missing, unsafe, or too large: \(configURL.path)")
             return nil
         }
         
         do {
-            let data = try Data(contentsOf: configURL)
+            let data = try Data(contentsOf: configURL, options: .mappedIfSafe)
             let decoder = JSONDecoder()
             let config = try decoder.decode(PluginConfig.self, from: data)
             

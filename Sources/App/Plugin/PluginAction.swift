@@ -12,7 +12,7 @@ enum PluginActionType: String, Codable {
     case revealPath = "reveal-path"
 }
 
-struct PluginActionConfig: Codable {
+struct PluginActionConfig: Codable, Equatable {
     let type: PluginActionType
     var url: String?
     var script: String?
@@ -22,7 +22,7 @@ struct PluginActionConfig: Codable {
 }
 
 /// Plugin filter configuration
-struct PluginFilter: Codable {
+struct PluginFilter: Codable, Equatable {
     var minLength: Int?
     var maxLength: Int?
     var regex: String?
@@ -31,7 +31,7 @@ struct PluginFilter: Codable {
 }
 
 /// Plugin configuration decoded from Config.json
-struct PluginConfig: Codable {
+struct PluginConfig: Codable, Equatable {
     let name: String
     var localizedNames: [String: String]?
     let identifier: String
@@ -66,6 +66,15 @@ struct PluginVisibilityDiagnostic {
 
 /// Represents a loaded plugin with its configuration and resources
 final class Plugin: Identifiable {
+    static let maximumTrustedPackageFileCount = 1_024
+    static let maximumTrustedPackageBytes = 32 * 1024 * 1024
+
+    private struct TrustedPackageFile {
+        let url: URL
+        let relativePath: String
+        let size: Int
+    }
+
     let id: String
     let config: PluginConfig
     let directoryURL: URL
@@ -142,6 +151,9 @@ final class Plugin: Identifiable {
         switch config.action.type {
         case .shellScript, .applescript:
             return true
+        case .keyCombo:
+            return !PluginManager.coreDefaultPluginIDs.contains(id) &&
+                !PluginManager.isBuiltInPluginDirectory(directoryURL)
         default:
             return false
         }
@@ -149,31 +161,94 @@ final class Plugin: Identifiable {
 
     var executionTrustFingerprint: String? {
         guard requiresExecutionTrust else { return nil }
+        guard let files = trustedPackageFiles() else { return nil }
 
         var hasher = SHA256()
+        Self.updateFingerprint(&hasher, with: Data("openfire-plugin-trust-v2".utf8))
 
-        let configURL = directoryURL.appendingPathComponent("Config.json")
-        if let data = try? Data(contentsOf: configURL) {
-            hasher.update(data: data)
-        } else {
-            hasher.update(data: Data(id.utf8))
-        }
+        for file in files {
+            Self.updateFingerprint(&hasher, with: Data(file.relativePath.utf8))
+            Self.updateFingerprint(&hasher, with: Self.fingerprintLengthData(file.size))
 
-        if let scriptRef = config.action.script {
-            let scriptURL = directoryURL.appendingPathComponent(scriptRef)
-            if let data = try? Data(contentsOf: scriptURL) {
-                hasher.update(data: data)
-            } else {
-                hasher.update(data: Data(scriptRef.utf8))
+            guard let handle = try? FileHandle(forReadingFrom: file.url) else { return nil }
+            var bytesRead = 0
+            do {
+                while let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                    bytesRead += chunk.count
+                    hasher.update(data: chunk)
+                }
+                try handle.close()
+            } catch {
+                try? handle.close()
+                return nil
             }
-        }
 
-        if let inline = config.action.inline {
-            hasher.update(data: Data(inline.utf8))
+            guard bytesRead == file.size else { return nil }
         }
 
         let digest = hasher.finalize()
         return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    var canCreateProtectedExecutionSnapshot: Bool {
+        requiresExecutionTrust && trustedPackageFiles() != nil
+    }
+
+    private func trustedPackageFiles() -> [TrustedPackageFile]? {
+        let fileManager = FileManager.default
+        let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+        var enumerationFailed = false
+        guard let enumerator = fileManager.enumerator(
+            at: directoryURL,
+            includingPropertiesForKeys: resourceKeys,
+            options: [],
+            errorHandler: { url, error in
+                enumerationFailed = true
+                NSLog("[OpenFire] Failed to enumerate trusted plugin file at \(url.path): \(error.localizedDescription)")
+                return false
+            }
+        ) else {
+            return nil
+        }
+
+        let rootPath = directoryURL.standardizedFileURL.path
+        let rootPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        var files: [TrustedPackageFile] = []
+        var totalBytes = 0
+
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: Set(resourceKeys)) else {
+                return nil
+            }
+            // A symlink can redirect execution to mutable content outside the trusted package.
+            guard values.isSymbolicLink != true else { return nil }
+            guard values.isRegularFile == true else { continue }
+
+            let standardizedPath = fileURL.standardizedFileURL.path
+            guard standardizedPath.hasPrefix(rootPrefix) else { return nil }
+            let relativePath = String(standardizedPath.dropFirst(rootPrefix.count))
+            guard !relativePath.isEmpty, let size = values.fileSize else { return nil }
+            guard size >= 0,
+                  files.count < Self.maximumTrustedPackageFileCount,
+                  size <= Self.maximumTrustedPackageBytes - totalBytes else {
+                return nil
+            }
+            totalBytes += size
+            files.append(TrustedPackageFile(url: fileURL, relativePath: relativePath, size: size))
+        }
+
+        guard !enumerationFailed, !files.isEmpty else { return nil }
+        return files.sorted(by: { $0.relativePath < $1.relativePath })
+    }
+
+    private static func updateFingerprint(_ hasher: inout SHA256, with data: Data) {
+        hasher.update(data: fingerprintLengthData(data.count))
+        hasher.update(data: data)
+    }
+
+    private static func fingerprintLengthData(_ length: Int) -> Data {
+        var value = UInt64(length).bigEndian
+        return withUnsafeBytes(of: &value) { Data($0) }
     }
 
     /// Check if this plugin should be shown for the given context
@@ -209,7 +284,7 @@ final class Plugin: Identifiable {
 
             if let allowedApps = filter.apps, !allowedApps.isEmpty {
                 if let bundleID = appBundleID {
-                    if !allowedApps.contains(bundleID) {
+                    if !AppExclusionStore.contains(bundleID, in: allowedApps) {
                         reasons.append(.appNotAllowed(current: bundleID, allowed: allowedApps))
                     }
                 } else {
@@ -220,7 +295,7 @@ final class Plugin: Identifiable {
             if let excludedApps = filter.excludeApps,
                !excludedApps.isEmpty,
                let bundleID = appBundleID,
-               excludedApps.contains(bundleID) {
+               AppExclusionStore.contains(bundleID, in: excludedApps) {
                 reasons.append(.appExcluded(bundleID))
             }
         }

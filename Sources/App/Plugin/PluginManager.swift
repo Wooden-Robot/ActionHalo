@@ -7,6 +7,65 @@ final class PluginManager {
         let appBundleID: String
         let pluginID: String
     }
+
+    struct TrustedExecutionSnapshot {
+        let plugin: Plugin
+        let containerURL: URL
+        let fingerprint: String
+    }
+
+    enum PluginScriptSource: Equatable {
+        case bundledFile(URL)
+        case inline(String)
+    }
+
+    enum ExecutionPolicy: Equatable {
+        case standard
+        case directKeyCombo
+        case protected
+    }
+
+    enum PluginInstallFailure: Equatable {
+        case invalidPackage
+        case invalidIdentifier(String)
+        case destinationIdentifierConflict(existingIdentifier: String)
+        case stagedValidationFailed
+        case fileOperationFailed(String)
+
+        func localizedMessage(sourcePath: String) -> String {
+            switch self {
+            case .invalidPackage:
+                return "Invalid plugin package. Make sure the .openfireext folder contains a valid Config.json.".localized
+            case .invalidIdentifier(let message):
+                return String(format: "Plugin identifier is invalid: %@".localized, message)
+            case .destinationIdentifierConflict(let existingIdentifier):
+                return String(
+                    format: "Installing this plugin would replace a different plugin (%@). Rename one of the plugins and try again.".localized,
+                    existingIdentifier
+                )
+            case .stagedValidationFailed:
+                return "Plugin validation failed after copying. The package may have changed during installation.".localized
+            case .fileOperationFailed(let message):
+                return String(
+                    format: "Failed to copy plugin to installation directory. Check permissions.\n(%@)\n%@".localized,
+                    sourcePath,
+                    message
+                )
+            }
+        }
+    }
+
+    enum PluginInstallResult: Equatable {
+        case installed
+        case failed(PluginInstallFailure)
+
+        var isSuccess: Bool {
+            if case .installed = self {
+                return true
+            }
+            return false
+        }
+    }
     
     static let shared = PluginManager()
     
@@ -15,6 +74,9 @@ final class PluginManager {
     static let trustedPluginFingerprintsKey = "trustedPluginFingerprints"
     static let perAppDisabledPluginsKey = "perAppDisabledPlugins"
     static let verbosePluginLoggingKey = "VerbosePluginLoggingEnabled"
+    static let maxPluginProcessStderrBytes = 64 * 1024
+    static let maximumInstallPackageFileCount = 2_048
+    static let maximumInstallPackageBytes = 128 * 1024 * 1024
     
     /// Core default plugins that can never be deleted
     static let coreDefaultPluginIDs: Set<String> = [
@@ -33,6 +95,7 @@ final class PluginManager {
     private var directoryWatchers: [String: DispatchSourceFileSystemObject] = [:]
     private var pendingReloadWorkItem: DispatchWorkItem?
     private let loadStateQueue = DispatchQueue(label: "com.openfire.plugin-load-state")
+    private let trustStateQueue = DispatchQueue(label: "com.openfire.plugin-trust-state")
     private var latestScheduledLoadID: UInt64 = 0
     var userPluginsDirectoryOverride: URL?
     
@@ -85,6 +148,17 @@ final class PluginManager {
 
     static func isVerbosePluginLoggingEnabled(userDefaults: UserDefaults = .standard) -> Bool {
         userDefaults.bool(forKey: verbosePluginLoggingKey)
+    }
+
+    static func executionPolicy(for plugin: Plugin) -> ExecutionPolicy {
+        switch plugin.config.action.type {
+        case .shellScript, .applescript:
+            return .protected
+        case .keyCombo:
+            return plugin.requiresExecutionTrust ? .protected : .directKeyCombo
+        default:
+            return .standard
+        }
     }
 
     static func pluginProcessStderrLogMessage(
@@ -166,6 +240,38 @@ final class PluginManager {
     static func sameFileURL(_ lhs: URL, _ rhs: URL) -> Bool {
         lhs.standardizedFileURL.resolvingSymlinksInPath().path ==
             rhs.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    static func isReservedCorePluginIdentifier(_ identifier: String) -> Bool {
+        coreDefaultPluginIDs.contains(identifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
+    static func pluginIdentifierValidationMessage(
+        _ identifier: String,
+        allowReservedCoreIdentifier: Bool = false,
+        allowLegacyBoundaryCharacters: Bool = false
+    ) -> String? {
+        let id = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !id.isEmpty else {
+            return "Name and Identifier cannot be empty.".localized
+        }
+
+        let identifierPattern = #"^[A-Za-z0-9.-]+$"#
+        if id.range(of: identifierPattern, options: .regularExpression) == nil {
+            return "Identifier must use only letters, numbers, dots, and hyphens.".localized
+        }
+
+        if !allowLegacyBoundaryCharacters,
+           (id.hasPrefix(".") || id.hasPrefix("-") || id.hasSuffix(".") || id.hasSuffix("-") || id.contains("..")) {
+            return "Identifier cannot start or end with dots or hyphens.".localized
+        }
+
+        if !allowReservedCoreIdentifier, isReservedCorePluginIdentifier(id) {
+            return "Identifier is reserved for a built-in plugin.".localized
+        }
+
+        return nil
     }
 
     static func visibleUserPluginFileName(for identifier: String) -> String {
@@ -283,15 +389,16 @@ final class PluginManager {
     
     // MARK: - Filtering
     
-    /// Get plugins that should be shown for the given text and app context
-    func availablePlugins(for text: String, appBundleID: String?) -> [Plugin] {
-        orderedPlugins().filter { plugin in
+    /// Get enabled plugins that should be shown in the menu for the app context.
+    /// Text-specific filters are evaluated later so mismatched plugins can remain visible but disabled.
+    func presentationPlugins(appBundleID: String?) -> [Plugin] {
+        orderedPluginsForDisplay().filter { plugin in
             plugin.isEnabled && isPluginEnabled(plugin.id, forAppBundleID: appBundleID)
         }
     }
 
     func visibilityDiagnostics(for text: String, appBundleID: String?) -> [PluginVisibilityDiagnostic] {
-        orderedPlugins().map { plugin in
+        orderedPluginsForDisplay().map { plugin in
             var diagnostic = plugin.visibilityDiagnostic(text: text, appBundleID: appBundleID)
             if let appBundleID, plugin.isEnabled, !isPluginEnabled(plugin.id, forAppBundleID: appBundleID) {
                 diagnostic = PluginVisibilityDiagnostic(
@@ -361,36 +468,136 @@ final class PluginManager {
     }
 
     func isExecutionTrusted(for plugin: Plugin) -> Bool {
-        guard plugin.requiresExecutionTrust, let fingerprint = plugin.executionTrustFingerprint else { return true }
-        let trusted = UserDefaults.standard.dictionary(forKey: Self.trustedPluginFingerprintsKey) as? [String: String] ?? [:]
-        return trusted[plugin.id] == fingerprint
+        guard plugin.requiresExecutionTrust else { return true }
+        guard let fingerprint = plugin.executionTrustFingerprint else { return false }
+        return isStoredExecutionTrustValid(pluginID: plugin.id, fingerprint: fingerprint)
     }
 
     func setExecutionTrusted(_ trusted: Bool, for plugin: Plugin) {
         guard plugin.requiresExecutionTrust else { return }
+        let fingerprint = trusted ? plugin.executionTrustFingerprint : nil
+        storeExecutionTrust(trusted, pluginID: plugin.id, fingerprint: fingerprint)
+    }
 
-        var stored = UserDefaults.standard.dictionary(forKey: Self.trustedPluginFingerprintsKey) as? [String: String] ?? [:]
-        if trusted, let fingerprint = plugin.executionTrustFingerprint {
-            stored[plugin.id] = fingerprint
-        } else {
-            stored.removeValue(forKey: plugin.id)
+    private func isStoredExecutionTrustValid(pluginID: String, fingerprint: String) -> Bool {
+        trustStateQueue.sync {
+            let stored = UserDefaults.standard.dictionary(
+                forKey: Self.trustedPluginFingerprintsKey
+            ) as? [String: String] ?? [:]
+            return stored[pluginID] == fingerprint
         }
-        UserDefaults.standard.set(stored, forKey: Self.trustedPluginFingerprintsKey)
+    }
+
+    private func storeExecutionTrust(
+        _ trusted: Bool,
+        pluginID: String,
+        fingerprint: String?
+    ) {
+        trustStateQueue.sync {
+            var stored = UserDefaults.standard.dictionary(
+                forKey: Self.trustedPluginFingerprintsKey
+            ) as? [String: String] ?? [:]
+            if trusted, let fingerprint {
+                stored[pluginID] = fingerprint
+            } else {
+                stored.removeValue(forKey: pluginID)
+            }
+            UserDefaults.standard.set(stored, forKey: Self.trustedPluginFingerprintsKey)
+        }
+    }
+
+    func makeTrustedExecutionSnapshot(for plugin: Plugin) -> TrustedExecutionSnapshot? {
+        guard let snapshot = makeProtectedExecutionSnapshot(for: plugin) else { return nil }
+        guard isStoredExecutionTrustValid(
+            pluginID: snapshot.plugin.id,
+            fingerprint: snapshot.fingerprint
+        ) else {
+            removeTrustedExecutionSnapshot(snapshot)
+            return nil
+        }
+        return snapshot
+    }
+
+    func removeTrustedExecutionSnapshot(_ snapshot: TrustedExecutionSnapshot) {
+        do {
+            try FileManager.default.removeItem(at: snapshot.containerURL)
+        } catch {
+            NSLog("[OpenFire] Failed to remove trusted plugin execution snapshot: \(error.localizedDescription)")
+        }
+    }
+
+    private func makeProtectedExecutionSnapshot(for plugin: Plugin) -> TrustedExecutionSnapshot? {
+        guard plugin.canCreateProtectedExecutionSnapshot else { return nil }
+
+        let fileManager = FileManager.default
+        let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+        guard let sourceValues = try? plugin.directoryURL.resourceValues(forKeys: resourceKeys),
+              sourceValues.isDirectory == true,
+              sourceValues.isSymbolicLink != true else {
+            return nil
+        }
+
+        let containerURL = fileManager.temporaryDirectory
+            .appendingPathComponent("OpenFire-Trusted-Execution-\(UUID().uuidString)", isDirectory: true)
+        let packageURL = containerURL.appendingPathComponent(
+            plugin.directoryURL.lastPathComponent,
+            isDirectory: true
+        )
+
+        do {
+            try fileManager.createDirectory(
+                at: containerURL,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try fileManager.copyItem(at: plugin.directoryURL, to: packageURL)
+
+            guard let snapshotPlugin = PluginLoader.load(from: packageURL),
+                  snapshotPlugin.id == plugin.id,
+                  snapshotPlugin.config.action.type == plugin.config.action.type,
+                  snapshotPlugin.requiresExecutionTrust,
+                  let fingerprint = snapshotPlugin.executionTrustFingerprint else {
+                try? fileManager.removeItem(at: containerURL)
+                return nil
+            }
+
+            return TrustedExecutionSnapshot(
+                plugin: snapshotPlugin,
+                containerURL: containerURL,
+                fingerprint: fingerprint
+            )
+        } catch {
+            try? fileManager.removeItem(at: containerURL)
+            NSLog("[OpenFire] Failed to create trusted plugin execution snapshot: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     @discardableResult
-    func confirmExecutionTrustIfNeeded(for plugin: Plugin) -> Bool {
+    func confirmExecutionTrustIfNeeded(
+        for plugin: Plugin,
+        displayDirectoryURL: URL? = nil,
+        fingerprint suppliedFingerprint: String? = nil
+    ) -> Bool {
         guard plugin.requiresExecutionTrust else { return true }
-        guard !isExecutionTrusted(for: plugin) else { return true }
+        guard let fingerprint = suppliedFingerprint ?? plugin.executionTrustFingerprint else {
+            return false
+        }
+        guard !isStoredExecutionTrustValid(
+            pluginID: plugin.id,
+            fingerprint: fingerprint
+        ) else {
+            return true
+        }
 
         let prompt: () -> Bool = {
             let alert = NSAlert()
             alert.messageText = "Trust Plugin Before Running".localized
             alert.informativeText = String(
-                format: "Plugin '%@' can execute scripts on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes.".localized,
+                format: "Plugin '%@' can perform protected actions on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes.".localized,
                 plugin.name,
                 plugin.config.action.type.rawValue,
-                plugin.directoryURL.path
+                (displayDirectoryURL ?? plugin.directoryURL).path
             )
             alert.alertStyle = .warning
             alert.addButton(withTitle: "Trust and Run".localized)
@@ -398,8 +605,15 @@ final class PluginManager {
 
             NSApp.activate(ignoringOtherApps: true)
             let trusted = alert.runModal() == .alertFirstButtonReturn
-            self.setExecutionTrusted(trusted, for: plugin)
-            return trusted
+            self.storeExecutionTrust(
+                trusted,
+                pluginID: plugin.id,
+                fingerprint: trusted ? fingerprint : nil
+            )
+            return trusted && self.isStoredExecutionTrustValid(
+                pluginID: plugin.id,
+                fingerprint: fingerprint
+            )
         }
 
         if Thread.isMainThread {
@@ -448,17 +662,36 @@ final class PluginManager {
         }
     }
 
-    private func orderedPlugins() -> [Plugin] {
-        let savedOrder = UserDefaults.standard.stringArray(forKey: "pluginOrder") ?? []
-        if !savedOrder.isEmpty {
-            return plugins.sorted { a, b in
-                let indexA = savedOrder.firstIndex(of: a.id) ?? Int.max
-                let indexB = savedOrder.firstIndex(of: b.id) ?? Int.max
-                return indexA < indexB
-            }
+    static func orderedPlugins(_ plugins: [Plugin], savedOrder: [String]) -> [Plugin] {
+        guard !savedOrder.isEmpty else {
+            return plugins.sorted { $0.order < $1.order }
         }
 
-        return plugins.sorted { $0.order < $1.order }
+        var orderMap: [String: Int] = [:]
+        for (index, pluginID) in savedOrder.enumerated() where orderMap[pluginID] == nil {
+            orderMap[pluginID] = index
+        }
+
+        return plugins.sorted { lhs, rhs in
+            switch (orderMap[lhs.id], orderMap[rhs.id]) {
+            case let (lhsIndex?, rhsIndex?):
+                return lhsIndex < rhsIndex
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                if lhs.order != rhs.order {
+                    return lhs.order < rhs.order
+                }
+                return lhs.id.localizedStandardCompare(rhs.id) == .orderedAscending
+            }
+        }
+    }
+
+    func orderedPluginsForDisplay() -> [Plugin] {
+        let savedOrder = UserDefaults.standard.stringArray(forKey: "pluginOrder") ?? []
+        return Self.orderedPlugins(plugins, savedOrder: savedOrder)
     }
 
     private func perAppDisabledPlugins() -> [String: [String]] {
@@ -616,31 +849,166 @@ final class PluginManager {
     // MARK: - Plugin Execution
     
     /// Execute a plugin action with the given text
-    func executePlugin(_ plugin: Plugin, with text: String) {
+    func executePlugin(
+        _ plugin: Plugin,
+        with text: String,
+        targetProcessIdentifier: pid_t? = nil
+    ) {
         let action = plugin.config.action
+        let resolvedTargetProcessIdentifier =
+            targetProcessIdentifier ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
         NSLog("[OpenFire-Debug] executePlugin plugin=%@ type=%@ textLength=%ld",
               plugin.id,
               action.type.rawValue,
               text.count)
-        
+
+        switch Self.executionPolicy(for: plugin) {
+        case .protected:
+            executeProtectedPlugin(
+                plugin,
+                with: text,
+                targetProcessIdentifier: resolvedTargetProcessIdentifier
+            )
+        case .directKeyCombo:
+            guard let resolvedTargetProcessIdentifier else {
+                NSLog("[OpenFire] Refusing key combo '%@': target application is unavailable.", plugin.id)
+                return
+            }
+            executeKeyCombo(
+                action,
+                targetProcessIdentifier: resolvedTargetProcessIdentifier
+            )
+        case .standard:
+            executeStandardPlugin(
+                action,
+                text: text,
+                targetProcessIdentifier: resolvedTargetProcessIdentifier
+            )
+        }
+    }
+
+    private func executeStandardPlugin(
+        _ action: PluginActionConfig,
+        text: String,
+        targetProcessIdentifier: pid_t?
+    ) {
         switch action.type {
         case .url:
             executeURLAction(action, text: text)
-        case .shellScript:
-            guard confirmExecutionTrustIfNeeded(for: plugin) else { return }
-            executeShellScript(plugin, action: action, text: text)
-        case .applescript:
-            guard confirmExecutionTrustIfNeeded(for: plugin) else { return }
-            executeAppleScript(plugin, action: action, text: text)
-        case .keyCombo:
-            executeKeyCombo(action)
         case .copy:
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
         case .paste:
-            ActionExecutor.shared.simulateKeyCombo(key: 0x09, modifiers: .maskCommand) // Cmd+V
+            guard let targetProcessIdentifier,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == targetProcessIdentifier else {
+                return
+            }
+            ActionExecutor.shared.simulateKeyCombo(
+                key: 0x09,
+                modifiers: .maskCommand,
+                targetProcessIdentifier: targetProcessIdentifier
+            )
         case .revealPath:
             ActionExecutor.revealPathInFinder(text)
+        case .shellScript, .applescript, .keyCombo:
+            assertionFailure("Protected and direct key-combo actions must be routed before standard execution.")
+        }
+    }
+
+    private func executeProtectedPlugin(
+        _ plugin: Plugin,
+        with text: String,
+        targetProcessIdentifier: pid_t?
+    ) {
+        let displayDirectoryURL = plugin.directoryURL
+        let pluginID = plugin.id
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            guard let snapshot = self.makeProtectedExecutionSnapshot(for: plugin) else {
+                NSLog("[OpenFire] Refusing to execute plugin '%@': could not create a verified snapshot.", pluginID)
+                return
+            }
+
+            guard self.confirmExecutionTrustIfNeeded(
+                for: snapshot.plugin,
+                displayDirectoryURL: displayDirectoryURL,
+                fingerprint: snapshot.fingerprint
+            ), self.isStoredExecutionTrustValid(
+                pluginID: snapshot.plugin.id,
+                fingerprint: snapshot.fingerprint
+            ) else {
+                self.removeTrustedExecutionSnapshot(snapshot)
+                return
+            }
+
+            let action = snapshot.plugin.config.action
+            switch action.type {
+            case .shellScript:
+                self.executeShellScript(
+                    snapshot.plugin,
+                    action: action,
+                    text: text,
+                    cleanupSnapshot: snapshot
+                )
+            case .applescript:
+                self.executeAppleScript(
+                    snapshot.plugin,
+                    action: action,
+                    text: text,
+                    cleanupSnapshot: snapshot
+                )
+            case .keyCombo:
+                self.executeTrustedKeyCombo(
+                    action,
+                    targetProcessIdentifier: targetProcessIdentifier,
+                    cleanupSnapshot: snapshot
+                )
+            default:
+                self.removeTrustedExecutionSnapshot(snapshot)
+            }
+        }
+    }
+
+    private func executeTrustedKeyCombo(
+        _ action: PluginActionConfig,
+        targetProcessIdentifier: pid_t?,
+        cleanupSnapshot: TrustedExecutionSnapshot
+    ) {
+        DispatchQueue.main.async {
+            guard let targetProcessIdentifier,
+                  let targetApplication = NSRunningApplication(
+                    processIdentifier: targetProcessIdentifier
+                  ) else {
+                self.removeTrustedExecutionSnapshot(cleanupSnapshot)
+                return
+            }
+
+            let executeIfStillTargeted = {
+                defer { self.removeTrustedExecutionSnapshot(cleanupSnapshot) }
+                guard NSWorkspace.shared.frontmostApplication?.processIdentifier ==
+                        targetProcessIdentifier else {
+                    return
+                }
+                self.executeKeyCombo(
+                    action,
+                    targetProcessIdentifier: targetProcessIdentifier
+                )
+            }
+
+            let frontmostProcessIdentifier =
+                NSWorkspace.shared.frontmostApplication?.processIdentifier
+            if frontmostProcessIdentifier == targetProcessIdentifier {
+                executeIfStillTargeted()
+            } else if frontmostProcessIdentifier == ProcessInfo.processInfo.processIdentifier,
+                      targetApplication.activate(options: [.activateIgnoringOtherApps]) {
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + 0.05,
+                    execute: executeIfStillTargeted
+                )
+            } else {
+                self.removeTrustedExecutionSnapshot(cleanupSnapshot)
+            }
         }
     }
     
@@ -649,45 +1017,81 @@ final class PluginManager {
     private func executeURLAction(_ action: PluginActionConfig, text: String) {
         guard var urlTemplate = action.url else { return }
         
-        let encoded = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? text
-        urlTemplate = urlTemplate.replacingOccurrences(of: "{text}", with: encoded)
+        urlTemplate = Self.renderedURLString(template: urlTemplate, text: text)
         
         guard let url = URL(string: urlTemplate) else { return }
         NSWorkspace.shared.open(url)
     }
+
+    static func renderedURLString(template: String, text: String) -> String {
+        if template.trimmingCharacters(in: .whitespacesAndNewlines) == "{text}" {
+            return normalizedDirectURLString(from: text)
+        }
+
+        return template.replacingOccurrences(
+            of: "{text}",
+            with: encodedURLPlaceholderText(text)
+        )
+    }
+
+    static func encodedURLPlaceholderText(_ text: String) -> String {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: ":#[]@!$&'()*+,;=/?")
+        return text.addingPercentEncoding(withAllowedCharacters: allowed) ?? text
+    }
+
+    private static func normalizedDirectURLString(from text: String) -> String {
+        var urlString = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !urlString.contains("://") {
+            urlString = "https://\(urlString)"
+        }
+        return urlString
+    }
     
-    private func executeShellScript(_ plugin: Plugin, action: PluginActionConfig, text: String) {
+    private func executeShellScript(
+        _ plugin: Plugin,
+        action: PluginActionConfig,
+        text: String,
+        cleanupSnapshot: TrustedExecutionSnapshot
+    ) {
         NSLog("[OpenFire-Debug] Entering executeShellScript for plugin: \(plugin.id)")
         let scriptContent: String?
         
         if let scriptName = action.script {
-            NSLog("[OpenFire-Debug] Found script file config for Shell Script: \(scriptName)")
-            let scriptURL = plugin.directoryURL.appendingPathComponent(scriptName)
-            if FileManager.default.fileExists(atPath: scriptURL.path) {
+            switch Self.resolvedPluginScriptSource(
+                scriptName,
+                pluginDirectoryURL: plugin.directoryURL
+            ) {
+            case .bundledFile(let scriptURL):
                 var enc: String.Encoding = .utf8
                 scriptContent = try? String(contentsOf: scriptURL, usedEncoding: &enc)
                 NSLog("[OpenFire-Debug] Loaded shell script from file: \(scriptURL.path) (encoding: \(enc))")
-            } else {
-                // Support plugins that just stored the script directly in the 'script' string field in JSON
-                NSLog("[OpenFire-Debug] Shell script file not found, using script field as inline text")
-                scriptContent = scriptName
+            case .inline(let inline):
+                scriptContent = inline
+                NSLog("[OpenFire-Debug] Using legacy inline shell script from the script field")
+            case nil:
+                NSLog("[OpenFire] Refusing shell script outside the verified plugin package: \(scriptName)")
+                scriptContent = nil
             }
         } else if let inline = action.inline {
             NSLog("[OpenFire-Debug] Found inline action config for Shell Script")
             scriptContent = inline
         } else {
             NSLog("[OpenFire-Debug] Neither inline nor script field found in config!")
+            removeTrustedExecutionSnapshot(cleanupSnapshot)
             return
         }
         
         guard let content = scriptContent else {
             NSLog("[OpenFire-Debug] shell scriptContent is nil, ABORTING!")
+            removeTrustedExecutionSnapshot(cleanupSnapshot)
             return
         }
         
         NSLog("[OpenFire-Debug] Shell script content resolved, preparing to run bash...")
         
         DispatchQueue.global(qos: .userInitiated).async {
+            defer { self.removeTrustedExecutionSnapshot(cleanupSnapshot) }
             // Write selected text to a temp file for reliable Unicode/CJK support
             let textFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
             try? text.write(to: textFile, atomically: true, encoding: .utf8)
@@ -711,32 +1115,42 @@ final class PluginManager {
         }
     }
     
-    private func executeAppleScript(_ plugin: Plugin, action: PluginActionConfig, text: String) {
+    private func executeAppleScript(
+        _ plugin: Plugin,
+        action: PluginActionConfig,
+        text: String,
+        cleanupSnapshot: TrustedExecutionSnapshot
+    ) {
         NSLog("[OpenFire-Debug] Entering executeAppleScript for plugin: \(plugin.id)")
         var source: String?
         
         if let scriptName = action.script {
-            NSLog("[OpenFire-Debug] Found script file config: \(scriptName)")
-            let scriptURL = plugin.directoryURL.appendingPathComponent(scriptName)
-            if FileManager.default.fileExists(atPath: scriptURL.path) {
+            switch Self.resolvedPluginScriptSource(
+                scriptName,
+                pluginDirectoryURL: plugin.directoryURL
+            ) {
+            case .bundledFile(let scriptURL):
                 var enc: String.Encoding = .utf8
                 let fileSource = try? String(contentsOf: scriptURL, usedEncoding: &enc)
-                source = fileSource?.replacingOccurrences(of: "{text}", with: text)
+                source = fileSource.map { Self.renderedAppleScriptSource($0, text: text) }
                 NSLog("[OpenFire-Debug] Loaded script from file: \(scriptURL.path)")
-            } else {
-                // Support inline script stored within 'script' field directly
-                source = scriptName.replacingOccurrences(of: "{text}", with: text)
-                NSLog("[OpenFire-Debug] File not found, using script field as literal inline text")
+            case .inline(let inline):
+                source = Self.renderedAppleScriptSource(inline, text: text)
+                NSLog("[OpenFire-Debug] Using legacy inline AppleScript from the script field")
+            case nil:
+                NSLog("[OpenFire] Refusing AppleScript outside the verified plugin package: \(scriptName)")
+                source = nil
             }
         } else if let inline = action.inline {
             NSLog("[OpenFire-Debug] Found inline action config")
-            source = inline.replacingOccurrences(of: "{text}", with: text)
+            source = Self.renderedAppleScriptSource(inline, text: text)
         } else {
             NSLog("[OpenFire-Debug] Neither inline nor script field found in config!")
         }
         
         guard let appleScriptSource = source else {
             NSLog("[OpenFire-Debug] appleScriptSource is nil, ABORTING!")
+            removeTrustedExecutionSnapshot(cleanupSnapshot)
             return
         }
         
@@ -744,6 +1158,7 @@ final class PluginManager {
         
         // Execute via osascript passing a temporary file path
         DispatchQueue.global(qos: .userInitiated).async {
+            defer { self.removeTrustedExecutionSnapshot(cleanupSnapshot) }
             let tempDir = FileManager.default.temporaryDirectory
             let tempFile = tempDir.appendingPathComponent(UUID().uuidString + ".applescript")
             // Write selected text to a temp file so AppleScript can read it with proper UTF-8 encoding
@@ -785,8 +1200,105 @@ final class PluginManager {
             }
         }
     }
+
+    static func renderedAppleScriptSource(_ source: String, text: String) -> String {
+        guard source.contains("{text}") else { return source }
+
+        let literal = appleScriptStringLiteralExpression(for: text)
+        let token = "{text}"
+        var result = ""
+        var index = source.startIndex
+        var insideString = false
+        var escaping = false
+
+        while index < source.endIndex {
+            if source[index...].hasPrefix(token) {
+                result += insideString ? "\" & \(literal) & \"" : literal
+                index = source.index(index, offsetBy: token.count)
+                escaping = false
+                continue
+            }
+
+            let character = source[index]
+            result.append(character)
+
+            if character == "\"" && !escaping {
+                insideString.toggle()
+            }
+            escaping = character == "\\" && !escaping
+            if character != "\\" {
+                escaping = false
+            }
+
+            index = source.index(after: index)
+        }
+
+        return result
+    }
+
+    static func appleScriptStringLiteralExpression(for text: String) -> String {
+        let normalized = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+
+        return normalized
+            .components(separatedBy: "\n")
+            .map { "\"\(appleScriptStringLiteralContent(for: $0))\"" }
+            .joined(separator: " & linefeed & ")
+    }
+
+    static func resolvedPluginScriptSource(
+        _ scriptValue: String,
+        pluginDirectoryURL: URL,
+        fileManager: FileManager = .default
+    ) -> PluginScriptSource? {
+        let trimmed = scriptValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let explicitlyExternalPrefixes = ["/", "~/", "../"]
+        guard !explicitlyExternalPrefixes.contains(where: { trimmed.hasPrefix($0) }) else {
+            return nil
+        }
+
+        let rootURL = pluginDirectoryURL.standardizedFileURL.resolvingSymlinksInPath()
+        let candidateURL = pluginDirectoryURL
+            .appendingPathComponent(trimmed)
+            .standardizedFileURL
+        let resolvedCandidateURL = candidateURL.resolvingSymlinksInPath()
+        let rootPath = rootURL.path
+        let rootPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+
+        guard resolvedCandidateURL.path.hasPrefix(rootPrefix) else { return nil }
+
+        if fileManager.fileExists(atPath: candidateURL.path),
+           let values = try? candidateURL.resourceValues(
+            forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
+           ),
+           values.isRegularFile == true,
+           values.isSymbolicLink != true {
+            return .bundledFile(candidateURL)
+        }
+
+        let isSingleToken = trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
+        let looksLikeMissingFile = isSingleToken && (
+            trimmed.contains("/") ||
+            trimmed.hasSuffix(".sh") ||
+            trimmed.hasSuffix(".applescript") ||
+            trimmed.hasSuffix(".scpt")
+        )
+        return looksLikeMissingFile ? nil : .inline(scriptValue)
+    }
+
+    private static func appleScriptStringLiteralContent(for text: String) -> String {
+        text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
     
-    private func executeKeyCombo(_ action: PluginActionConfig) {
+    private func executeKeyCombo(
+        _ action: PluginActionConfig,
+        targetProcessIdentifier: pid_t
+    ) {
         guard let keyString = action.key else { return }
         
         var modifierFlags: CGEventFlags = []
@@ -804,7 +1316,11 @@ final class PluginManager {
         
         // Map key string to virtual key code
         guard let keyCode = keyCodeForString(keyString) else { return }
-        ActionExecutor.shared.simulateKeyCombo(key: keyCode, modifiers: modifierFlags)
+        ActionExecutor.shared.simulateKeyCombo(
+            key: keyCode,
+            modifiers: modifierFlags,
+            targetProcessIdentifier: targetProcessIdentifier
+        )
     }
     
     private func keyCodeForString(_ key: String) -> CGKeyCode? {
@@ -837,6 +1353,11 @@ final class PluginManager {
     
     /// Install a plugin from a given URL (e.g., when user double-clicks a .openfireext file)
     func installPlugin(from sourceURL: URL) -> Bool {
+        installPluginDetailed(from: sourceURL).isSuccess
+    }
+
+    /// Install a plugin and return the reason when validation or copying fails.
+    func installPluginDetailed(from sourceURL: URL) -> PluginInstallResult {
         // macOS hands us a security-scoped URL when double-clicked outside our sandbox
         let accessGranted = sourceURL.startAccessingSecurityScopedResource()
         defer {
@@ -846,48 +1367,251 @@ final class PluginManager {
         }
 
         let fileManager = FileManager.default
+
+        guard Self.isInstallPackageWithinLimits(sourceURL, fileManager: fileManager) else {
+            NSLog("[OpenFire] Refusing to install unsafe or oversized plugin package: \(sourceURL.path)")
+            return .failed(.invalidPackage)
+        }
         
-        // Create plugins directory if needed
-        try? fileManager.createDirectory(at: userPluginsURL, withIntermediateDirectories: true)
+        do {
+            try fileManager.createDirectory(at: userPluginsURL, withIntermediateDirectories: true)
+        } catch {
+            NSLog("[OpenFire] Failed to create plugin directory: \(error.localizedDescription)")
+            return .failed(.fileOperationFailed(error.localizedDescription))
+        }
 
         guard let sourcePlugin = PluginLoader.load(from: sourceURL) else {
             NSLog("[OpenFire] Refusing to install invalid plugin package: \(sourceURL.path)")
-            return false
+            return .failed(.invalidPackage)
         }
 
-        guard !Self.coreDefaultPluginIDs.contains(sourcePlugin.id) else {
-            NSLog("[OpenFire] Refusing to install plugin with reserved core identifier: \(sourcePlugin.id)")
-            return false
+        if let validationMessage = Self.pluginIdentifierValidationMessage(sourcePlugin.id) {
+            NSLog("[OpenFire] Refusing to install plugin with invalid identifier '\(sourcePlugin.id)': \(validationMessage)")
+            return .failed(.invalidIdentifier(validationMessage))
         }
 
         let canonicalFileName = Self.visibleUserPluginFileName(for: sourcePlugin.id)
         let destinationURL = userPluginsURL.appendingPathComponent(canonicalFileName)
-        if let existingURL = userPluginURL(for: sourcePlugin.id),
-           !Self.sameFileURL(existingURL, destinationURL),
-           fileManager.fileExists(atPath: existingURL.path) {
-            try? fileManager.removeItem(at: existingURL)
+
+        if fileManager.fileExists(atPath: destinationURL.path),
+           let existingPlugin = PluginLoader.load(from: destinationURL),
+           existingPlugin.id != sourcePlugin.id {
+            NSLog("[OpenFire] Refusing to install plugin '\(sourcePlugin.id)' because it would replace plugin '\(existingPlugin.id)'")
+            return .failed(.destinationIdentifierConflict(existingIdentifier: existingPlugin.id))
         }
+
+        if Self.sameFileURL(sourceURL, destinationURL) {
+            removeDuplicateUserPlugins(for: sourcePlugin.id, keeping: destinationURL)
+            reloadPlugins()
+            return .installed
+        }
+
+        let stagingURL = userPluginsURL.appendingPathComponent(".install-\(UUID().uuidString).openfireext.pending")
+        let backupURL = userPluginsURL.appendingPathComponent(".backup-\(UUID().uuidString).openfireext.pending")
+        var didMoveDestinationToBackup = false
+        var shouldRemoveBackup = true
         
-        // Remove existing plugin with same name
-        if fileManager.fileExists(atPath: destinationURL.path) {
-            try? fileManager.removeItem(at: destinationURL)
+        defer {
+            try? fileManager.removeItem(at: stagingURL)
+            if shouldRemoveBackup {
+                try? fileManager.removeItem(at: backupURL)
+            }
         }
         
         do {
-            try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            try fileManager.copyItem(at: sourceURL, to: stagingURL)
+            guard Self.isInstallPackageWithinLimits(stagingURL, fileManager: fileManager),
+                  let stagedPlugin = PluginLoader.load(from: stagingURL),
+                  stagedPlugin.config == sourcePlugin.config else {
+                NSLog("[OpenFire] Refusing staged plugin because validation failed after copy: \(sourceURL.path)")
+                return .failed(.stagedValidationFailed)
+            }
+
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try fileManager.moveItem(at: destinationURL, to: backupURL)
+                didMoveDestinationToBackup = true
+            }
+
+            do {
+                try fileManager.moveItem(at: stagingURL, to: destinationURL)
+            } catch {
+                shouldRemoveBackup = Self.restoreBackedUpPackageIfNeeded(
+                    backupURL: backupURL,
+                    destinationURL: destinationURL,
+                    didMoveDestinationToBackup: didMoveDestinationToBackup,
+                    fileManager: fileManager,
+                    logPrefix: "Plugin install"
+                )
+                throw error
+            }
+
             removeDuplicateUserPlugins(for: sourcePlugin.id, keeping: destinationURL)
             NSLog("[OpenFire] Plugin installed: \(sourceURL.lastPathComponent)")
             reloadPlugins()
-            return true
+            return .installed
         } catch {
             NSLog("[OpenFire] Failed to install plugin: \(error.localizedDescription)")
+            return .failed(.fileOperationFailed(error.localizedDescription))
+        }
+    }
+
+    static func isInstallPackageWithinLimits(
+        _ packageURL: URL,
+        fileManager: FileManager = .default,
+        maxFileCount: Int = maximumInstallPackageFileCount,
+        maxTotalBytes: Int = maximumInstallPackageBytes
+    ) -> Bool {
+        guard maxFileCount > 0, maxTotalBytes >= 0 else { return false }
+
+        let rootKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+        guard let rootValues = try? packageURL.resourceValues(forKeys: rootKeys),
+              rootValues.isDirectory == true,
+              rootValues.isSymbolicLink != true else {
             return false
         }
+
+        let resourceKeys: [URLResourceKey] = [
+            .fileSizeKey,
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+        ]
+        var enumerationFailed = false
+        guard let enumerator = fileManager.enumerator(
+            at: packageURL,
+            includingPropertiesForKeys: resourceKeys,
+            options: [],
+            errorHandler: { url, error in
+                enumerationFailed = true
+                NSLog("[OpenFire] Failed to inspect plugin package at \(url.path): \(error.localizedDescription)")
+                return false
+            }
+        ) else {
+            return false
+        }
+
+        var fileCount = 0
+        var totalBytes = 0
+
+        for case let itemURL as URL in enumerator {
+            guard let values = try? itemURL.resourceValues(forKeys: Set(resourceKeys)),
+                  values.isSymbolicLink != true else {
+                return false
+            }
+            if values.isDirectory == true {
+                continue
+            }
+            guard values.isRegularFile == true,
+                  let fileSize = values.fileSize,
+                  fileSize >= 0,
+                  fileCount < maxFileCount,
+                  fileSize <= maxTotalBytes - totalBytes else {
+                return false
+            }
+            fileCount += 1
+            totalBytes += fileSize
+        }
+
+        return !enumerationFailed && fileCount > 0
+    }
+
+    static func restoreBackedUpPackageIfNeeded(
+        backupURL: URL,
+        destinationURL: URL,
+        didMoveDestinationToBackup: Bool,
+        fileManager: FileManager = .default,
+        logPrefix: String
+    ) -> Bool {
+        guard didMoveDestinationToBackup else { return true }
+
+        guard !fileManager.fileExists(atPath: destinationURL.path) else {
+            NSLog("[OpenFire] \(logPrefix) failed after destination was recreated. Preserving backup at \(backupURL.path).")
+            return false
+        }
+
+        do {
+            try fileManager.moveItem(at: backupURL, to: destinationURL)
+            return true
+        } catch {
+            NSLog("[OpenFire] \(logPrefix) could not restore backup at \(backupURL.path): \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    @discardableResult
+    static func appendPluginProcessStderrChunk(
+        _ chunk: Data,
+        to stderrData: inout Data,
+        maxBytes: Int = maxPluginProcessStderrBytes
+    ) -> Bool {
+        guard maxBytes > 0 else { return !chunk.isEmpty }
+        let remainingBytes = maxBytes - stderrData.count
+        guard remainingBytes > 0 else { return !chunk.isEmpty }
+
+        if chunk.count <= remainingBytes {
+            stderrData.append(chunk)
+            return false
+        }
+
+        stderrData.append(chunk.prefix(remainingBytes))
+        return true
+    }
+
+    static func processList(from psOutput: String) -> [(pid: pid_t, parentPID: pid_t)] {
+        psOutput
+            .split(whereSeparator: \.isNewline)
+            .compactMap { line in
+                let parts = line.split(whereSeparator: \.isWhitespace)
+                guard parts.count >= 2,
+                      let pid = pid_t(parts[0]),
+                      let parentPID = pid_t(parts[1]) else {
+                    return nil
+                }
+                return (pid: pid, parentPID: parentPID)
+            }
+    }
+
+    static func processTreeTerminationOrder(
+        rootPID: pid_t,
+        processList: [(pid: pid_t, parentPID: pid_t)]
+    ) -> [pid_t] {
+        var childrenByParent: [pid_t: [pid_t]] = [:]
+        for process in processList {
+            childrenByParent[process.parentPID, default: []].append(process.pid)
+        }
+
+        for parent in childrenByParent.keys {
+            childrenByParent[parent]?.sort()
+        }
+
+        var order: [pid_t] = []
+        func appendSubtree(_ pid: pid_t) {
+            for childPID in childrenByParent[pid] ?? [] {
+                appendSubtree(childPID)
+            }
+            order.append(pid)
+        }
+        appendSubtree(rootPID)
+        return order
     }
 
     private func runProcessWithTimeout(_ process: Process, timeout: TimeInterval, logPrefix: String) {
         let errorPipe = Pipe()
         process.standardError = errorPipe
+        if process.standardOutput == nil, let nullDevice = FileHandle(forWritingAtPath: "/dev/null") {
+            process.standardOutput = nullDevice
+        }
+        let stderrQueue = DispatchQueue(label: "com.openfire.plugin-stderr")
+        var stderrData = Data()
+        var stderrTruncated = false
+        errorPipe.fileHandleForReading.readabilityHandler = { handle in
+            let availableData = handle.availableData
+            guard !availableData.isEmpty else { return }
+            stderrQueue.sync {
+                let didTruncate = Self.appendPluginProcessStderrChunk(availableData, to: &stderrData)
+                stderrTruncated = stderrTruncated || didTruncate
+            }
+        }
 
         let semaphore = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in
@@ -897,6 +1621,7 @@ final class PluginManager {
         do {
             try process.run()
         } catch {
+            errorPipe.fileHandleForReading.readabilityHandler = nil
             NSLog("[OpenFire] Failed to launch \(logPrefix): \(error.localizedDescription)")
             return
         }
@@ -905,29 +1630,86 @@ final class PluginManager {
         if waitResult == .timedOut {
             NSLog("[OpenFire] \(logPrefix) timed out after \(Int(timeout))s, terminating process.")
             if process.isRunning {
-                process.terminate()
+                Self.terminateProcessTree(rootPID: process.processIdentifier, signal: SIGTERM)
                 let terminationResult = semaphore.wait(timeout: .now() + 2)
                 if terminationResult == .timedOut, process.isRunning {
-                    kill(process.processIdentifier, SIGKILL)
+                    // Re-scan before escalation. Never signal PIDs retained from an older snapshot,
+                    // because an exited child's PID may already belong to an unrelated process.
+                    Self.terminateProcessTree(rootPID: process.processIdentifier, signal: SIGKILL)
                     _ = semaphore.wait(timeout: .now() + 2)
                 }
             }
+        }
+
+        guard !process.isRunning else {
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            try? errorPipe.fileHandleForReading.close()
+            NSLog("[OpenFire] \(logPrefix) did not exit after termination escalation.")
+            return
         }
 
         if Self.isVerbosePluginLoggingEnabled() {
             NSLog("[OpenFire-Debug] \(logPrefix) process finished with exit code: \(process.terminationStatus)")
         }
 
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        errorPipe.fileHandleForReading.readabilityHandler = nil
+        let remainingErrorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        stderrQueue.sync {
+            let didTruncate = Self.appendPluginProcessStderrChunk(remainingErrorData, to: &stderrData)
+            stderrTruncated = stderrTruncated || didTruncate
+        }
+        let (errorData, wasStderrTruncated) = stderrQueue.sync {
+            (stderrData, stderrTruncated)
+        }
         if !errorData.isEmpty,
-           let errorStr = String(data: errorData, encoding: .utf8),
+           var errorStr = String(data: errorData, encoding: .utf8),
            let message = Self.pluginProcessStderrLogMessage(
             logPrefix: logPrefix,
-            stderr: errorStr,
+            stderr: {
+                if wasStderrTruncated {
+                    errorStr += "\n[OpenFire] stderr truncated after \(Self.maxPluginProcessStderrBytes) bytes."
+                }
+                return errorStr
+            }(),
             terminationStatus: process.terminationStatus,
             verboseLoggingEnabled: Self.isVerbosePluginLoggingEnabled()
            ) {
             NSLog("[OpenFire] %@", message)
+        }
+    }
+
+    private static func currentProcessList() -> [(pid: pid_t, parentPID: pid_t)] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-axo", "pid=,ppid="]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = FileHandle(forWritingAtPath: "/dev/null")
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            NSLog("[OpenFire] Failed to inspect child processes: \(error.localizedDescription)")
+            return []
+        }
+
+        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        return processList(from: output)
+    }
+
+    @discardableResult
+    private static func terminateProcessTree(rootPID: pid_t, signal: Int32) -> [pid_t] {
+        let order = processTreeTerminationOrder(rootPID: rootPID, processList: currentProcessList())
+        terminateProcessIDs(order, signal: signal)
+        return order
+    }
+
+    private static func terminateProcessIDs(_ pids: [pid_t], signal: Int32) {
+        for pid in pids {
+            kill(pid, signal)
         }
     }
 }

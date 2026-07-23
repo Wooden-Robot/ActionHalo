@@ -2,8 +2,144 @@ import Cocoa
 import ApplicationServices
 import Carbon
 
+final class CopyFallbackRequestCoordinator {
+    private let lock = NSLock()
+    private var activeRequestID: UUID?
+
+    func beginRequest() -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let requestID = UUID()
+        activeRequestID = requestID
+        return requestID
+    }
+
+    func isRequestActive(_ requestID: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return activeRequestID == requestID
+    }
+
+    func cancelRequest(_ requestID: UUID) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if activeRequestID == requestID {
+            activeRequestID = nil
+        }
+    }
+
+    func completeRequestIfActive(_ requestID: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard activeRequestID == requestID else { return false }
+        activeRequestID = nil
+        return true
+    }
+
+    func cancelActiveRequest() {
+        lock.lock()
+        defer { lock.unlock() }
+        activeRequestID = nil
+    }
+}
+
+private enum PasteboardSnapshotPayload {
+    case memory(Data)
+    case file(URL)
+}
+
+private final class PasteboardSnapshotFileStore {
+    let directoryURL: URL
+
+    private let fileManager: FileManager
+    private let cleanupLock = NSLock()
+    private var isCleanedUp = false
+
+    init?(fileManager: FileManager = .default) {
+        self.fileManager = fileManager
+        directoryURL = fileManager.temporaryDirectory.appendingPathComponent(
+            "OpenFire-Pasteboard-\(UUID().uuidString)",
+            isDirectory: true
+        )
+
+        do {
+            try fileManager.createDirectory(
+                at: directoryURL,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+        } catch {
+            return nil
+        }
+    }
+
+    func store(_ data: Data) -> URL? {
+        let fileURL = directoryURL.appendingPathComponent(UUID().uuidString)
+        do {
+            try data.write(to: fileURL)
+            return fileURL
+        } catch {
+            return nil
+        }
+    }
+
+    func cleanup() {
+        cleanupLock.lock()
+        defer { cleanupLock.unlock() }
+        guard !isCleanedUp else { return }
+        isCleanedUp = true
+        try? fileManager.removeItem(at: directoryURL)
+    }
+
+    deinit {
+        cleanup()
+    }
+}
+
+private final class PasteboardSnapshotDataProvider: NSObject, NSPasteboardItemDataProvider {
+    private let filesByType: [NSPasteboard.PasteboardType: URL]
+    private let fileStore: PasteboardSnapshotFileStore
+
+    init(
+        filesByType: [NSPasteboard.PasteboardType: URL],
+        fileStore: PasteboardSnapshotFileStore
+    ) {
+        self.filesByType = filesByType
+        self.fileStore = fileStore
+    }
+
+    func pasteboard(
+        _ pasteboard: NSPasteboard?,
+        item: NSPasteboardItem,
+        provideDataForType type: NSPasteboard.PasteboardType
+    ) {
+        guard let fileURL = filesByType[type],
+              let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else {
+            return
+        }
+        item.setData(data, forType: type)
+    }
+}
+
 /// Manages macOS Accessibility API integration for detecting text selection
 final class AccessibilityManager {
+    static let copyFallbackPreflightDelay: TimeInterval = 0.05
+    static let copyFallbackKeyGap: TimeInterval = 0.01
+    static let copyFallbackPollAttempts = 12
+    static let copyFallbackLatePollAttempts = 8
+    static let copyFallbackPollInterval: TimeInterval = 0.025
+    static let maximumPasteboardSnapshotBytes = 256 * 1024 * 1024
+    static let maximumPasteboardSnapshotInMemoryBytes = 8 * 1024 * 1024
+    static let maximumPasteboardSnapshotItems = 32
+    static let maximumPasteboardSnapshotTypes = 128
+    static let copyFallbackWorstCaseDuration =
+        copyFallbackPreflightDelay +
+        copyFallbackKeyGap +
+        (Double(copyFallbackPollAttempts + copyFallbackLatePollAttempts) * copyFallbackPollInterval)
+
     private static let protectedTextSubroles: Set<String> = [
         "AXSecureTextField",
         "AXSecureTextArea"
@@ -46,24 +182,30 @@ final class AccessibilityManager {
     ]
     private static let blindCopyFallbackBundleExactHints: Set<String> = [
         "ru.keepcoder.telegram",
+        "com.apple.safari",
         "com.google.chrome",
         "com.google.chrome.canary",
         "org.chromium.chromium",
+        "org.mozilla.firefox",
         "com.brave.browser",
         "com.microsoft.edgemac",
+        "com.vivaldi.vivaldi",
+        "com.operasoftware.opera",
         "company.thebrowser.browser",
         "com.openai.codex"
     ]
 
-    private static let protectedTextBooleanAttributes: [CFString] = [
-        "AXValueProtected" as CFString,
-        "AXProtectedContent" as CFString,
-        "AXSecure" as CFString
+    private static let protectedTextBooleanAttributes = [
+        "AXValueProtected",
+        "AXProtectedContent",
+        "AXSecure"
     ]
     
     static let shared = AccessibilityManager()
     
     private let systemWideElement: AXUIElement
+    private let copyFallbackQueue = DispatchQueue(label: "com.openfire.copy-fallback", qos: .userInitiated)
+    private let copyFallbackCoordinator = CopyFallbackRequestCoordinator()
 
     enum SelectionAcquisitionSource {
         case accessibility
@@ -139,6 +281,17 @@ final class AccessibilityManager {
         let failure: SelectionAttemptFailure
     }
 
+    struct PasteboardSnapshot {
+        fileprivate let items: [[NSPasteboard.PasteboardType: PasteboardSnapshotPayload]]
+        let totalBytes: Int
+        let temporaryDirectoryURL: URL?
+        fileprivate let fileStore: PasteboardSnapshotFileStore?
+
+        func discardTemporaryFiles() {
+            fileStore?.cleanup()
+        }
+    }
+
     var onPermissionLost: (() -> Void)?
     private var permissionWatchdog: Timer?
     private(set) var lastSelectionAcquisitionStatus: SelectionAcquisitionStatus?
@@ -149,26 +302,19 @@ final class AccessibilityManager {
         systemWideElement = AXUIElementCreateSystemWide()
     }
 
-    /// Convert a global AppKit mouse location into the top-left AX coordinate space
-    /// for the specific display containing that point.
-    func accessibilityScreenPoint(for point: NSPoint) -> CGPoint? {
-        guard let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }) ?? NSScreen.main else {
-            return nil
-        }
-
-        let frame = screen.frame
-        return CGPoint(x: point.x, y: frame.maxY - point.y)
+    /// Convert AppKit's bottom-left global coordinates into the shared top-left AX/Quartz space.
+    func accessibilityScreenPoint(
+        for point: NSPoint,
+        screenFrames: [NSRect] = NSScreen.screens.map(\.frame)
+    ) -> CGPoint? {
+        Self.coreGraphicsScreenPoint(for: point, screenFrames: screenFrames)
     }
 
     /// Convert a global AppKit point into Quartz global coordinates used by CGEvent APIs.
-    /// Quartz uses a top-left origin spanning the full virtual desktop, so the Y axis
-    /// must be flipped against the desktop's highest screen edge rather than the current screen.
+    /// The first NSScreen is the menu-bar display and defines the global coordinate origin.
     static func coreGraphicsScreenPoint(for point: NSPoint, screenFrames: [NSRect] = NSScreen.screens.map(\.frame)) -> CGPoint? {
-        guard let desktopMaxY = screenFrames.map(\.maxY).max() else {
-            return nil
-        }
-
-        return CGPoint(x: point.x, y: desktopMaxY - point.y)
+        guard let primaryScreenFrame = screenFrames.first else { return nil }
+        return CGPoint(x: point.x, y: primaryScreenFrame.maxY - point.y)
     }
     
     func startWatchdog() {
@@ -329,24 +475,69 @@ final class AccessibilityManager {
         return false
     }
     
-    // Fallback: Simulate Cmd+C to grab text from apps that refuse to expose accessibility text
-    func getSelectedTextViaCopy(completion: @escaping (String?) -> Void) {
+    static func shouldContinueCopyFallback(
+        requestIsActive: Bool,
+        expectedProcessIdentifier: pid_t?,
+        currentProcessIdentifier: pid_t?,
+        isSelectionSuppressed: Bool
+    ) -> Bool {
+        guard requestIsActive, !isSelectionSuppressed else { return false }
+        return isExpectedCopyFallbackProcess(
+            expectedProcessIdentifier: expectedProcessIdentifier,
+            currentProcessIdentifier: currentProcessIdentifier
+        )
+    }
+
+    static func isExpectedCopyFallbackProcess(
+        expectedProcessIdentifier: pid_t?,
+        currentProcessIdentifier: pid_t?
+    ) -> Bool {
+        guard let expectedProcessIdentifier, let currentProcessIdentifier else { return false }
+        return expectedProcessIdentifier == currentProcessIdentifier
+    }
+
+    // Fallback: Simulate Cmd+C to grab text from apps that refuse to expose accessibility text.
+    // Requests are serialized because every request temporarily owns the global pasteboard.
+    @discardableResult
+    func getSelectedTextViaCopy(
+        expectedProcessIdentifier: pid_t? = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+        completion: @escaping (String?) -> Void
+    ) -> UUID {
+        let requestID = copyFallbackCoordinator.beginRequest()
+
         guard !shouldSuppressSelectionPresentation() else {
-            DispatchQueue.main.async {
-                completion(nil)
-            }
-            return
+            finishCopyFallbackRequest(requestID, result: nil, completion: completion)
+            return requestID
         }
 
-        DispatchQueue.global(qos: .userInitiated).async {
+        copyFallbackQueue.async {
             // Give the user ~50ms to lift their fingers from the global hotkey
             // so physical modifiers (like Option/Control) don't turn Cmd+C into Option+Cmd+C
-            usleep(50000) 
+            usleep(useconds_t(Self.copyFallbackPreflightDelay * 1_000_000))
+
+            guard let targetProcessIdentifier = expectedProcessIdentifier,
+                  self.copyFallbackContextIsValid(
+                requestID: requestID,
+                expectedProcessIdentifier: expectedProcessIdentifier
+            ) else {
+                self.finishCopyFallbackRequest(requestID, result: nil, completion: completion)
+                return
+            }
             
             let pasteboard = NSPasteboard.general
             let initialChangeCount = pasteboard.changeCount
             let initialString = pasteboard.string(forType: .string)
-            let snapshot = Self.capturePasteboardSnapshot(from: pasteboard)
+            guard let snapshot = Self.capturePasteboardSnapshot(from: pasteboard) else {
+                NSLog("[OpenFire] Skipping Cmd+C fallback because the clipboard cannot be snapshotted safely.")
+                self.finishCopyFallbackRequest(requestID, result: nil, completion: completion)
+                return
+            }
+            var snapshotWasRestored = false
+            defer {
+                if !snapshotWasRestored {
+                    snapshot.discardTemporaryFiles()
+                }
+            }
             
             // Simulate Cmd+C via CGEvent
             let source = CGEventSource(stateID: .hidSystemState)
@@ -356,17 +547,27 @@ final class AccessibilityManager {
             cmdDown?.flags = .maskCommand
             cmdUp?.flags = .maskCommand
             
-            cmdDown?.post(tap: .cghidEventTap)
-            usleep(10000) // 10ms gap between down and up
-            cmdUp?.post(tap: .cghidEventTap)
+            cmdDown?.postToPid(targetProcessIdentifier)
+            usleep(useconds_t(Self.copyFallbackKeyGap * 1_000_000))
+            cmdUp?.postToPid(targetProcessIdentifier)
             
             // Wait for Electron/Chromium/WebView apps to detect the event, process the DOM,
             // and asynchronously write to the pasteboard.
-            let copyObservation = Self.pollPasteboardForCopiedText(
+            var copyObservation = Self.pollPasteboardForCopiedText(
                 pasteboard: pasteboard,
                 initialChangeCount: initialChangeCount,
-                initialString: initialString
+                initialString: initialString,
+                attempts: Self.copyFallbackPollAttempts
             )
+
+            if !copyObservation.hasFreshCopiedText {
+                copyObservation = Self.pollPasteboardForCopiedText(
+                    pasteboard: pasteboard,
+                    initialChangeCount: initialChangeCount,
+                    initialString: initialString,
+                    attempts: Self.copyFallbackLatePollAttempts
+                )
+            }
             
             // Only restore if the pasteboard still contains the value created by this fallback.
             if Self.shouldRestorePasteboardSnapshot(
@@ -377,15 +578,69 @@ final class AccessibilityManager {
                 currentChangeCount: pasteboard.changeCount,
                 currentString: pasteboard.string(forType: .string)
             ) {
-                Self.restorePasteboardSnapshot(snapshot, to: pasteboard)
+                snapshotWasRestored = Self.restorePasteboardSnapshot(snapshot, to: pasteboard)
+                if !snapshotWasRestored {
+                    NSLog("[OpenFire] Failed to restore the clipboard after Cmd+C fallback.")
+                }
             }
             
             let trimmed = copyObservation.copiedText?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let result = copyObservation.hasFreshCopiedText && (trimmed?.isEmpty == false) ? trimmed : nil
-            
-            DispatchQueue.main.async {
-                completion(result)
-            }
+            let contextIsStillValid = self.copyFallbackContextIsValid(
+                requestID: requestID,
+                expectedProcessIdentifier: expectedProcessIdentifier
+            )
+            let result = contextIsStillValid &&
+                copyObservation.hasFreshCopiedText &&
+                (trimmed?.isEmpty == false) ? trimmed : nil
+
+            self.finishCopyFallbackRequest(requestID, result: result, completion: completion)
+        }
+
+        return requestID
+    }
+
+    func cancelSelectedTextViaCopy(_ requestID: UUID) {
+        copyFallbackCoordinator.cancelRequest(requestID)
+    }
+
+    func cancelActiveSelectedTextViaCopy() {
+        copyFallbackCoordinator.cancelActiveRequest()
+    }
+
+    private func copyFallbackContextIsValid(
+        requestID: UUID,
+        expectedProcessIdentifier: pid_t?
+    ) -> Bool {
+        var currentProcessIdentifier: pid_t?
+        var isSelectionSuppressed = true
+
+        let readContext = {
+            currentProcessIdentifier = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            isSelectionSuppressed = self.shouldSuppressSelectionPresentation()
+        }
+
+        if Thread.isMainThread {
+            readContext()
+        } else {
+            DispatchQueue.main.sync(execute: readContext)
+        }
+
+        return Self.shouldContinueCopyFallback(
+            requestIsActive: copyFallbackCoordinator.isRequestActive(requestID),
+            expectedProcessIdentifier: expectedProcessIdentifier,
+            currentProcessIdentifier: currentProcessIdentifier,
+            isSelectionSuppressed: isSelectionSuppressed
+        )
+    }
+
+    private func finishCopyFallbackRequest(
+        _ requestID: UUID,
+        result: String?,
+        completion: @escaping (String?) -> Void
+    ) {
+        DispatchQueue.main.async {
+            let isLatestRequest = self.copyFallbackCoordinator.completeRequestIfActive(requestID)
+            completion(isLatestRequest ? result : nil)
         }
     }
 
@@ -420,32 +675,107 @@ final class AccessibilityManager {
         isSecureEventInputEnabled() || isFocusedElementProtected()
     }
 
-    private static func capturePasteboardSnapshot(from pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
-        (pasteboard.pasteboardItems ?? []).map { item in
-            var snapshot: [NSPasteboard.PasteboardType: Data] = [:]
+    static func capturePasteboardSnapshot(
+        from pasteboard: NSPasteboard,
+        maxBytes: Int = maximumPasteboardSnapshotBytes,
+        maxItems: Int = maximumPasteboardSnapshotItems,
+        maxTypes: Int = maximumPasteboardSnapshotTypes,
+        maxInMemoryBytes: Int = maximumPasteboardSnapshotInMemoryBytes,
+        fileManager: FileManager = .default
+    ) -> PasteboardSnapshot? {
+        guard maxBytes >= 0, maxItems >= 0, maxTypes >= 0, maxInMemoryBytes >= 0 else {
+            return nil
+        }
+        let pasteboardItems = pasteboard.pasteboardItems ?? []
+        guard pasteboardItems.count <= maxItems else { return nil }
+
+        var totalBytes = 0
+        var inMemoryBytes = 0
+        var totalTypes = 0
+        var capturedItems: [[NSPasteboard.PasteboardType: PasteboardSnapshotPayload]] = []
+        var fileStore: PasteboardSnapshotFileStore?
+        capturedItems.reserveCapacity(pasteboardItems.count)
+
+        for item in pasteboardItems {
+            guard item.types.count <= maxTypes - totalTypes else { return nil }
+            totalTypes += item.types.count
+
+            var snapshot: [NSPasteboard.PasteboardType: PasteboardSnapshotPayload] = [:]
             for type in item.types {
-                if let data = item.data(forType: type) {
-                    snapshot[type] = data
+                guard let data = item.data(forType: type),
+                      data.count <= maxBytes - totalBytes else {
+                    return nil
+                }
+                totalBytes += data.count
+
+                let remainingInMemoryBytes = maxInMemoryBytes - min(inMemoryBytes, maxInMemoryBytes)
+                if data.count <= remainingInMemoryBytes {
+                    snapshot[type] = .memory(data)
+                    inMemoryBytes += data.count
+                } else {
+                    if fileStore == nil {
+                        fileStore = PasteboardSnapshotFileStore(fileManager: fileManager)
+                    }
+                    guard let fileStore,
+                          let fileURL = fileStore.store(data) else {
+                        return nil
+                    }
+                    snapshot[type] = .file(fileURL)
                 }
             }
-            return snapshot
+            capturedItems.append(snapshot)
         }
+
+        return PasteboardSnapshot(
+            items: capturedItems,
+            totalBytes: totalBytes,
+            temporaryDirectoryURL: fileStore?.directoryURL,
+            fileStore: fileStore
+        )
     }
-    
-    private static func restorePasteboardSnapshot(_ snapshot: [[NSPasteboard.PasteboardType: Data]], to pasteboard: NSPasteboard) {
-        pasteboard.clearContents()
-        
-        guard !snapshot.isEmpty else { return }
-        
-        let restoredItems = snapshot.map { itemSnapshot -> NSPasteboardItem in
+
+    @discardableResult
+    static func restorePasteboardSnapshot(
+        _ snapshot: PasteboardSnapshot,
+        to pasteboard: NSPasteboard
+    ) -> Bool {
+        guard !snapshot.items.isEmpty else {
+            pasteboard.clearContents()
+            return true
+        }
+
+        var dataProviders: [PasteboardSnapshotDataProvider] = []
+        let restoredItems = snapshot.items.compactMap { itemSnapshot -> NSPasteboardItem? in
             let item = NSPasteboardItem()
-            for (type, data) in itemSnapshot {
-                item.setData(data, forType: type)
+            var filesByType: [NSPasteboard.PasteboardType: URL] = [:]
+
+            for (type, payload) in itemSnapshot {
+                switch payload {
+                case .memory(let data):
+                    guard item.setData(data, forType: type) else { return nil }
+                case .file(let fileURL):
+                    filesByType[type] = fileURL
+                }
             }
+
+            if !filesByType.isEmpty {
+                guard let fileStore = snapshot.fileStore else { return nil }
+                let provider = PasteboardSnapshotDataProvider(
+                    filesByType: filesByType,
+                    fileStore: fileStore
+                )
+                guard item.setDataProvider(provider, forTypes: Array(filesByType.keys)) else {
+                    return nil
+                }
+                dataProviders.append(provider)
+            }
+
             return item
         }
-        
-        pasteboard.writeObjects(restoredItems)
+
+        guard restoredItems.count == snapshot.items.count else { return false }
+        pasteboard.clearContents()
+        return pasteboard.writeObjects(restoredItems)
     }
 
     private struct CopyObservation {
@@ -457,13 +787,14 @@ final class AccessibilityManager {
     private static func pollPasteboardForCopiedText(
         pasteboard: NSPasteboard,
         initialChangeCount: Int,
-        initialString: String?
+        initialString: String?,
+        attempts: Int = copyFallbackPollAttempts
     ) -> CopyObservation {
         var latestString = initialString
         var latestChangeCount = initialChangeCount
 
-        for _ in 0..<12 {
-            usleep(25000)
+        for _ in 0..<attempts {
+            usleep(useconds_t(copyFallbackPollInterval * 1_000_000))
             latestString = pasteboard.string(forType: .string)
             latestChangeCount = pasteboard.changeCount
 
@@ -570,6 +901,11 @@ final class AccessibilityManager {
         }
 
         return !bundleTokens(for: normalizedBundleID).intersection(blindCopyFallbackBundleTokenHints).isEmpty
+    }
+
+    static func shouldAllowContextlessBlindCopyFallback(bundleID: String?) -> Bool {
+        guard let bundleID else { return false }
+        return blindCopyFallbackBundleExactHints.contains(bundleID.lowercased())
     }
 
     private static func bundleTokens(for normalizedBundleID: String) -> Set<String> {
@@ -917,7 +1253,7 @@ final class AccessibilityManager {
 
         for attribute in protectedTextBooleanAttributes {
             var attributeValue: AnyObject?
-            if AXUIElementCopyAttributeValue(element, attribute, &attributeValue) == .success,
+            if AXUIElementCopyAttributeValue(element, attribute as CFString, &attributeValue) == .success,
                let isProtected = attributeValue as? Bool,
                isProtected {
                 return true
@@ -932,9 +1268,7 @@ final class AccessibilityManager {
             return true
         }
 
-        return protectedTextBooleanAttributes.contains { attribute in
-            flags[attribute as String] == true
-        }
+        return protectedTextBooleanAttributes.contains { flags[$0] == true }
     }
 
     static func shouldSuppressSelectionPresentation(

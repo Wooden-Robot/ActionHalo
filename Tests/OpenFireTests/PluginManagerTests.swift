@@ -36,24 +36,24 @@ final class PluginManagerTests: XCTestCase {
             manager.plugins.append(plugin)
         }
         
-        // The plugin manager should return all enabled plugins.
+        // The plugin manager should return all enabled plugins for menu presentation.
         // Actual page-size truncation happens inside RadialMenuWindow pagination.
         UserDefaults.standard.set(0, forKey: "maxRadialMenuItems")
-        var available = manager.availablePlugins(for: "test", appBundleID: nil)
+        var available = manager.presentationPlugins(appBundleID: nil)
         XCTAssertEqual(available.count, 20, "PluginManager should not pre-truncate plugin lists")
         
         // Changing page-size settings should not affect the source plugin list length.
         UserDefaults.standard.set(6, forKey: "maxRadialMenuItems")
-        available = manager.availablePlugins(for: "test", appBundleID: nil)
+        available = manager.presentationPlugins(appBundleID: nil)
         XCTAssertEqual(available.count, 20, "Page-size settings should not truncate the manager output")
         
         // Pagination still consumes the full ordered list.
         UserDefaults.standard.set(16, forKey: "maxRadialMenuItems")
-        available = manager.availablePlugins(for: "test", appBundleID: nil)
+        available = manager.presentationPlugins(appBundleID: nil)
         XCTAssertEqual(available.count, 20, "Larger page-size settings should also preserve the full list")
     }
     
-    func testAvailablePluginsIgnoresTextMatchButRespectsEnabledState() {
+    func testPresentationPluginsIgnoresTextMatchButRespectsEnabledState() {
         let manager = PluginManager.shared
         manager.plugins.removeAll()
         
@@ -69,8 +69,8 @@ final class PluginManagerTests: XCTestCase {
         pluginDisabled.isEnabled = false // Explicitly disabled
         manager.plugins.append(pluginDisabled)
         
-        // 1. Fetch available plugins
-        let available = manager.availablePlugins(for: "some random text", appBundleID: nil)
+        // 1. Fetch presentation plugins
+        let available = manager.presentationPlugins(appBundleID: nil)
         
         // 2. Validate
         XCTAssertEqual(available.count, 1, "Should only return 1 enabled plugin")
@@ -80,7 +80,7 @@ final class PluginManagerTests: XCTestCase {
         // which we'll test in RadialMenuItemTests.
     }
     
-    func testAvailablePluginsKeepsEnabledPluginsEvenWhenFilterDoesNotMatch() {
+    func testPresentationPluginsKeepsEnabledPluginsEvenWhenFilterDoesNotMatch() {
         let manager = PluginManager.shared
         manager.plugins.removeAll()
         
@@ -95,12 +95,12 @@ final class PluginManagerTests: XCTestCase {
         
         manager.plugins = [matchingPlugin, nonMatchingPlugin]
         
-        let available = manager.availablePlugins(for: "https://openai.com", appBundleID: "com.apple.Safari")
+        let available = manager.presentationPlugins(appBundleID: "com.apple.Safari")
         
         XCTAssertEqual(available.map(\.id), ["com.test.match", "com.test.nomatch"])
     }
     
-    func testAvailablePluginsKeepsAllEnabledPluginsVisible() {
+    func testPresentationPluginsKeepsAllEnabledPluginsVisible() {
         let manager = PluginManager.shared
         manager.plugins.removeAll()
         
@@ -118,12 +118,12 @@ final class PluginManagerTests: XCTestCase {
             Plugin(config: openURLConfig, directoryURL: URL(fileURLWithPath: ""))
         ]
         
-        let available = manager.availablePlugins(for: "plain text", appBundleID: nil)
+        let available = manager.presentationPlugins(appBundleID: nil)
         
         XCTAssertEqual(available.map(\.id), ["com.test.search", "com.openfire.reveal-path", "com.openfire.open-url"])
     }
 
-    func testAvailablePluginsRespectsPerAppDisabledOverrides() {
+    func testPresentationPluginsRespectsPerAppDisabledOverrides() {
         let manager = PluginManager.shared
         manager.plugins.removeAll()
 
@@ -133,8 +133,8 @@ final class PluginManagerTests: XCTestCase {
 
         manager.setPluginEnabled("com.test.second", enabled: false, forAppBundleID: "com.apple.Safari")
 
-        let safariPlugins = manager.availablePlugins(for: "text", appBundleID: "com.apple.Safari")
-        let finderPlugins = manager.availablePlugins(for: "text", appBundleID: "com.apple.finder")
+        let safariPlugins = manager.presentationPlugins(appBundleID: "com.apple.Safari")
+        let finderPlugins = manager.presentationPlugins(appBundleID: "com.apple.finder")
 
         XCTAssertEqual(safariPlugins.map(\.id), ["com.test.first"])
         XCTAssertEqual(finderPlugins.map(\.id), ["com.test.first", "com.test.second"])
@@ -336,6 +336,57 @@ final class PluginManagerTests: XCTestCase {
         XCTAssertEqual(PluginManager.visibleUserPluginFileName(for: "com.test.book"), "com.test.book.openfireext")
     }
 
+    func testPluginIdentifierValidationMatchesEditorRulesForNewPlugins() {
+        XCTAssertNil(PluginManager.pluginIdentifierValidationMessage("z-lib"))
+        XCTAssertEqual(
+            PluginManager.pluginIdentifierValidationMessage("z/lib"),
+            "Identifier must use only letters, numbers, dots, and hyphens.".localized
+        )
+        XCTAssertEqual(
+            PluginManager.pluginIdentifierValidationMessage(".book"),
+            "Identifier cannot start or end with dots or hyphens.".localized
+        )
+        XCTAssertEqual(
+            PluginManager.pluginIdentifierValidationMessage("COM.OPENFIRE.COPY"),
+            "Identifier is reserved for a built-in plugin.".localized
+        )
+        XCTAssertNil(PluginManager.pluginIdentifierValidationMessage(
+            ".book",
+            allowLegacyBoundaryCharacters: true
+        ))
+    }
+
+    func testPresentationPluginsOrdersUnlistedPluginsByConfiguredOrderAfterSavedOrder() {
+        let manager = PluginManager.shared
+        manager.plugins.removeAll()
+        let first = makePlugin(name: "First", identifier: "com.test.first", order: 1, directory: "/tmp/first")
+        let second = makePlugin(name: "Second", identifier: "com.test.second", order: 2, directory: "/tmp/second")
+        let third = makePlugin(name: "Third", identifier: "com.test.third", order: 3, directory: "/tmp/third")
+        manager.plugins = [third, first, second]
+
+        UserDefaults.standard.set(["com.test.second"], forKey: "pluginOrder")
+
+        let available = manager.presentationPlugins(appBundleID: nil)
+
+        XCTAssertEqual(available.map(\.id), ["com.test.second", "com.test.first", "com.test.third"])
+    }
+
+    func testOrderedPluginsForDisplayUsesSameSavedOrderFallback() {
+        let manager = PluginManager.shared
+        manager.plugins.removeAll()
+        let first = makePlugin(name: "First", identifier: "com.test.first", order: 1, directory: "/tmp/first")
+        let second = makePlugin(name: "Second", identifier: "com.test.second", order: 2, directory: "/tmp/second")
+        let third = makePlugin(name: "Third", identifier: "com.test.third", order: 3, directory: "/tmp/third")
+        manager.plugins = [third, first, second]
+
+        UserDefaults.standard.set(["com.test.second"], forKey: "pluginOrder")
+
+        XCTAssertEqual(
+            manager.orderedPluginsForDisplay().map(\.id),
+            ["com.test.second", "com.test.first", "com.test.third"]
+        )
+    }
+
     func testRepairHiddenUserPluginPackagesRenamesDotPrefixedPackage() throws {
         let pluginsURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let hiddenPackageURL = pluginsURL.appendingPathComponent(".book.openfireext")
@@ -396,6 +447,47 @@ final class PluginManagerTests: XCTestCase {
         XCTAssertFalse(manager.isExecutionTrusted(for: pluginB))
     }
 
+    func testTrustedExecutionSnapshotIsDetachedFromMutablePluginPackage() throws {
+        let manager = PluginManager.shared
+        let bundleURL = try makeScriptPluginBundle(
+            identifier: "com.test.trusted-snapshot",
+            scriptContent: "source helper.sh"
+        )
+        let sourceHelperURL = bundleURL.appendingPathComponent("helper.sh")
+        try "echo trusted".write(to: sourceHelperURL, atomically: true, encoding: .utf8)
+
+        let plugin = try XCTUnwrap(PluginLoader.load(from: bundleURL))
+        manager.setExecutionTrusted(true, for: plugin)
+        let snapshot = try XCTUnwrap(manager.makeTrustedExecutionSnapshot(for: plugin))
+        defer { manager.removeTrustedExecutionSnapshot(snapshot) }
+
+        try "echo changed".write(to: sourceHelperURL, atomically: true, encoding: .utf8)
+
+        let snapshotHelper = try String(
+            contentsOf: snapshot.plugin.directoryURL.appendingPathComponent("helper.sh"),
+            encoding: .utf8
+        )
+        XCTAssertEqual(snapshotHelper, "echo trusted")
+        XCTAssertNotEqual(snapshot.plugin.directoryURL, plugin.directoryURL)
+        XCTAssertTrue(manager.isExecutionTrusted(for: snapshot.plugin))
+    }
+
+    func testTrustedExecutionSnapshotRejectsPackageChangedAfterTrust() throws {
+        let manager = PluginManager.shared
+        let bundleURL = try makeScriptPluginBundle(
+            identifier: "com.test.changed-before-snapshot",
+            scriptContent: "source helper.sh"
+        )
+        let helperURL = bundleURL.appendingPathComponent("helper.sh")
+        try "echo trusted".write(to: helperURL, atomically: true, encoding: .utf8)
+
+        let plugin = try XCTUnwrap(PluginLoader.load(from: bundleURL))
+        manager.setExecutionTrusted(true, for: plugin)
+        try "echo changed".write(to: helperURL, atomically: true, encoding: .utf8)
+
+        XCTAssertNil(manager.makeTrustedExecutionSnapshot(for: plugin))
+    }
+
     func testUserPluginURLFindsLegacyNamedOverrideByIdentifier() throws {
         let manager = PluginManager.shared
         let legacyURL = manager.userPluginsURL.appendingPathComponent("Legacy Name.openfireext")
@@ -450,6 +542,60 @@ final class PluginManagerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
     }
 
+    func testInstallPluginDetailedReturnsInvalidPackageFailure() throws {
+        let manager = PluginManager.shared
+        let invalidURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".openfireext")
+        temporaryDirectories.append(invalidURL)
+
+        try FileManager.default.createDirectory(at: invalidURL, withIntermediateDirectories: true)
+
+        XCTAssertEqual(manager.installPluginDetailed(from: invalidURL), .failed(.invalidPackage))
+    }
+
+    func testInstallPackagePreflightRejectsFileCountAndByteLimits() throws {
+        let pluginURL = try makePluginBundle(identifier: "com.test.install-limits", name: "Limits")
+        try "helper".write(
+            to: pluginURL.appendingPathComponent("helper.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(
+            PluginManager.isInstallPackageWithinLimits(
+                pluginURL,
+                maxFileCount: 2,
+                maxTotalBytes: 4_096
+            )
+        )
+        XCTAssertFalse(
+            PluginManager.isInstallPackageWithinLimits(
+                pluginURL,
+                maxFileCount: 1,
+                maxTotalBytes: 4_096
+            )
+        )
+        XCTAssertFalse(
+            PluginManager.isInstallPackageWithinLimits(
+                pluginURL,
+                maxFileCount: 2,
+                maxTotalBytes: 1
+            )
+        )
+    }
+
+    func testInstallPackagePreflightRejectsSymbolicLinks() throws {
+        let pluginURL = try makePluginBundle(identifier: "com.test.install-symlink", name: "Symlink")
+        let outsideURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(outsideURL)
+        try "outside".write(to: outsideURL, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            at: pluginURL.appendingPathComponent("helper.txt"),
+            withDestinationURL: outsideURL
+        )
+
+        XCTAssertFalse(PluginManager.isInstallPackageWithinLimits(pluginURL))
+    }
+
     func testInstallPluginRejectsCorePluginIdentifierOverride() throws {
         let manager = PluginManager.shared
         let pluginURL = try makePluginBundle(identifier: "com.openfire.copy", name: "Fake Copy")
@@ -458,6 +604,104 @@ final class PluginManagerTests: XCTestCase {
 
         XCTAssertFalse(manager.installPlugin(from: pluginURL))
         XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
+    }
+
+    func testInstallPluginRejectsCaseInsensitiveCorePluginIdentifierOverride() throws {
+        let manager = PluginManager.shared
+        let pluginURL = try makePluginBundle(identifier: "COM.OPENFIRE.COPY", name: "Fake Copy")
+        let destinationURL = manager.userPluginsURL.appendingPathComponent("COM.OPENFIRE.COPY.openfireext")
+        temporaryDirectories.append(destinationURL)
+
+        XCTAssertFalse(manager.installPlugin(from: pluginURL))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
+    }
+
+    func testInstallPluginRejectsExternalPackageWithUnsafeIdentifier() throws {
+        let manager = PluginManager.shared
+        let pluginURL = try makePluginBundle(identifier: "z/lib", name: "Z-Lib")
+        let destinationURL = manager.userPluginsURL.appendingPathComponent("z-lib.openfireext")
+        temporaryDirectories.append(destinationURL)
+
+        XCTAssertFalse(manager.installPlugin(from: pluginURL))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
+    }
+
+    func testInstallPluginDetailedReturnsIdentifierFailure() throws {
+        let manager = PluginManager.shared
+        let pluginURL = try makePluginBundle(identifier: "z/lib", name: "Z-Lib")
+
+        XCTAssertEqual(
+            manager.installPluginDetailed(from: pluginURL),
+            .failed(.invalidIdentifier("Identifier must use only letters, numbers, dots, and hyphens.".localized))
+        )
+    }
+
+    func testInstallPluginReplacesExistingPackageWithValidatedStagedCopy() throws {
+        let manager = PluginManager.shared
+        let identifier = "com.test.replace"
+        let destinationURL = manager.userPluginsURL.appendingPathComponent("\(identifier).openfireext")
+        temporaryDirectories.append(destinationURL)
+        try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+        try pluginConfig(identifier: identifier, name: "Old").write(
+            to: destinationURL.appendingPathComponent("Config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let sourceURL = try makePluginBundle(identifier: identifier, name: "New")
+
+        XCTAssertTrue(manager.installPlugin(from: sourceURL))
+
+        let installed = try XCTUnwrap(PluginLoader.load(from: destinationURL))
+        XCTAssertEqual(installed.config.name, "New")
+        XCTAssertFalse(
+            (try FileManager.default.contentsOfDirectory(atPath: manager.userPluginsURL.path))
+                .contains { $0.hasSuffix(".openfireext.pending") }
+        )
+    }
+
+    func testRestoreBackedUpPackageMovesBackupWhenDestinationIsMissing() throws {
+        let parentURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(parentURL)
+        try FileManager.default.createDirectory(at: parentURL, withIntermediateDirectories: true)
+
+        let backupURL = parentURL.appendingPathComponent(".backup-test.openfireext.pending")
+        let destinationURL = parentURL.appendingPathComponent("Plugin.openfireext")
+        try FileManager.default.createDirectory(at: backupURL, withIntermediateDirectories: true)
+        try "old".write(to: backupURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+
+        let shouldRemoveBackup = PluginManager.restoreBackedUpPackageIfNeeded(
+            backupURL: backupURL,
+            destinationURL: destinationURL,
+            didMoveDestinationToBackup: true,
+            logPrefix: "Test"
+        )
+
+        XCTAssertTrue(shouldRemoveBackup)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destinationURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backupURL.path))
+    }
+
+    func testRestoreBackedUpPackagePreservesBackupWhenDestinationAlreadyExists() throws {
+        let parentURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(parentURL)
+        try FileManager.default.createDirectory(at: parentURL, withIntermediateDirectories: true)
+
+        let backupURL = parentURL.appendingPathComponent(".backup-test.openfireext.pending")
+        let destinationURL = parentURL.appendingPathComponent("Plugin.openfireext")
+        try FileManager.default.createDirectory(at: backupURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+
+        let shouldRemoveBackup = PluginManager.restoreBackedUpPackageIfNeeded(
+            backupURL: backupURL,
+            destinationURL: destinationURL,
+            didMoveDestinationToBackup: true,
+            logPrefix: "Test"
+        )
+
+        XCTAssertFalse(shouldRemoveBackup)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: backupURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destinationURL.path))
     }
 
     func testStalePluginLoadResultsAreDiscarded() {
@@ -499,6 +743,140 @@ final class PluginManagerTests: XCTestCase {
         )
     }
 
+    func testAppendPluginProcessStderrChunkCapsStoredBytes() {
+        var stderrData = Data()
+
+        let firstTruncated = PluginManager.appendPluginProcessStderrChunk(
+            Data("abcdef".utf8),
+            to: &stderrData,
+            maxBytes: 4
+        )
+        let secondTruncated = PluginManager.appendPluginProcessStderrChunk(
+            Data("gh".utf8),
+            to: &stderrData,
+            maxBytes: 4
+        )
+
+        XCTAssertTrue(firstTruncated)
+        XCTAssertTrue(secondTruncated)
+        XCTAssertEqual(String(data: stderrData, encoding: .utf8), "abcd")
+    }
+
+    func testProcessListParserIgnoresMalformedRows() {
+        let processes = PluginManager.processList(from: """
+             PID PPID
+             10  1
+             nope 10
+             11  10 extra
+        """)
+
+        XCTAssertEqual(processes.map(\.pid), [10, 11])
+        XCTAssertEqual(processes.map(\.parentPID), [1, 10])
+    }
+
+    func testProcessTreeTerminationOrderKillsChildrenBeforeParents() {
+        let processes: [(pid: pid_t, parentPID: pid_t)] = [
+            (pid: 10, parentPID: 1),
+            (pid: 11, parentPID: 10),
+            (pid: 12, parentPID: 11),
+            (pid: 13, parentPID: 10),
+            (pid: 99, parentPID: 1)
+        ]
+
+        XCTAssertEqual(
+            PluginManager.processTreeTerminationOrder(rootPID: 10, processList: processes),
+            [12, 11, 13, 10]
+        )
+    }
+
+    func testProcessTreeEscalationUsesOnlyCurrentlyVerifiedDescendants() {
+        let currentProcesses: [(pid: pid_t, parentPID: pid_t)] = [
+            (pid: 10, parentPID: 1),
+            (pid: 12, parentPID: 10),
+            (pid: 11, parentPID: 1)
+        ]
+
+        XCTAssertEqual(
+            PluginManager.processTreeTerminationOrder(rootPID: 10, processList: currentProcesses),
+            [12, 10]
+        )
+    }
+
+    func testResolvedPluginScriptSourceAllowsBundledFilesAndInlineCode() throws {
+        let bundleURL = try makeScriptPluginBundle(
+            identifier: "com.test.script-source",
+            scriptContent: "echo bundled"
+        )
+        let fileSource = PluginManager.resolvedPluginScriptSource(
+            "script.sh",
+            pluginDirectoryURL: bundleURL
+        )
+        let inlineSource = PluginManager.resolvedPluginScriptSource(
+            "echo inline",
+            pluginDirectoryURL: bundleURL
+        )
+
+        XCTAssertEqual(fileSource, .bundledFile(bundleURL.appendingPathComponent("script.sh")))
+        XCTAssertEqual(inlineSource, .inline("echo inline"))
+    }
+
+    func testResolvedPluginScriptSourceRejectsPathsOutsidePackage() throws {
+        let bundleURL = try makeScriptPluginBundle(
+            identifier: "com.test.script-traversal",
+            scriptContent: "echo bundled"
+        )
+        let externalURL = bundleURL.deletingLastPathComponent().appendingPathComponent("payload.sh")
+        try "echo external".write(to: externalURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: externalURL) }
+
+        XCTAssertNil(PluginManager.resolvedPluginScriptSource(
+            "../payload.sh",
+            pluginDirectoryURL: bundleURL
+        ))
+        XCTAssertNil(PluginManager.resolvedPluginScriptSource(
+            "missing.sh",
+            pluginDirectoryURL: bundleURL
+        ))
+    }
+
+    func testRenderedURLStringEncodesPlaceholderAsOneComponent() {
+        let rendered = PluginManager.renderedURLString(
+            template: "https://example.com/search?q={text}",
+            text: "a&b=c?d+e/f"
+        )
+
+        XCTAssertEqual(rendered, "https://example.com/search?q=a%26b%3Dc%3Fd%2Be%2Ff")
+    }
+
+    func testRenderedURLStringNormalizesDirectOpenURLTemplate() {
+        XCTAssertEqual(
+            PluginManager.renderedURLString(template: "{text}", text: "www.example.com"),
+            "https://www.example.com"
+        )
+        XCTAssertEqual(
+            PluginManager.renderedURLString(template: "{text}", text: "https://example.com?a=1&b=2"),
+            "https://example.com?a=1&b=2"
+        )
+    }
+
+    func testRenderedAppleScriptSourceEscapesPlaceholderInsideQuotedString() {
+        let rendered = PluginManager.renderedAppleScriptSource(
+            #"set query to "prefix {text} suffix""#,
+            text: #"a "quoted" value"#
+        )
+
+        XCTAssertEqual(rendered, #"set query to "prefix " & "a \"quoted\" value" & " suffix""#)
+    }
+
+    func testRenderedAppleScriptSourceUsesLiteralExpressionOutsideString() {
+        let rendered = PluginManager.renderedAppleScriptSource(
+            "set query to {text}",
+            text: "line 1\nline 2"
+        )
+
+        XCTAssertEqual(rendered, #"set query to "line 1" & linefeed & "line 2""#)
+    }
+
     private func makePlugin(name: String, identifier: String, order: Int, directory: String) -> Plugin {
         let json = """
         {
@@ -519,16 +897,19 @@ final class PluginManagerTests: XCTestCase {
         temporaryDirectories.append(bundleURL)
         try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
 
-        let config = """
+        try pluginConfig(identifier: identifier, name: name)
+            .write(to: bundleURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+        return bundleURL
+    }
+
+    private func pluginConfig(identifier: String, name: String) -> String {
+        """
         {
             "name": "\(name)",
             "identifier": "\(identifier)",
             "action": { "type": "copy" }
         }
         """
-
-        try config.write(to: bundleURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
-        return bundleURL
     }
 
     private func makeScriptPluginBundle(identifier: String, scriptContent: String) throws -> URL {

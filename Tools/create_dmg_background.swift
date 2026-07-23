@@ -96,17 +96,25 @@ glow.fill()
 
 drawCentered(
     "把 OpenFire 拖到 Applications 里",
-    y: size.height - 66,
+    y: size.height - 62,
     font: .systemFont(ofSize: 19, weight: .semibold),
     color: NSColor(calibratedWhite: 0.18, alpha: 1)
 )
 
 drawCentered(
     "拖动左边的程序到右边的文件夹即可安装",
-    y: size.height - 94,
+    y: size.height - 90,
     font: .systemFont(ofSize: 13, weight: .regular),
     color: NSColor(calibratedWhite: 0.45, alpha: 1),
     letterSpacing: 0
+)
+
+drawCentered(
+    "Drag OpenFire into Applications to install",
+    y: size.height - 112,
+    font: .systemFont(ofSize: 12, weight: .regular),
+    color: NSColor(calibratedWhite: 0.52, alpha: 1),
+    letterSpacing: 0.1
 )
 
 drawInstallArrow(center: NSPoint(x: 320, y: 180))

@@ -79,6 +79,11 @@ final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableVie
         excludedApps = AppExclusionStore.excludedApps()
         tableView.reloadData()
     }
+
+    func refreshIfVisible() {
+        guard window?.isVisible == true else { return }
+        loadData()
+    }
     
     // MARK: - NSTableView DataSource & Delegate
     
@@ -171,7 +176,7 @@ final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableVie
                 var addedCount = 0
                 for url in panel.urls {
                     if let bundle = Bundle(url: url), let bundleID = bundle.bundleIdentifier {
-                        if !self.excludedApps.contains(bundleID) {
+                        if !AppExclusionStore.contains(bundleID, in: self.excludedApps) {
                             self.excludedApps.append(bundleID)
                             addedCount += 1
                         }

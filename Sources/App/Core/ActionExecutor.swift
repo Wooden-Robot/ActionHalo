@@ -1,7 +1,7 @@
 import Cocoa
 
 /// Executes built-in actions on selected text
-final class ActionExecutor {
+final class ActionExecutor: Sendable {
     
     static let shared = ActionExecutor()
     
@@ -47,14 +47,30 @@ final class ActionExecutor {
     }
     
     /// Execute a built-in menu action with the given text
-    func execute(action: BuiltInAction, text: String) {
+    func execute(
+        action: BuiltInAction,
+        text: String,
+        targetProcessIdentifier: pid_t? = nil
+    ) {
         switch action {
         case .copy:
-            simulateKeyCombo(key: .c, modifiers: .maskCommand)
+            simulateKeyCombo(
+                key: .c,
+                modifiers: .maskCommand,
+                targetProcessIdentifier: targetProcessIdentifier
+            )
         case .cut:
-            simulateKeyCombo(key: .x, modifiers: .maskCommand)
+            simulateKeyCombo(
+                key: .x,
+                modifiers: .maskCommand,
+                targetProcessIdentifier: targetProcessIdentifier
+            )
         case .paste:
-            simulateKeyCombo(key: .v, modifiers: .maskCommand)
+            simulateKeyCombo(
+                key: .v,
+                modifiers: .maskCommand,
+                targetProcessIdentifier: targetProcessIdentifier
+            )
         case .search:
             searchGoogle(text)
         case .translate:
@@ -106,15 +122,24 @@ final class ActionExecutor {
     // MARK: - Key Simulation
     
     /// Simulate a keyboard shortcut
-    func simulateKeyCombo(key: CGKeyCode, modifiers: CGEventFlags) {
+    func simulateKeyCombo(
+        key: CGKeyCode,
+        modifiers: CGEventFlags,
+        targetProcessIdentifier: pid_t? = nil
+    ) {
         let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: true)
         let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: false)
         
         keyDown?.flags = modifiers
         keyUp?.flags = modifiers
-        
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
+
+        if let targetProcessIdentifier {
+            keyDown?.postToPid(targetProcessIdentifier)
+            keyUp?.postToPid(targetProcessIdentifier)
+        } else {
+            keyDown?.post(tap: .cghidEventTap)
+            keyUp?.post(tap: .cghidEventTap)
+        }
     }
 }
 

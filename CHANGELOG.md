@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.3.21
+- 提升文本选择触发的稳定性：将 Event Tap 回调收敛为轻量事件转发，增加前台进程与上下文复核，并阻止无障碍信息不可读时重复使用旧的 Cmd+C 文本，同时保留 Chrome、Telegram 与同类 WebView 应用的新选区回退能力。
+- 强化剪贴板保护：完整保留多类型剪贴板内容，大数据自动暂存到临时文件并按需恢复，失败或取消时及时清理，降低 Cmd+C 回退覆盖用户剪贴板的风险。
+- 修复内置剪切与删除动作的执行路由和可编辑上下文判定；外部快捷键与脚本插件继续经过受保护的信任快照，避免绕过安全确认。
+- 加固插件生命周期：限制插件包大小与文件数量、拒绝危险符号链接、对完整受保护插件包生成信任指纹，并将插件安装、保存、信任检查改为更安全的原子或后台流程。
+- 优化圆环菜单、快捷键、应用排除与诊断状态的一致性，并完善中英文安装镜像提示。
+- 扩充回归测试至 205 项，覆盖文本选择、剪贴板恢复、插件安全、菜单关闭与配置容错。
+
+- Improved text-selection reliability by reducing the Event Tap callback to lightweight event forwarding, revalidating the frontmost process and context, and rejecting stale Cmd+C text when Accessibility data is unreadable while preserving fresh-selection fallback for Chrome, Telegram, and similar WebView apps.
+- Hardened clipboard protection by preserving multiple pasteboard representations, spilling large payloads to temporary files for lazy restoration, and cleaning them up after failure or cancellation.
+- Fixed execution routing and editable-context checks for the built-in Cut and Delete actions; external shortcuts and script plugins continue to use protected trust snapshots.
+- Strengthened the plugin lifecycle with package size and file-count limits, unsafe symlink rejection, whole-package trust fingerprints, and safer atomic or background install, save, and trust-check flows.
+- Improved consistency across radial-menu dismissal, hotkey validation, app exclusions, diagnostics, and bilingual DMG installation guidance.
+- Expanded regression coverage to 205 tests across selection handling, clipboard restoration, plugin security, menu dismissal, and configuration validation.
+
 ## v0.3.20
 - 修复 Chrome 等浏览器里选中文本无法唤起圆环的问题：当 AX 焦点元素不可读时，允许受控的浏览器/Chromium 富文本宿主走 Cmd+C 回退获取选中文本。
 - 保留文件拖拽、窗口拖拽和普通编辑器的保护逻辑，避免为了修复浏览器触发而重新引入误触发。

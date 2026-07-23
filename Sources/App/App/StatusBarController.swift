@@ -512,16 +512,11 @@ final class StatusBarController: NSObject {
         guard let app = NSWorkspace.shared.frontmostApplication,
               let bundleID = app.bundleIdentifier else { return }
         
-        var excluded = AppExclusionStore.excludedApps()
-        if excluded.contains(bundleID) {
-            excluded.removeAll { $0 == bundleID }
-        } else {
-            excluded.append(bundleID)
-        }
-        AppExclusionStore.setExcludedApps(excluded)
+        AppExclusionStore.setExcludedApps(
+            AppExclusionStore.toggledExcludedApps(bundleID, in: AppExclusionStore.excludedApps())
+        )
         
-        // Refresh blacklist window if it is open
-        blacklistWindow?.showWindow(nil)
+        blacklistWindow?.refreshIfVisible()
     }
     
     @objc private func openBlacklistWindow() {
@@ -587,8 +582,7 @@ extension StatusBarController: NSMenuDelegate {
            let appName = app.localizedName,
            let bundleID = app.bundleIdentifier {
             
-            let excluded = AppExclusionStore.excludedApps()
-            let isExcluded = excluded.contains(bundleID)
+            let isExcluded = AppExclusionStore.isExcluded(bundleID, in: AppExclusionStore.excludedApps())
             
             item.title = isExcluded ? String(format: "Enable in %@".localized, appName) : String(format: "Disable in %@".localized, appName)
             item.state = isExcluded ? .on : .off

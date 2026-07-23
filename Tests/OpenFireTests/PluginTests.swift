@@ -173,26 +173,179 @@ final class PluginTests: XCTestCase {
         let plugin = Plugin(config: config, directoryURL: URL(fileURLWithPath: "/"))
 
         XCTAssertFalse(plugin.shouldShow(text: "hi", appBundleID: "com.apple.Safari"))
-        XCTAssertTrue(plugin.shouldShow(text: "hello", appBundleID: "com.apple.Safari"))
+        XCTAssertTrue(plugin.shouldShow(text: "hello", appBundleID: " COM.APPLE.SAFARI "))
         XCTAssertFalse(plugin.shouldShow(text: "toolong", appBundleID: "com.apple.Safari"))
-        XCTAssertFalse(plugin.shouldShow(text: "test", appBundleID: "com.apple.finder"))
+        XCTAssertFalse(plugin.shouldShow(text: "test", appBundleID: "COM.APPLE.FINDER"))
         XCTAssertFalse(plugin.shouldShow(text: "test", appBundleID: nil))
     }
 
     func testScriptPluginRequiresExecutionTrust() throws {
+        let bundleURL = try makePluginBundle(
+            identifier: "com.test.shell",
+            actionType: "shell-script",
+            scriptName: "script.sh",
+            scriptContent: "echo test"
+        )
+        let plugin = try XCTUnwrap(PluginLoader.load(from: bundleURL))
+
+        XCTAssertTrue(plugin.requiresExecutionTrust)
+        XCTAssertNotNil(plugin.executionTrustFingerprint)
+    }
+
+    func testExternalKeyComboPluginRequiresExecutionTrust() throws {
+        let bundleURL = try makePluginBundle(
+            identifier: "com.test.quit",
+            actionJSON: #"{ "type": "key-combo", "key": "q", "modifiers": ["cmd"] }"#
+        )
+        let plugin = try XCTUnwrap(PluginLoader.load(from: bundleURL))
+
+        XCTAssertTrue(plugin.requiresExecutionTrust)
+        XCTAssertNotNil(plugin.executionTrustFingerprint)
+    }
+
+    func testProtectedPluginWithoutReadablePackageFailsClosed() throws {
         let json = """
         {
-            "name": "Shell",
-            "identifier": "com.test.shell",
+            "name": "Missing",
+            "identifier": "com.test.missing",
             "action": { "type": "shell-script", "script": "script.sh" }
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(PluginConfig.self, from: json)
+        let missingURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".openfireext")
+        let plugin = Plugin(config: config, directoryURL: missingURL)
+
+        XCTAssertTrue(plugin.requiresExecutionTrust)
+        XCTAssertNil(plugin.executionTrustFingerprint)
+        XCTAssertFalse(PluginManager.shared.isExecutionTrusted(for: plugin))
+    }
+
+    func testProtectedPluginRejectsOversizedPackage() throws {
+        let bundleURL = try makePluginBundle(
+            identifier: "com.test.oversized",
+            actionType: "shell-script",
+            scriptName: "script.sh",
+            scriptContent: "echo test"
+        )
+        let oversizedURL = bundleURL.appendingPathComponent("oversized.bin")
+        XCTAssertTrue(FileManager.default.createFile(atPath: oversizedURL.path, contents: nil))
+        let handle = try FileHandle(forWritingTo: oversizedURL)
+        try handle.truncate(atOffset: UInt64(Plugin.maximumTrustedPackageBytes + 1))
+        try handle.close()
+
+        let plugin = try XCTUnwrap(PluginLoader.load(from: bundleURL))
+
+        XCTAssertNil(plugin.executionTrustFingerprint)
+        XCTAssertFalse(plugin.canCreateProtectedExecutionSnapshot)
+    }
+
+    func testPluginLoaderRejectsOversizedConfig() throws {
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".openfireext")
+        temporaryDirectories.append(bundleURL)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        let configURL = bundleURL.appendingPathComponent("Config.json")
+        XCTAssertTrue(FileManager.default.createFile(atPath: configURL.path, contents: nil))
+        let handle = try FileHandle(forWritingTo: configURL)
+        try handle.truncate(atOffset: UInt64(PluginLoader.maximumConfigBytes + 1))
+        try handle.close()
+
+        XCTAssertNil(PluginLoader.load(from: bundleURL))
+    }
+
+    func testPluginLoaderRejectsSymbolicLinkConfig() throws {
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".openfireext")
+        temporaryDirectories.append(bundleURL)
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+
+        let outsideConfigURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".json")
+        temporaryDirectories.append(outsideConfigURL)
+        try """
+        {
+            "name": "Outside",
+            "identifier": "com.test.outside",
+            "action": { "type": "copy" }
+        }
+        """.write(to: outsideConfigURL, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            at: bundleURL.appendingPathComponent("Config.json"),
+            withDestinationURL: outsideConfigURL
+        )
+
+        XCTAssertNil(PluginLoader.load(from: bundleURL))
+    }
+
+    func testCoreDefaultKeyComboPluginDoesNotRequireExecutionTrust() throws {
+        let json = """
+        {
+            "name": "Delete",
+            "identifier": "com.openfire.delete",
+            "action": { "type": "key-combo", "key": "delete" }
         }
         """.data(using: .utf8)!
 
         let config = try JSONDecoder().decode(PluginConfig.self, from: json)
         let plugin = Plugin(config: config, directoryURL: URL(fileURLWithPath: "/tmp/plugin"))
 
-        XCTAssertTrue(plugin.requiresExecutionTrust)
-        XCTAssertNotNil(plugin.executionTrustFingerprint)
+        XCTAssertFalse(plugin.requiresExecutionTrust)
+        XCTAssertNil(plugin.executionTrustFingerprint)
+    }
+
+    func testCoreDefaultKeyComboUsesDirectExecutionPolicy() throws {
+        let json = """
+        {
+            "name": "Delete",
+            "identifier": "com.openfire.delete",
+            "action": { "type": "key-combo", "key": "delete" }
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(PluginConfig.self, from: json)
+        let plugin = Plugin(config: config, directoryURL: URL(fileURLWithPath: "/tmp/plugin"))
+
+        XCTAssertEqual(PluginManager.executionPolicy(for: plugin), .directKeyCombo)
+    }
+
+    func testExternalKeyComboUsesProtectedExecutionPolicy() throws {
+        let json = """
+        {
+            "name": "Quit App",
+            "identifier": "com.example.quit",
+            "action": {
+                "type": "key-combo",
+                "key": "q",
+                "modifiers": ["command"]
+            }
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(PluginConfig.self, from: json)
+        let plugin = Plugin(config: config, directoryURL: URL(fileURLWithPath: "/tmp/plugin"))
+
+        XCTAssertEqual(PluginManager.executionPolicy(for: plugin), .protected)
+    }
+
+    func testScriptPluginUsesProtectedExecutionPolicy() throws {
+        let json = """
+        {
+            "name": "Script",
+            "identifier": "com.example.script",
+            "action": {
+                "type": "shell-script",
+                "inline": "printf test"
+            }
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(PluginConfig.self, from: json)
+        let plugin = Plugin(config: config, directoryURL: URL(fileURLWithPath: "/tmp/plugin"))
+
+        XCTAssertEqual(PluginManager.executionPolicy(for: plugin), .protected)
     }
 
     func testVisibilityDiagnosticExplainsWhyPluginIsHidden() throws {
@@ -265,6 +418,27 @@ final class PluginTests: XCTestCase {
         XCTAssertNotEqual(fingerprintA, fingerprintB)
     }
 
+    func testExecutionTrustFingerprintChangesWhenHelperFileChanges() throws {
+        let bundleURL = try makePluginBundle(
+            identifier: "com.test.fingerprint-helper",
+            actionType: "shell-script",
+            scriptName: "script.sh",
+            scriptContent: "source helper.sh"
+        )
+        let helperURL = bundleURL.appendingPathComponent("helper.sh")
+        try "echo first".write(to: helperURL, atomically: true, encoding: .utf8)
+
+        let pluginA = try XCTUnwrap(PluginLoader.load(from: bundleURL))
+        let fingerprintA = try XCTUnwrap(pluginA.executionTrustFingerprint)
+
+        try "echo second".write(to: helperURL, atomically: true, encoding: .utf8)
+
+        let pluginB = try XCTUnwrap(PluginLoader.load(from: bundleURL))
+        let fingerprintB = try XCTUnwrap(pluginB.executionTrustFingerprint)
+
+        XCTAssertNotEqual(fingerprintA, fingerprintB)
+    }
+
     func testDeleteBuiltInPluginUsesDeleteKeyCombo() throws {
         let pluginURL = URL(fileURLWithPath: "/Users/woodenrobot/code/github/OpenFire/Plugins/Delete.openfireext")
         let plugin = try XCTUnwrap(PluginLoader.load(from: pluginURL))
@@ -276,6 +450,13 @@ final class PluginTests: XCTestCase {
     }
 
     private func makePluginBundle(identifier: String, actionType: String, scriptName: String, scriptContent: String) throws -> URL {
+        let actionJSON = #"{ "type": "\#(actionType)", "script": "\#(scriptName)" }"#
+        let bundleURL = try makePluginBundle(identifier: identifier, actionJSON: actionJSON)
+        try scriptContent.write(to: bundleURL.appendingPathComponent(scriptName), atomically: true, encoding: .utf8)
+        return bundleURL
+    }
+
+    private func makePluginBundle(identifier: String, actionJSON: String) throws -> URL {
         let bundleURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".openfireext")
         temporaryDirectories.append(bundleURL)
         try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
@@ -284,11 +465,10 @@ final class PluginTests: XCTestCase {
         {
             "name": "Temp Plugin",
             "identifier": "\(identifier)",
-            "action": { "type": "\(actionType)", "script": "\(scriptName)" }
+            "action": \(actionJSON)
         }
         """
         try config.write(to: bundleURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
-        try scriptContent.write(to: bundleURL.appendingPathComponent(scriptName), atomically: true, encoding: .utf8)
         return bundleURL
     }
 }

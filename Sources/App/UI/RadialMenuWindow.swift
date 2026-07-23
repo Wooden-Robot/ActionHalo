@@ -11,6 +11,7 @@ final class RadialMenuWindow: NSPanel {
     private var suppressVisualEffectImmediateAlphaUpdate = false
     
     var onItemSelected: ((RadialMenuItem) -> Void)?
+    var onDismissRequested: (() -> Void)?
     
     // Pagination state
     private var allItems: [RadialMenuItem] = []
@@ -89,7 +90,7 @@ final class RadialMenuWindow: NSPanel {
         
         radialMenuView.onDismissRequested = { [weak self] in
             DispatchQueue.main.async {
-                self?.hideMenu()
+                self?.requestDismissal()
             }
         }
     }
@@ -151,8 +152,8 @@ final class RadialMenuWindow: NSPanel {
         
         defer { NSAnimationContext.endGrouping() }
         
-        let maxItems = UserDefaults.standard.integer(forKey: "maxRadialMenuItems")
-        let pageSize = maxItems == 0 ? 12 : maxItems
+        let storedPageSize = UserDefaults.standard.integer(forKey: "maxRadialMenuItems")
+        let pageSize = Self.validatedPageSize(storedPageSize)
         
         var pageItems: [RadialMenuItem] = []
         
@@ -335,15 +336,25 @@ final class RadialMenuWindow: NSPanel {
             completion?()
         }
     }
-    
+
+    static func validatedPageSize(_ storedValue: Int) -> Int {
+        [6, 8, 12, 16].contains(storedValue) ? storedValue : 12
+    }
+
+    func requestDismissal() {
+        if let onDismissRequested {
+            onDismissRequested()
+        } else {
+            hideMenu()
+        }
+    }
+
     // MARK: - Screen positioning
-    
-    // MARK: - Screen positioning
-    
+
     // (Deprecated: no longer using small window clamping, window matches screen)
-    
+
     // MARK: - Auto Dismissal
-    
+
     private var dismissMonitor: Any?
     private var localKeyDownMonitor: Any?
     
@@ -353,7 +364,7 @@ final class RadialMenuWindow: NSPanel {
         // Global monitor for clicks outside our app or scrolling
         dismissMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .scrollWheel]) { [weak self] event in
             DispatchQueue.main.async {
-                self?.hideMenu()
+                self?.requestDismissal()
             }
         }
         
@@ -361,7 +372,7 @@ final class RadialMenuWindow: NSPanel {
         localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 /* Esc */ {
                 DispatchQueue.main.async {
-                    self?.hideMenu()
+                    self?.requestDismissal()
                 }
                 return nil // Consume Esc
             }
