@@ -325,11 +325,15 @@ final class TextSelectionMonitor {
             guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
             let monitorAddress = UInt(bitPattern: refcon)
             let eventType = type
+            let eventLocation = event.location
             if type == .tapDisabledByTimeout ||
                 type == .tapDisabledByUserInput ||
                 type == .leftMouseDown ||
                 type == .leftMouseUp {
-                Task { @MainActor in
+                // Preserve callback order and the event's own coordinates.
+                // Reading NSEvent.mouseLocation after an asynchronous hop can
+                // collapse a fast drag into two identical, stale positions.
+                DispatchQueue.main.async {
                     guard let pointer = UnsafeRawPointer(bitPattern: monitorAddress) else { return }
                     let monitor = Unmanaged<TextSelectionMonitor>
                         .fromOpaque(pointer)
@@ -345,7 +349,11 @@ final class TextSelectionMonitor {
                             CGEvent.tapEnable(tap: tap, enable: true)
                         }
                     } else {
-                        let mouseLocation = NSEvent.mouseLocation
+                        guard let mouseLocation = AccessibilityManager.appKitScreenPoint(
+                            for: eventLocation
+                        ) else {
+                            return
+                        }
                         if eventType == .leftMouseDown {
                             monitor.handleMouseDown(at: mouseLocation)
                         } else {

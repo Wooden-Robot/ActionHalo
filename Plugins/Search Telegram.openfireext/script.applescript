@@ -1,3 +1,10 @@
+use framework "AppKit"
+use scripting additions
+
+property NSPasteboard : a reference to current application's NSPasteboard
+property NSPasteboardItem : a reference to current application's NSPasteboardItem
+property NSMutableArray : a reference to current application's NSMutableArray
+
 set envText to (system attribute "OPENFIRE_TEXT")
 
 if envText is "" or envText is missing value then return
@@ -8,7 +15,7 @@ set readyStreak to 0
 set clipboardWasCaptured to false
 
 try
-    set oldClipboard to the clipboard
+    set oldClipboard to captureClipboardSnapshot()
     set clipboardWasCaptured to true
 on error
     set clipboardWasCaptured to false
@@ -87,10 +94,55 @@ try
 on error errorMessage number errorNumber
     if clipboardWasCaptured then
         try
-            set the clipboard to oldClipboard
+            restoreClipboardSnapshot(oldClipboard)
         end try
     end if
     error errorMessage number errorNumber
 end try
 
-if clipboardWasCaptured then set the clipboard to oldClipboard
+if clipboardWasCaptured then restoreClipboardSnapshot(oldClipboard)
+
+on captureClipboardSnapshot()
+    set clipboardSnapshot to {}
+    set pasteboardItems to NSPasteboard's generalPasteboard()'s pasteboardItems()
+
+    repeat with rawPasteboardItem in pasteboardItems
+        set pasteboardItem to contents of rawPasteboardItem
+        set itemSnapshot to {}
+
+        repeat with rawPasteboardType in (pasteboardItem's types())
+            set pasteboardType to contents of rawPasteboardType
+            set itemData to pasteboardItem's dataForType:pasteboardType
+            if itemData is missing value then error "Unable to capture every clipboard representation."
+            set end of itemSnapshot to {pasteboardType, itemData}
+        end repeat
+
+        set end of clipboardSnapshot to itemSnapshot
+    end repeat
+
+    return clipboardSnapshot
+end captureClipboardSnapshot
+
+on restoreClipboardSnapshot(clipboardSnapshot)
+    set restoredItems to NSMutableArray's array()
+
+    repeat with rawItemSnapshot in clipboardSnapshot
+        set itemSnapshot to contents of rawItemSnapshot
+        set restoredItem to NSPasteboardItem's alloc()'s init()
+
+        repeat with rawTypeAndData in itemSnapshot
+            set typeAndData to contents of rawTypeAndData
+            set pasteboardType to item 1 of typeAndData
+            set itemData to item 2 of typeAndData
+            if not (restoredItem's setData:itemData forType:pasteboardType) then error "Unable to restore every clipboard representation."
+        end repeat
+
+        restoredItems's addObject:restoredItem
+    end repeat
+
+    set pasteboard to NSPasteboard's generalPasteboard()
+    pasteboard's clearContents()
+    if (restoredItems's |count|()) > 0 then
+        if not (pasteboard's writeObjects:restoredItems) then error "Unable to restore the clipboard."
+    end if
+end restoreClipboardSnapshot
