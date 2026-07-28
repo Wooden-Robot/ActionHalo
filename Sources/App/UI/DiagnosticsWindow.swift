@@ -17,8 +17,22 @@ final class DiagnosticsWindow: NSWindowController {
 
     private static let recentAcquisitionContextWindow: TimeInterval = 5
 
+    private struct CapturedContext {
+        let processIdentifier: pid_t?
+        let appName: String
+        let appBundleID: String?
+        let selectedText: String
+        let focusedRole: String
+        let focusedSelectionEditable: Bool
+        let emptyInputCheckLocation: NSPoint
+        let isTextInputAtEmptyInputCheckLocation: Bool
+        let acquisitionStatus: AccessibilityManager.SelectionAcquisitionStatus?
+        let attemptStatus: AccessibilityManager.SelectionAttemptStatus?
+    }
+
     private let summaryLabel = NSTextField(labelWithString: "")
     private let textView = NSTextView()
+    private var capturedContext: CapturedContext?
 
     init() {
         let window = NSWindow(
@@ -34,24 +48,18 @@ final class DiagnosticsWindow: NSWindowController {
 
         super.init(window: window)
         setupUI()
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(refreshClicked),
-            name: PluginManager.pluginsReloadedNotification,
-            object: nil
-        )
-        refreshReport()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
     override func showWindow(_ sender: Any?) {
+        // Capture before showing/activating OpenFire so refreshes keep diagnosing
+        // the application and focused element the user actually invoked us from.
+        if window?.isVisible != true {
+            capturedContext = captureCurrentContext()
+        }
         refreshReport()
         super.showWindow(sender)
     }
@@ -124,6 +132,9 @@ final class DiagnosticsWindow: NSWindowController {
     }
 
     private func refreshReport() {
+        if capturedContext == nil {
+            capturedContext = captureCurrentContext()
+        }
         let report = buildReport()
         textView.string = report.text
         summaryLabel.stringValue = String(
@@ -187,30 +198,52 @@ final class DiagnosticsWindow: NSWindowController {
         return (blockers.isEmpty, blockers)
     }
 
-    private func buildReport() -> (text: String, visibleCount: Int, totalCount: Int) {
+    private func captureCurrentContext() -> CapturedContext {
         let frontApp = NSWorkspace.shared.frontmostApplication
-        let frontAppName = frontApp?.localizedName ?? "Unknown".localized
-        let frontAppBundleID = frontApp?.bundleIdentifier ?? "Unavailable".localized
-
-        let isAppExcluded = AppExclusionStore.isExcluded(frontApp?.bundleIdentifier)
-        let accessibilityEnabled = AccessibilityManager.shared.isAccessibilityEnabled
         let accessibilitySelectedText = AccessibilityManager.shared.getSelectedText() ?? ""
-        let focusedRole = AccessibilityManager.shared.focusedElementRoleDescription() ?? "Unavailable".localized
         let acquisitionStatus = AccessibilityManager.shared.lastSelectionAcquisitionStatus
-        let attemptStatus = AccessibilityManager.shared.lastSelectionAttemptStatus
-        let focusedSelectionEditable = AccessibilityManager.shared.isFocusedSelectionEditable()
-        let selectedText = Self.diagnosticContextText(
-            accessibilitySelectedText: accessibilitySelectedText,
-            lastSelectionAcquiredText: AccessibilityManager.shared.lastSelectionAcquiredText,
-            acquisitionStatus: acquisitionStatus
+        let emptyInputCheckLocation = TextSelectionMonitor.shared.lastEmptyInputCheckLocation ?? NSEvent.mouseLocation
+
+        return CapturedContext(
+            processIdentifier: frontApp?.processIdentifier,
+            appName: frontApp?.localizedName ?? "Unknown".localized,
+            appBundleID: frontApp?.bundleIdentifier,
+            selectedText: Self.diagnosticContextText(
+                accessibilitySelectedText: accessibilitySelectedText,
+                lastSelectionAcquiredText: AccessibilityManager.shared.lastSelectionAcquiredText,
+                acquisitionStatus: acquisitionStatus
+            ),
+            focusedRole: AccessibilityManager.shared.focusedElementRoleDescription() ?? "Unavailable".localized,
+            focusedSelectionEditable: AccessibilityManager.shared.isFocusedSelectionEditable(),
+            emptyInputCheckLocation: emptyInputCheckLocation,
+            isTextInputAtEmptyInputCheckLocation: AccessibilityManager.shared.isTextInputElement(
+                at: emptyInputCheckLocation
+            ),
+            acquisitionStatus: acquisitionStatus,
+            attemptStatus: AccessibilityManager.shared.lastSelectionAttemptStatus
         )
+    }
+
+    private func buildReport() -> (text: String, visibleCount: Int, totalCount: Int) {
+        guard let context = capturedContext else {
+            return ("Unable to capture diagnostics context.".localized, 0, 0)
+        }
+
+        let frontAppName = context.appName
+        let frontAppBundleID = context.appBundleID ?? "Unavailable".localized
+        let isAppExcluded = AppExclusionStore.isExcluded(context.appBundleID)
+        let accessibilityEnabled = AccessibilityManager.shared.isAccessibilityEnabled
+        let acquisitionStatus = context.acquisitionStatus
+        let attemptStatus = context.attemptStatus
+        let focusedSelectionEditable = context.focusedSelectionEditable
+        let selectedText = context.selectedText
         let selectedPreview = previewText(selectedText)
         let isFrontmostAppSuppressed = TextSelectionMonitor.shouldSuppressForFrontmostApp(
-            bundleID: frontApp?.bundleIdentifier,
-            localizedName: frontApp?.localizedName,
+            bundleID: context.appBundleID,
+            localizedName: context.appName,
             isFocusedSelectionEditable: focusedSelectionEditable
         )
-        let emptyInputCheckLocation = TextSelectionMonitor.shared.lastEmptyInputCheckLocation ?? NSEvent.mouseLocation
+        let emptyInputCheckLocation = context.emptyInputCheckLocation
         let clipboardHasText = TextSelectionMonitor.hasUsableClipboardText(
             NSPasteboard.general.string(forType: .string)
         )
@@ -219,7 +252,7 @@ final class DiagnosticsWindow: NSWindowController {
             !isFrontmostAppSuppressed &&
             selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             clipboardHasText &&
-            AccessibilityManager.shared.isTextInputElement(at: emptyInputCheckLocation)
+            context.isTextInputAtEmptyInputCheckLocation
         let readiness = Self.readinessState(
             accessibilityEnabled: accessibilityEnabled,
             isAppExcluded: isAppExcluded,
@@ -228,8 +261,8 @@ final class DiagnosticsWindow: NSWindowController {
             emptyInputShortcutReady: emptyInputShortcutReady
         )
 
-        let diagnostics = PluginManager.shared.visibilityDiagnostics(for: selectedText, appBundleID: frontApp?.bundleIdentifier)
-        let shownPlugins = PluginManager.shared.presentationPlugins(appBundleID: frontApp?.bundleIdentifier)
+        let diagnostics = PluginManager.shared.visibilityDiagnostics(for: selectedText, appBundleID: context.appBundleID)
+        let shownPlugins = PluginManager.shared.presentationPlugins(appBundleID: context.appBundleID)
         let shownPluginIDs = Set(shownPlugins.map(\.id))
         let executablePluginIDs = Set(
             shownPlugins
@@ -237,7 +270,7 @@ final class DiagnosticsWindow: NSWindowController {
                     AppDelegate.isPluginExecutable(
                         $0,
                         text: selectedText,
-                        appBundleID: frontApp?.bundleIdentifier,
+                        appBundleID: context.appBundleID,
                         isSelectionEditable: focusedSelectionEditable
                     )
                 }
@@ -251,9 +284,12 @@ final class DiagnosticsWindow: NSWindowController {
         lines.append("")
         lines.append("\("Frontmost app".localized): \(frontAppName)")
         lines.append("\("Bundle ID".localized): \(frontAppBundleID)")
+        if let processIdentifier = context.processIdentifier {
+            lines.append("PID: \(processIdentifier)")
+        }
         lines.append("\("Accessibility".localized): \(accessibilityEnabled ? "Granted".localized : "Missing".localized)")
         lines.append("\("App exclusion".localized): \(isAppExcluded ? "Disabled in current app".localized : "Active in current app".localized)")
-        lines.append("\("Focused element".localized): \(focusedRole)")
+        lines.append("\("Focused element".localized): \(context.focusedRole)")
         lines.append("\("Selected text length".localized): \(selectedText.count)")
         lines.append("\("Selected text preview".localized): \(selectedPreview)")
         lines.append("\("Clipboard".localized): \(clipboardHasText ? "Has text".localized : "Empty".localized)")

@@ -2,16 +2,14 @@ import Cocoa
 import XCTest
 @testable import OpenFire
 
-final class PluginListMenuViewTests: XCTestCase {
+final class PluginListMenuViewTests: GlobalStateTestCase {
     override func setUp() {
         super.setUp()
-        UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
         PluginManager.shared.plugins.removeAll()
     }
 
     override func tearDown() {
         PluginManager.shared.plugins.removeAll()
-        UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
         super.tearDown()
     }
 

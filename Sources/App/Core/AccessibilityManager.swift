@@ -1,48 +1,41 @@
 import Cocoa
 import ApplicationServices
 import Carbon
+import os
 
-final class CopyFallbackRequestCoordinator {
-    private let lock = NSLock()
-    private var activeRequestID: UUID?
+/// Thread-safe request ownership shared by the main actor and the serialized
+/// pasteboard worker.
+final class CopyFallbackRequestCoordinator: Sendable {
+    private let activeRequestID = OSAllocatedUnfairLock<UUID?>(initialState: nil)
 
     func beginRequest() -> UUID {
-        lock.lock()
-        defer { lock.unlock() }
-
         let requestID = UUID()
-        activeRequestID = requestID
+        activeRequestID.withLock { $0 = requestID }
         return requestID
     }
 
     func isRequestActive(_ requestID: UUID) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return activeRequestID == requestID
+        activeRequestID.withLock { $0 == requestID }
     }
 
     func cancelRequest(_ requestID: UUID) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        if activeRequestID == requestID {
-            activeRequestID = nil
+        activeRequestID.withLock {
+            if $0 == requestID {
+                $0 = nil
+            }
         }
     }
 
     func completeRequestIfActive(_ requestID: UUID) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard activeRequestID == requestID else { return false }
-        activeRequestID = nil
-        return true
+        activeRequestID.withLock {
+            guard $0 == requestID else { return false }
+            $0 = nil
+            return true
+        }
     }
 
     func cancelActiveRequest() {
-        lock.lock()
-        defer { lock.unlock() }
-        activeRequestID = nil
+        activeRequestID.withLock { $0 = nil }
     }
 }
 
@@ -51,15 +44,30 @@ private enum PasteboardSnapshotPayload {
     case file(URL)
 }
 
-private final class PasteboardSnapshotFileStore {
+private final class PasteboardSnapshotFileStore: Sendable {
+    private struct CleanupState {
+        var activeLeaseCount = 0
+        var cleanupRequested = false
+        var isCleanedUp = false
+    }
+
+    final class Lease: Sendable {
+        private let fileStore: PasteboardSnapshotFileStore
+
+        fileprivate init(fileStore: PasteboardSnapshotFileStore) {
+            self.fileStore = fileStore
+        }
+
+        deinit {
+            fileStore.releaseLease()
+        }
+    }
+
     let directoryURL: URL
 
-    private let fileManager: FileManager
-    private let cleanupLock = NSLock()
-    private var isCleanedUp = false
+    private let cleanupState = OSAllocatedUnfairLock(initialState: CleanupState())
 
     init?(fileManager: FileManager = .default) {
-        self.fileManager = fileManager
         directoryURL = fileManager.temporaryDirectory.appendingPathComponent(
             "OpenFire-Pasteboard-\(UUID().uuidString)",
             isDirectory: true
@@ -86,12 +94,42 @@ private final class PasteboardSnapshotFileStore {
         }
     }
 
+    func makeLease() -> Lease? {
+        cleanupState.withLock {
+            guard !$0.cleanupRequested, !$0.isCleanedUp else { return nil }
+            $0.activeLeaseCount += 1
+            return Lease(fileStore: self)
+        }
+    }
+
     func cleanup() {
-        cleanupLock.lock()
-        defer { cleanupLock.unlock() }
-        guard !isCleanedUp else { return }
-        isCleanedUp = true
-        try? fileManager.removeItem(at: directoryURL)
+        let shouldRemoveDirectory = cleanupState.withLock {
+            guard !$0.isCleanedUp else { return false }
+            $0.cleanupRequested = true
+            guard $0.activeLeaseCount == 0 else { return false }
+            $0.isCleanedUp = true
+            return true
+        }
+        if shouldRemoveDirectory {
+            try? FileManager.default.removeItem(at: directoryURL)
+        }
+    }
+
+    private func releaseLease() {
+        let shouldRemoveDirectory = cleanupState.withLock {
+            guard $0.activeLeaseCount > 0 else { return false }
+            $0.activeLeaseCount -= 1
+            guard $0.cleanupRequested,
+                  $0.activeLeaseCount == 0,
+                  !$0.isCleanedUp else {
+                return false
+            }
+            $0.isCleanedUp = true
+            return true
+        }
+        if shouldRemoveDirectory {
+            try? FileManager.default.removeItem(at: directoryURL)
+        }
     }
 
     deinit {
@@ -99,16 +137,35 @@ private final class PasteboardSnapshotFileStore {
     }
 }
 
-private final class PasteboardSnapshotDataProvider: NSObject, NSPasteboardItemDataProvider {
+private final class PasteboardSnapshotDataProvider:
+    NSObject,
+    NSPasteboardItemDataProvider,
+    Sendable
+{
+    private let retentionID = UUID()
     private let filesByType: [NSPasteboard.PasteboardType: URL]
-    private let fileStore: PasteboardSnapshotFileStore
+    private let fileStoreLease: PasteboardSnapshotFileStore.Lease
 
     init(
         filesByType: [NSPasteboard.PasteboardType: URL],
-        fileStore: PasteboardSnapshotFileStore
+        fileStoreLease: PasteboardSnapshotFileStore.Lease
     ) {
         self.filesByType = filesByType
-        self.fileStore = fileStore
+        self.fileStoreLease = fileStoreLease
+        super.init()
+    }
+
+    func activate() {
+        PasteboardSnapshotDataProviderRegistry.shared.retain(
+            self,
+            identifier: retentionID
+        )
+    }
+
+    func cancel() {
+        PasteboardSnapshotDataProviderRegistry.shared.release(
+            identifier: retentionID
+        )
     }
 
     func pasteboard(
@@ -122,29 +179,71 @@ private final class PasteboardSnapshotDataProvider: NSObject, NSPasteboardItemDa
         }
         item.setData(data, forType: type)
     }
+
+    func pasteboardFinishedWithDataProvider(_ pasteboard: NSPasteboard) {
+        cancel()
+    }
+}
+
+private final class PasteboardSnapshotDataProviderRegistry: Sendable {
+    static let shared = PasteboardSnapshotDataProviderRegistry()
+
+    private let retainedProviders =
+        OSAllocatedUnfairLock<[UUID: PasteboardSnapshotDataProvider]>(
+            initialState: [:]
+        )
+
+    private init() {}
+
+    func retain(
+        _ provider: PasteboardSnapshotDataProvider,
+        identifier: UUID
+    ) {
+        retainedProviders.withLock { $0[identifier] = provider }
+    }
+
+    func release(identifier: UUID) {
+        _ = retainedProviders.withLock { $0.removeValue(forKey: identifier) }
+    }
+}
+
+private struct MaterializedPasteboardContents {
+    let items: [NSPasteboardItem]
+    let dataProviders: [PasteboardSnapshotDataProvider]
+
+    func activateDataProviders() {
+        dataProviders.forEach { $0.activate() }
+    }
+
+    func cancelDataProviders() {
+        dataProviders.forEach { $0.cancel() }
+    }
 }
 
 /// Manages macOS Accessibility API integration for detecting text selection
+@MainActor
 final class AccessibilityManager {
-    static let copyFallbackPreflightDelay: TimeInterval = 0.05
-    static let copyFallbackKeyGap: TimeInterval = 0.01
-    static let copyFallbackPollAttempts = 12
-    static let copyFallbackLatePollAttempts = 8
-    static let copyFallbackPollInterval: TimeInterval = 0.025
-    static let maximumPasteboardSnapshotBytes = 256 * 1024 * 1024
-    static let maximumPasteboardSnapshotInMemoryBytes = 8 * 1024 * 1024
-    static let maximumPasteboardSnapshotItems = 32
-    static let maximumPasteboardSnapshotTypes = 128
-    static let copyFallbackWorstCaseDuration =
+    nonisolated static let copyFallbackPreflightDelay: TimeInterval = 0.05
+    nonisolated static let copyFallbackKeyGap: TimeInterval = 0.01
+    nonisolated static let copyFallbackPollAttempts = 12
+    nonisolated static let copyFallbackLatePollAttempts = 8
+    nonisolated static let copyFallbackPollInterval: TimeInterval = 0.025
+    nonisolated static let maximumPasteboardSnapshotBytes = 256 * 1024 * 1024
+    nonisolated static let maximumPasteboardSnapshotInMemoryBytes = 8 * 1024 * 1024
+    nonisolated static let maximumPasteboardSnapshotItems = 32
+    nonisolated static let maximumPasteboardSnapshotTypes = 128
+    nonisolated static let pasteboardStableReadAttempts = 3
+    nonisolated static let accessibilityMessagingTimeout: Float = 0.25
+    nonisolated static let copyFallbackWorstCaseDuration =
         copyFallbackPreflightDelay +
         copyFallbackKeyGap +
         (Double(copyFallbackPollAttempts + copyFallbackLatePollAttempts) * copyFallbackPollInterval)
 
-    private static let protectedTextSubroles: Set<String> = [
+    nonisolated private static let protectedTextSubroles: Set<String> = [
         "AXSecureTextField",
         "AXSecureTextArea"
     ]
-    private static let richTextHostBundleTokenHints: Set<String> = [
+    nonisolated private static let richTextHostBundleTokenHints: Set<String> = [
         "telegram",
         "electron",
         "discord",
@@ -158,13 +257,13 @@ final class AccessibilityManager {
         "webview",
         "vscode"
     ]
-    private static let richTextHostBundleExactHints: Set<String> = [
+    nonisolated private static let richTextHostBundleExactHints: Set<String> = [
         "com.microsoft.vscode",
         "com.microsoft.vscodeinsiders",
         "com.visualstudio.code",
         "com.visualstudio.code.oss"
     ]
-    private static let blindCopyFallbackBundleTokenHints: Set<String> = [
+    nonisolated private static let blindCopyFallbackBundleTokenHints: Set<String> = [
         "telegram",
         "chrome",
         "chromium",
@@ -180,7 +279,7 @@ final class AccessibilityManager {
         "arc",
         "codex"
     ]
-    private static let blindCopyFallbackBundleExactHints: Set<String> = [
+    nonisolated private static let blindCopyFallbackBundleExactHints: Set<String> = [
         "ru.keepcoder.telegram",
         "com.apple.safari",
         "com.google.chrome",
@@ -195,11 +294,22 @@ final class AccessibilityManager {
         "com.openai.codex"
     ]
 
-    private static let protectedTextBooleanAttributes = [
+    nonisolated private static let protectedTextBooleanAttributes = [
         "AXValueProtected",
         "AXProtectedContent",
         "AXSecure"
     ]
+
+    enum ProtectedTextAssessment: Equatable {
+        case protectedContent
+        case unprotected
+        case indeterminate
+    }
+
+    struct PasteboardState: Equatable {
+        let changeCount: Int
+        let string: String?
+    }
     
     static let shared = AccessibilityManager()
     
@@ -300,19 +410,31 @@ final class AccessibilityManager {
     
     private init() {
         systemWideElement = AXUIElementCreateSystemWide()
+        _ = AXUIElementSetMessagingTimeout(systemWideElement, Self.accessibilityMessagingTimeout)
     }
 
     /// Convert AppKit's bottom-left global coordinates into the shared top-left AX/Quartz space.
-    func accessibilityScreenPoint(
+    func accessibilityScreenPoint(for point: NSPoint) -> CGPoint? {
+        accessibilityScreenPoint(for: point, screenFrames: NSScreen.screens.map(\.frame))
+    }
+
+    nonisolated func accessibilityScreenPoint(
         for point: NSPoint,
-        screenFrames: [NSRect] = NSScreen.screens.map(\.frame)
+        screenFrames: [NSRect]
     ) -> CGPoint? {
         Self.coreGraphicsScreenPoint(for: point, screenFrames: screenFrames)
     }
 
     /// Convert a global AppKit point into Quartz global coordinates used by CGEvent APIs.
     /// The first NSScreen is the menu-bar display and defines the global coordinate origin.
-    static func coreGraphicsScreenPoint(for point: NSPoint, screenFrames: [NSRect] = NSScreen.screens.map(\.frame)) -> CGPoint? {
+    static func coreGraphicsScreenPoint(for point: NSPoint) -> CGPoint? {
+        coreGraphicsScreenPoint(for: point, screenFrames: NSScreen.screens.map(\.frame))
+    }
+
+    nonisolated static func coreGraphicsScreenPoint(
+        for point: NSPoint,
+        screenFrames: [NSRect]
+    ) -> CGPoint? {
         guard let primaryScreenFrame = screenFrames.first else { return nil }
         return CGPoint(x: point.x, y: primaryScreenFrame.maxY - point.y)
     }
@@ -323,12 +445,10 @@ final class AccessibilityManager {
         guard isAccessibilityEnabled else { return }
         
         permissionWatchdog = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            if !self.isAccessibilityEnabled {
+            MainActor.assumeIsolated {
+                guard let self, !self.isAccessibilityEnabled else { return }
                 self.stopWatchdog()
-                DispatchQueue.main.async {
-                    self.onPermissionLost?()
-                }
+                self.onPermissionLost?()
             }
         }
     }
@@ -342,13 +462,13 @@ final class AccessibilityManager {
     
     /// Check if accessibility permission is granted silently
     var isAccessibilityEnabled: Bool {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): false] as CFDictionary
+        let options = ["AXTrustedCheckOptionPrompt" as CFString: false] as CFDictionary
         return AXIsProcessTrustedWithOptions(options)
     }
     
     /// Prompt user to grant accessibility permission
     func requestAccessibilityPermission() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        let options = ["AXTrustedCheckOptionPrompt" as CFString: true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
     }
     
@@ -366,10 +486,13 @@ final class AccessibilityManager {
     func getSelectedText() -> String? {
         guard isAccessibilityEnabled else { return nil }
         guard !isSecureEventInputEnabled() else { return nil }
-        
         guard let element = getFocusedElement() else { return nil }
-        guard !Self.isProtectedTextElement(element) else { return nil }
-        
+        return selectedText(from: element)
+    }
+
+    func selectedText(from element: AXUIElement) -> String? {
+        guard Self.protectionAssessment(for: element) == .unprotected else { return nil }
+
         // Get the selected text from the focused element
         var selectedText: AnyObject?
         let textResult = AXUIElementCopyAttributeValue(
@@ -388,7 +511,11 @@ final class AccessibilityManager {
         guard isAccessibilityEnabled else { return nil }
         guard !isSecureEventInputEnabled() else { return nil }
         guard let element = getFocusedElement() else { return nil }
-        guard !Self.isProtectedTextElement(element) else { return nil }
+        return currentSelectionSnapshot(for: element)
+    }
+
+    func currentSelectionSnapshot(for element: AXUIElement) -> SelectionSnapshot? {
+        guard Self.protectionAssessment(for: element) == .unprotected else { return nil }
 
         var selectedText: String?
         var selectedTextRaw: AnyObject?
@@ -431,7 +558,10 @@ final class AccessibilityManager {
         )
     }
 
-    static func didSelectionChange(from previous: SelectionSnapshot?, to current: SelectionSnapshot?) -> Bool {
+    nonisolated static func didSelectionChange(
+        from previous: SelectionSnapshot?,
+        to current: SelectionSnapshot?
+    ) -> Bool {
         let previousText = previous?.normalizedText
         let currentText = current?.normalizedText
         if previousText != currentText {
@@ -453,6 +583,11 @@ final class AccessibilityManager {
     func isFocusedSelectionEditable() -> Bool {
         guard isAccessibilityEnabled else { return false }
         guard let focusedElement = getFocusedElement() else { return false }
+        return isSelectionEditable(focusedElement)
+    }
+
+    func isSelectionEditable(_ focusedElement: AXUIElement) -> Bool {
+        guard Self.protectionAssessment(for: focusedElement) == .unprotected else { return false }
 
         var isSettable: DarwinBoolean = false
         let isValueSettable =
@@ -475,7 +610,7 @@ final class AccessibilityManager {
         return false
     }
     
-    static func shouldContinueCopyFallback(
+    nonisolated static func shouldContinueCopyFallback(
         requestIsActive: Bool,
         expectedProcessIdentifier: pid_t?,
         currentProcessIdentifier: pid_t?,
@@ -488,7 +623,7 @@ final class AccessibilityManager {
         )
     }
 
-    static func isExpectedCopyFallbackProcess(
+    nonisolated static func isExpectedCopyFallbackProcess(
         expectedProcessIdentifier: pid_t?,
         currentProcessIdentifier: pid_t?
     ) -> Bool {
@@ -501,12 +636,18 @@ final class AccessibilityManager {
     @discardableResult
     func getSelectedTextViaCopy(
         expectedProcessIdentifier: pid_t? = NSWorkspace.shared.frontmostApplication?.processIdentifier,
-        completion: @escaping (String?) -> Void
+        completion: @escaping @MainActor @Sendable (String?) -> Void
     ) -> UUID {
         let requestID = copyFallbackCoordinator.beginRequest()
+        let coordinator = copyFallbackCoordinator
 
         guard !shouldSuppressSelectionPresentation() else {
-            finishCopyFallbackRequest(requestID, result: nil, completion: completion)
+            Self.finishCopyFallbackRequest(
+                coordinator: coordinator,
+                requestID,
+                result: nil,
+                completion: completion
+            )
             return requestID
         }
 
@@ -516,27 +657,51 @@ final class AccessibilityManager {
             usleep(useconds_t(Self.copyFallbackPreflightDelay * 1_000_000))
 
             guard let targetProcessIdentifier = expectedProcessIdentifier,
-                  self.copyFallbackContextIsValid(
+                  Self.copyFallbackContextIsValid(
+                coordinator: coordinator,
                 requestID: requestID,
                 expectedProcessIdentifier: expectedProcessIdentifier
             ) else {
-                self.finishCopyFallbackRequest(requestID, result: nil, completion: completion)
+                Self.finishCopyFallbackRequest(
+                    coordinator: coordinator,
+                    requestID,
+                    result: nil,
+                    completion: completion
+                )
                 return
             }
             
             let pasteboard = NSPasteboard.general
-            let initialChangeCount = pasteboard.changeCount
-            let initialString = pasteboard.string(forType: .string)
-            guard let snapshot = Self.capturePasteboardSnapshot(from: pasteboard) else {
-                NSLog("[OpenFire] Skipping Cmd+C fallback because the clipboard cannot be snapshotted safely.")
-                self.finishCopyFallbackRequest(requestID, result: nil, completion: completion)
+            guard let initialState = Self.stablePasteboardState(from: pasteboard) else {
+                Self.finishCopyFallbackRequest(
+                    coordinator: coordinator,
+                    requestID,
+                    result: nil,
+                    completion: completion
+                )
                 return
             }
-            var snapshotWasRestored = false
+            guard let snapshot = Self.capturePasteboardSnapshot(from: pasteboard) else {
+                NSLog("[OpenFire] Skipping Cmd+C fallback because the clipboard cannot be snapshotted safely.")
+                Self.finishCopyFallbackRequest(
+                    coordinator: coordinator,
+                    requestID,
+                    result: nil,
+                    completion: completion
+                )
+                return
+            }
             defer {
-                if !snapshotWasRestored {
-                    snapshot.discardTemporaryFiles()
-                }
+                snapshot.discardTemporaryFiles()
+            }
+            guard Self.stablePasteboardState(from: pasteboard) == initialState else {
+                Self.finishCopyFallbackRequest(
+                    coordinator: coordinator,
+                    requestID,
+                    result: nil,
+                    completion: completion
+                )
+                return
             }
             
             // Simulate Cmd+C via CGEvent
@@ -555,37 +720,39 @@ final class AccessibilityManager {
             // and asynchronously write to the pasteboard.
             var copyObservation = Self.pollPasteboardForCopiedText(
                 pasteboard: pasteboard,
-                initialChangeCount: initialChangeCount,
-                initialString: initialString,
+                initialState: initialState,
                 attempts: Self.copyFallbackPollAttempts
             )
 
             if !copyObservation.hasFreshCopiedText {
                 copyObservation = Self.pollPasteboardForCopiedText(
                     pasteboard: pasteboard,
-                    initialChangeCount: initialChangeCount,
-                    initialString: initialString,
+                    initialState: initialState,
+                    startingState: copyObservation.state,
                     attempts: Self.copyFallbackLatePollAttempts
                 )
             }
             
-            // Only restore if the pasteboard still contains the value created by this fallback.
-            if Self.shouldRestorePasteboardSnapshot(
-                initialChangeCount: initialChangeCount,
-                observedChangeCount: copyObservation.observedChangeCount,
-                copiedText: copyObservation.copiedText,
-                initialString: initialString,
-                currentChangeCount: pasteboard.changeCount,
-                currentString: pasteboard.string(forType: .string)
-            ) {
-                snapshotWasRestored = Self.restorePasteboardSnapshot(snapshot, to: pasteboard)
-                if !snapshotWasRestored {
+            // Restore any mutation caused by Cmd+C, including an empty or non-text copy.
+            // The final stable-state check prevents overwriting a later clipboard update.
+            if let currentState = Self.stablePasteboardState(from: pasteboard),
+               Self.shouldRestorePasteboardSnapshot(
+                initialState: initialState,
+                observedState: copyObservation.state,
+                currentState: currentState
+               ) {
+                if !Self.restorePasteboardSnapshot(
+                    snapshot,
+                    to: pasteboard,
+                    ifCurrentStateMatches: currentState
+                ) {
                     NSLog("[OpenFire] Failed to restore the clipboard after Cmd+C fallback.")
                 }
             }
             
             let trimmed = copyObservation.copiedText?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let contextIsStillValid = self.copyFallbackContextIsValid(
+            let contextIsStillValid = Self.copyFallbackContextIsValid(
+                coordinator: coordinator,
                 requestID: requestID,
                 expectedProcessIdentifier: expectedProcessIdentifier
             )
@@ -593,7 +760,12 @@ final class AccessibilityManager {
                 copyObservation.hasFreshCopiedText &&
                 (trimmed?.isEmpty == false) ? trimmed : nil
 
-            self.finishCopyFallbackRequest(requestID, result: result, completion: completion)
+            Self.finishCopyFallbackRequest(
+                coordinator: coordinator,
+                requestID,
+                result: result,
+                completion: completion
+            )
         }
 
         return requestID
@@ -607,39 +779,44 @@ final class AccessibilityManager {
         copyFallbackCoordinator.cancelActiveRequest()
     }
 
-    private func copyFallbackContextIsValid(
+    nonisolated private static func copyFallbackContextIsValid(
+        coordinator: CopyFallbackRequestCoordinator,
         requestID: UUID,
         expectedProcessIdentifier: pid_t?
     ) -> Bool {
-        var currentProcessIdentifier: pid_t?
-        var isSelectionSuppressed = true
-
-        let readContext = {
-            currentProcessIdentifier = NSWorkspace.shared.frontmostApplication?.processIdentifier
-            isSelectionSuppressed = self.shouldSuppressSelectionPresentation()
-        }
-
+        let context: (processIdentifier: pid_t?, isSelectionSuppressed: Bool)
         if Thread.isMainThread {
-            readContext()
+            context = MainActor.assumeIsolated {
+                (
+                    NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                    AccessibilityManager.shared.shouldSuppressSelectionPresentation()
+                )
+            }
         } else {
-            DispatchQueue.main.sync(execute: readContext)
+            context = DispatchQueue.main.sync {
+                (
+                    NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                    AccessibilityManager.shared.shouldSuppressSelectionPresentation()
+                )
+            }
         }
 
-        return Self.shouldContinueCopyFallback(
-            requestIsActive: copyFallbackCoordinator.isRequestActive(requestID),
+        return shouldContinueCopyFallback(
+            requestIsActive: coordinator.isRequestActive(requestID),
             expectedProcessIdentifier: expectedProcessIdentifier,
-            currentProcessIdentifier: currentProcessIdentifier,
-            isSelectionSuppressed: isSelectionSuppressed
+            currentProcessIdentifier: context.processIdentifier,
+            isSelectionSuppressed: context.isSelectionSuppressed
         )
     }
 
-    private func finishCopyFallbackRequest(
+    nonisolated private static func finishCopyFallbackRequest(
+        coordinator: CopyFallbackRequestCoordinator,
         _ requestID: UUID,
         result: String?,
-        completion: @escaping (String?) -> Void
+        completion: @escaping @MainActor @Sendable (String?) -> Void
     ) {
-        DispatchQueue.main.async {
-            let isLatestRequest = self.copyFallbackCoordinator.completeRequestIfActive(requestID)
+        Task { @MainActor in
+            let isLatestRequest = coordinator.completeRequestIfActive(requestID)
             completion(isLatestRequest ? result : nil)
         }
     }
@@ -662,9 +839,9 @@ final class AccessibilityManager {
     }
 
     func isFocusedElementProtected() -> Bool {
-        guard isAccessibilityEnabled else { return false }
-        guard let focusedElement = getFocusedElement() else { return false }
-        return Self.isProtectedTextElement(focusedElement)
+        guard isAccessibilityEnabled else { return true }
+        guard let focusedElement = getFocusedElement() else { return true }
+        return Self.protectionAssessment(for: focusedElement) != .unprotected
     }
 
     func isSecureEventInputEnabled() -> Bool {
@@ -672,10 +849,18 @@ final class AccessibilityManager {
     }
 
     func shouldSuppressSelectionPresentation() -> Bool {
-        isSecureEventInputEnabled() || isFocusedElementProtected()
+        let secureEventInputEnabled = isSecureEventInputEnabled()
+        guard isAccessibilityEnabled, let focusedElement = getFocusedElement() else {
+            return true
+        }
+        return Self.shouldSuppressSelectionPresentation(
+            elementAssessment: Self.protectionAssessment(for: focusedElement),
+            ancestorAssessments: [],
+            secureEventInputEnabled: secureEventInputEnabled
+        )
     }
 
-    static func capturePasteboardSnapshot(
+    nonisolated static func capturePasteboardSnapshot(
         from pasteboard: NSPasteboard,
         maxBytes: Int = maximumPasteboardSnapshotBytes,
         maxItems: Int = maximumPasteboardSnapshotItems,
@@ -735,91 +920,183 @@ final class AccessibilityManager {
     }
 
     @discardableResult
-    static func restorePasteboardSnapshot(
+    nonisolated static func restorePasteboardSnapshot(
         _ snapshot: PasteboardSnapshot,
-        to pasteboard: NSPasteboard
+        to pasteboard: NSPasteboard,
+        ifCurrentStateMatches expectedCurrentState: PasteboardState? = nil,
+        rollbackMaxBytes: Int = maximumPasteboardSnapshotBytes
     ) -> Bool {
-        guard !snapshot.items.isEmpty else {
-            pasteboard.clearContents()
-            return true
+        guard let restoredContents = materializedPasteboardContents(from: snapshot) else {
+            return false
         }
 
+        if let expectedCurrentState,
+           stablePasteboardState(from: pasteboard) != expectedCurrentState {
+            return false
+        }
+
+        // Capturing the temporary Cmd+C result is only a best-effort rollback.
+        // A huge or delayed result must never prevent restoring the user's
+        // original clipboard snapshot.
+        let rollbackSnapshot = capturePasteboardSnapshot(
+            from: pasteboard,
+            maxBytes: rollbackMaxBytes
+        )
+        defer { rollbackSnapshot?.discardTemporaryFiles() }
+        let rollbackContents = rollbackSnapshot.flatMap(materializedPasteboardContents)
+
+        // Snapshot materialization can invoke lazy data providers. Recheck ownership immediately
+        // before replacing the pasteboard so a newer third-party write wins.
+        if let expectedCurrentState,
+           stablePasteboardState(from: pasteboard) != expectedCurrentState {
+            return false
+        }
+
+        guard replacePasteboardContents(with: restoredContents, on: pasteboard) else {
+            if let rollbackContents {
+                _ = replacePasteboardContents(with: rollbackContents, on: pasteboard)
+            }
+            return false
+        }
+        return true
+    }
+
+    nonisolated private static func materializedPasteboardContents(
+        from snapshot: PasteboardSnapshot
+    ) -> MaterializedPasteboardContents? {
+        var restoredItems: [NSPasteboardItem] = []
         var dataProviders: [PasteboardSnapshotDataProvider] = []
-        let restoredItems = snapshot.items.compactMap { itemSnapshot -> NSPasteboardItem? in
+        restoredItems.reserveCapacity(snapshot.items.count)
+
+        for itemSnapshot in snapshot.items {
             let item = NSPasteboardItem()
-            var filesByType: [NSPasteboard.PasteboardType: URL] = [:]
+            var spilledFiles: [NSPasteboard.PasteboardType: URL] = [:]
 
             for (type, payload) in itemSnapshot {
                 switch payload {
-                case .memory(let data):
-                    guard item.setData(data, forType: type) else { return nil }
+                case .memory(let inMemoryData):
+                    guard item.setData(inMemoryData, forType: type) else {
+                        return nil
+                    }
                 case .file(let fileURL):
-                    filesByType[type] = fileURL
+                    guard FileManager.default.isReadableFile(atPath: fileURL.path) else {
+                        return nil
+                    }
+                    spilledFiles[type] = fileURL
                 }
             }
 
-            if !filesByType.isEmpty {
-                guard let fileStore = snapshot.fileStore else { return nil }
-                let provider = PasteboardSnapshotDataProvider(
-                    filesByType: filesByType,
-                    fileStore: fileStore
-                )
-                guard item.setDataProvider(provider, forTypes: Array(filesByType.keys)) else {
+            if !spilledFiles.isEmpty {
+                guard let fileStore = snapshot.fileStore,
+                      let lease = fileStore.makeLease() else {
                     return nil
                 }
+                let provider = PasteboardSnapshotDataProvider(
+                    filesByType: spilledFiles,
+                    fileStoreLease: lease
+                )
+                item.setDataProvider(provider, forTypes: Array(spilledFiles.keys))
                 dataProviders.append(provider)
             }
 
-            return item
+            restoredItems.append(item)
         }
 
-        guard restoredItems.count == snapshot.items.count else { return false }
+        return MaterializedPasteboardContents(
+            items: restoredItems,
+            dataProviders: dataProviders
+        )
+    }
+
+    nonisolated private static func replacePasteboardContents(
+        with contents: MaterializedPasteboardContents,
+        on pasteboard: NSPasteboard
+    ) -> Bool {
+        contents.activateDataProviders()
         pasteboard.clearContents()
-        return pasteboard.writeObjects(restoredItems)
+        guard !contents.items.isEmpty else {
+            contents.cancelDataProviders()
+            return true
+        }
+        guard pasteboard.writeObjects(contents.items) else {
+            contents.cancelDataProviders()
+            return false
+        }
+        return true
     }
 
     private struct CopyObservation {
-        let copiedText: String?
+        let state: PasteboardState
         let hasFreshCopiedText: Bool
-        let observedChangeCount: Int
+
+        var copiedText: String? {
+            state.string
+        }
     }
 
-    private static func pollPasteboardForCopiedText(
+    nonisolated static func stablePasteboardState(
+        maximumAttempts: Int = pasteboardStableReadAttempts,
+        readChangeCount: () -> Int,
+        readString: () -> String?
+    ) -> PasteboardState? {
+        guard maximumAttempts > 0 else { return nil }
+
+        for _ in 0..<maximumAttempts {
+            let changeCountBeforeRead = readChangeCount()
+            let string = readString()
+            let changeCountAfterRead = readChangeCount()
+            if changeCountBeforeRead == changeCountAfterRead {
+                return PasteboardState(changeCount: changeCountAfterRead, string: string)
+            }
+        }
+
+        return nil
+    }
+
+    nonisolated private static func stablePasteboardState(
+        from pasteboard: NSPasteboard
+    ) -> PasteboardState? {
+        stablePasteboardState(
+            readChangeCount: { pasteboard.changeCount },
+            readString: { pasteboard.string(forType: .string) }
+        )
+    }
+
+    nonisolated private static func pollPasteboardForCopiedText(
         pasteboard: NSPasteboard,
-        initialChangeCount: Int,
-        initialString: String?,
+        initialState: PasteboardState,
+        startingState: PasteboardState? = nil,
         attempts: Int = copyFallbackPollAttempts
     ) -> CopyObservation {
-        var latestString = initialString
-        var latestChangeCount = initialChangeCount
+        var latestState = startingState ?? initialState
 
         for _ in 0..<attempts {
             usleep(useconds_t(copyFallbackPollInterval * 1_000_000))
-            latestString = pasteboard.string(forType: .string)
-            latestChangeCount = pasteboard.changeCount
+            guard let state = stablePasteboardState(from: pasteboard) else {
+                continue
+            }
+            latestState = state
 
             if shouldTreatCopiedTextAsFresh(
-                initialChangeCount: initialChangeCount,
-                observedChangeCount: latestChangeCount,
-                initialString: initialString,
-                observedString: latestString
+                initialChangeCount: initialState.changeCount,
+                observedChangeCount: state.changeCount,
+                initialString: initialState.string,
+                observedString: state.string
             ) {
                 return CopyObservation(
-                    copiedText: latestString,
-                    hasFreshCopiedText: true,
-                    observedChangeCount: latestChangeCount
+                    state: state,
+                    hasFreshCopiedText: true
                 )
             }
         }
 
         return CopyObservation(
-            copiedText: latestString,
-            hasFreshCopiedText: false,
-            observedChangeCount: latestChangeCount
+            state: latestState,
+            hasFreshCopiedText: false
         )
     }
 
-    static func shouldTreatCopiedTextAsFresh(
+    nonisolated static func shouldTreatCopiedTextAsFresh(
         initialChangeCount: Int,
         observedChangeCount: Int,
         initialString: String?,
@@ -837,53 +1114,20 @@ final class AccessibilityManager {
         return trimmedInitialString != trimmedObservedString
     }
 
-    static func shouldRestorePasteboardSnapshot(
-        initialChangeCount: Int,
-        observedChangeCount: Int,
-        copiedText: String?,
-        initialString: String? = nil
+    nonisolated static func shouldRestorePasteboardSnapshot(
+        initialState: PasteboardState,
+        observedState: PasteboardState,
+        currentState: PasteboardState
     ) -> Bool {
-        if initialString == nil {
-            guard let copiedText else { return false }
-            guard !copiedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-            return observedChangeCount != initialChangeCount
-        }
-
-        return shouldTreatCopiedTextAsFresh(
-            initialChangeCount: initialChangeCount,
-            observedChangeCount: observedChangeCount,
-            initialString: initialString,
-            observedString: copiedText
-        )
+        guard observedState != initialState else { return false }
+        return currentState == observedState
     }
 
-    static func shouldRestorePasteboardSnapshot(
-        initialChangeCount: Int,
-        observedChangeCount: Int,
-        copiedText: String?,
-        initialString: String? = nil,
-        currentChangeCount: Int,
-        currentString: String?
-    ) -> Bool {
-        guard shouldRestorePasteboardSnapshot(
-            initialChangeCount: initialChangeCount,
-            observedChangeCount: observedChangeCount,
-            copiedText: copiedText,
-            initialString: initialString
-        ) else {
-            return false
-        }
-
-        return currentChangeCount == observedChangeCount &&
-            currentString?.trimmingCharacters(in: .whitespacesAndNewlines) ==
-            copiedText?.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    static func shouldAssumeFocusedTextInputContainsClickWhenBoundsUnavailable() -> Bool {
+    nonisolated static func shouldAssumeFocusedTextInputContainsClickWhenBoundsUnavailable() -> Bool {
         false
     }
 
-    static func isLikelyRichTextSelectionHost(bundleID: String?) -> Bool {
+    nonisolated static func isLikelyRichTextSelectionHost(bundleID: String?) -> Bool {
         guard let bundleID else { return false }
         let normalizedBundleID = bundleID.lowercased()
         if richTextHostBundleExactHints.contains(normalizedBundleID) {
@@ -893,7 +1137,7 @@ final class AccessibilityManager {
         return !bundleTokens(for: normalizedBundleID).intersection(richTextHostBundleTokenHints).isEmpty
     }
 
-    static func shouldAllowBlindCopyFallback(bundleID: String?) -> Bool {
+    nonisolated static func shouldAllowBlindCopyFallback(bundleID: String?) -> Bool {
         guard let bundleID else { return false }
         let normalizedBundleID = bundleID.lowercased()
         if blindCopyFallbackBundleExactHints.contains(normalizedBundleID) {
@@ -903,12 +1147,12 @@ final class AccessibilityManager {
         return !bundleTokens(for: normalizedBundleID).intersection(blindCopyFallbackBundleTokenHints).isEmpty
     }
 
-    static func shouldAllowContextlessBlindCopyFallback(bundleID: String?) -> Bool {
+    nonisolated static func shouldAllowContextlessBlindCopyFallback(bundleID: String?) -> Bool {
         guard let bundleID else { return false }
         return blindCopyFallbackBundleExactHints.contains(bundleID.lowercased())
     }
 
-    private static func bundleTokens(for normalizedBundleID: String) -> Set<String> {
+    nonisolated private static func bundleTokens(for normalizedBundleID: String) -> Set<String> {
         Set(
             normalizedBundleID
                 .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
@@ -916,7 +1160,7 @@ final class AccessibilityManager {
         )
     }
 
-    static func shouldTreatFocusedRoleAsTextSelectionContext(
+    nonisolated static func shouldTreatFocusedRoleAsTextSelectionContext(
         role: String,
         ancestorRoles: [String],
         bundleID: String?
@@ -925,6 +1169,9 @@ final class AccessibilityManager {
             kAXStaticTextRole,
             kAXTextFieldRole,
             kAXTextAreaRole,
+            kAXComboBoxRole,
+            "AXDocument",
+            "AXSearchField",
             "AXWebArea",
             "AXHeading",
             "AXParagraph",
@@ -955,8 +1202,15 @@ final class AccessibilityManager {
 
     func isFocusedTextSelectionContext(at point: NSPoint) -> Bool {
         guard isAccessibilityEnabled else { return false }
-        guard let axPoint = accessibilityScreenPoint(for: point) else { return false }
         guard let focusedElement = getFocusedElement() else { return false }
+        return isFocusedTextSelectionContext(at: point, focusedElement: focusedElement)
+    }
+
+    func isFocusedTextSelectionContext(
+        at point: NSPoint,
+        focusedElement: AXUIElement
+    ) -> Bool {
+        guard Self.protectionAssessment(for: focusedElement) == .unprotected else { return false }
 
         var roleValue: AnyObject?
         guard AXUIElementCopyAttributeValue(
@@ -976,51 +1230,34 @@ final class AccessibilityManager {
             return false
         }
 
-        var positionValue: AnyObject?
-        var sizeValue: AnyObject?
-        guard AXUIElementCopyAttributeValue(
-            focusedElement,
-            kAXPositionAttribute as CFString,
-            &positionValue
-        ) == .success,
-              AXUIElementCopyAttributeValue(
-                focusedElement,
-                kAXSizeAttribute as CFString,
-                &sizeValue
-              ) == .success,
-              let positionValue,
-              let sizeValue,
-              CFGetTypeID(positionValue) == AXValueGetTypeID(),
-              CFGetTypeID(sizeValue) == AXValueGetTypeID() else {
-            return false
-        }
-
-        let positionAXValue = unsafeBitCast(positionValue, to: AXValue.self)
-        let sizeAXValue = unsafeBitCast(sizeValue, to: AXValue.self)
-        var position = CGPoint.zero
-        var size = CGSize.zero
-        guard AXValueGetValue(positionAXValue, .cgPoint, &position),
-              AXValueGetValue(sizeAXValue, .cgSize, &size) else {
-            return false
-        }
-
-        return CGRect(origin: position, size: size).contains(axPoint)
+        return isPoint(point, inside: focusedElement)
     }
 
     func isPointInsideFocusedElementBounds(at point: NSPoint) -> Bool {
         guard isAccessibilityEnabled else { return false }
-        guard let axPoint = accessibilityScreenPoint(for: point) else { return false }
         guard let focusedElement = getFocusedElement() else { return false }
+        return isPointInsideFocusedElementBounds(at: point, focusedElement: focusedElement)
+    }
 
+    func isPointInsideFocusedElementBounds(
+        at point: NSPoint,
+        focusedElement: AXUIElement
+    ) -> Bool {
+        guard Self.protectionAssessment(for: focusedElement) == .unprotected else { return false }
+        return isPoint(point, inside: focusedElement)
+    }
+
+    private func isPoint(_ point: NSPoint, inside element: AXUIElement) -> Bool {
+        guard let axPoint = accessibilityScreenPoint(for: point) else { return false }
         var positionValue: AnyObject?
         var sizeValue: AnyObject?
         guard AXUIElementCopyAttributeValue(
-            focusedElement,
+            element,
             kAXPositionAttribute as CFString,
             &positionValue
         ) == .success,
               AXUIElementCopyAttributeValue(
-                focusedElement,
+                element,
                 kAXSizeAttribute as CFString,
                 &sizeValue
               ) == .success,
@@ -1046,12 +1283,18 @@ final class AccessibilityManager {
     /// Check if the element at the specified screen coordinates is a text input field
     func isTextInputElement(at point: NSPoint) -> Bool {
         guard isAccessibilityEnabled else { return false }
-
-        guard let axPoint = accessibilityScreenPoint(for: point) else { return false }
         
         // 1. Get the globally focused element instead of hit-testing.
         // Hit-testing often returns low-level items like AXGroup or AXStaticText which breaks the logic.
         guard let focusedElement = getFocusedElement() else { return false }
+        return isTextInputElement(at: point, focusedElement: focusedElement)
+    }
+
+    func isTextInputElement(
+        at point: NSPoint,
+        focusedElement: AXUIElement
+    ) -> Bool {
+        guard Self.protectionAssessment(for: focusedElement) == .unprotected else { return false }
         
         // 2. Verify the role
         var roleValue: AnyObject?
@@ -1078,10 +1321,7 @@ final class AccessibilityManager {
             kAXTableRole
         ]
         
-        if forbiddenRoles.contains(role) {
-            NSLog("[OpenFire-Debug] Focused element is forbidden (role: \(role)), refusing to treat as text input.")
-            return false
-        }
+        if forbiddenRoles.contains(role) { return false }
         
         var isEditableText = false
         
@@ -1100,53 +1340,10 @@ final class AccessibilityManager {
             }
         }
         
-        guard isEditableText else {
-            NSLog("[OpenFire-Debug] Focused element is NOT an editable text input (role: \(role)).")
-            return false
-        }
+        guard isEditableText else { return false }
         
         // 4. Verify the click fell INSIDE the element's bounds to avoid false positives when clicking out
-        var positionValue: AnyObject?
-        var sizeValue: AnyObject?
-        
-        if AXUIElementCopyAttributeValue(focusedElement, kAXPositionAttribute as CFString, &positionValue) == .success,
-           AXUIElementCopyAttributeValue(focusedElement, kAXSizeAttribute as CFString, &sizeValue) == .success {
-            
-            var position = CGPoint.zero
-            var size = CGSize.zero
-
-            guard
-                let positionValue,
-                let sizeValue,
-                CFGetTypeID(positionValue) == AXValueGetTypeID(),
-                CFGetTypeID(sizeValue) == AXValueGetTypeID()
-            else {
-                NSLog("[OpenFire-Debug] Failed to decode AX position/size for focused text input.")
-                return false
-            }
-
-            let positionAXValue = unsafeBitCast(positionValue, to: AXValue.self)
-            let sizeAXValue = unsafeBitCast(sizeValue, to: AXValue.self)
-
-            guard
-                AXValueGetValue(positionAXValue, .cgPoint, &position),
-                AXValueGetValue(sizeAXValue, .cgSize, &size)
-            else {
-                NSLog("[OpenFire-Debug] Failed to decode AX position/size for focused text input.")
-                return false
-            }
-            
-            let elementRect = CGRect(origin: position, size: size)
-            let contains = elementRect.contains(axPoint)
-            
-            NSLog("[OpenFire-Debug] Element bounds: \(elementRect), Click point: \(axPoint), Contains: \(contains)")
-            return contains
-        }
-        
-        // Fallback: If we couldn't get bounding boxes but we know it's a focused text input,
-        // refuse to guess so clicks outside the field don't spuriously trigger empty-input UI.
-        NSLog("[OpenFire-Debug] Could not get element bounds. Refusing to assume hit.")
-        return Self.shouldAssumeFocusedTextInputContainsClickWhenBoundsUnavailable()
+        return isPoint(point, inside: focusedElement)
     }
     
     /// Check if the element at the specified screen coordinates is purely text (like a webpage paragraph, a text field, or static text label),
@@ -1162,6 +1359,7 @@ final class AccessibilityManager {
         let hitResult = AXUIElementCopyElementAtPosition(systemWideElement, Float(axPoint.x), Float(axPoint.y), &hitElementRaw)
         
         guard hitResult == .success, let hitElement = hitElementRaw else { return false }
+        guard Self.protectionAssessment(for: hitElement) == .unprotected else { return false }
         
         // 2. Identify the role
         var roleValue: AnyObject?
@@ -1190,8 +1388,6 @@ final class AccessibilityManager {
             kAXWindowRole,
             kAXApplicationRole
         ]
-
-        NSLog("[OpenFire-Debug] Double-click hit test detected role: \(role)")
 
         if Self.shouldTreatElementAsText(
             role: role,
@@ -1243,27 +1439,103 @@ final class AccessibilityManager {
         return unsafeBitCast(focusedElement, to: AXUIElement.self)
     }
 
-    private static func isProtectedTextElement(_ element: AXUIElement) -> Bool {
+    nonisolated static func areSameAccessibilityElement(
+        _ lhs: AXUIElement?,
+        _ rhs: AXUIElement?
+    ) -> Bool {
+        guard let lhs, let rhs else { return false }
+        return CFEqual(lhs, rhs)
+    }
+
+    nonisolated private static func directProtectionAssessment(
+        for element: AXUIElement
+    ) -> ProtectedTextAssessment {
         var subroleValue: AnyObject?
-        if AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleValue) == .success,
-           let subrole = subroleValue as? String,
-           protectedTextSubroles.contains(subrole) {
-            return true
+        let subroleResult = AXUIElementCopyAttributeValue(
+            element,
+            kAXSubroleAttribute as CFString,
+            &subroleValue
+        )
+        switch subroleResult {
+        case .success:
+            guard let subrole = subroleValue as? String else {
+                return .indeterminate
+            }
+            if protectedTextSubroles.contains(subrole) {
+                return .protectedContent
+            }
+        case .attributeUnsupported, .noValue:
+            break
+        default:
+            return .indeterminate
         }
 
         for attribute in protectedTextBooleanAttributes {
             var attributeValue: AnyObject?
-            if AXUIElementCopyAttributeValue(element, attribute as CFString, &attributeValue) == .success,
-               let isProtected = attributeValue as? Bool,
-               isProtected {
-                return true
+            let result = AXUIElementCopyAttributeValue(
+                element,
+                attribute as CFString,
+                &attributeValue
+            )
+            switch result {
+            case .success:
+                guard let isProtected = attributeValue as? Bool else {
+                    return .indeterminate
+                }
+                if isProtected {
+                    return .protectedContent
+                }
+            case .attributeUnsupported, .noValue:
+                continue
+            default:
+                return .indeterminate
             }
         }
 
-        return false
+        return .unprotected
     }
 
-    static func isProtectedTextElementDescriptor(subrole: String?, flags: [String: Bool]) -> Bool {
+    nonisolated private static func protectionAssessment(
+        for element: AXUIElement,
+        maxAncestorDepth: Int = 6
+    ) -> ProtectedTextAssessment {
+        let directAssessment = directProtectionAssessment(for: element)
+        guard directAssessment == .unprotected else { return directAssessment }
+
+        var currentElement = element
+        for _ in 0..<maxAncestorDepth {
+            var parentRaw: AnyObject?
+            let parentResult = AXUIElementCopyAttributeValue(
+                currentElement,
+                kAXParentAttribute as CFString,
+                &parentRaw
+            )
+            switch parentResult {
+            case .success:
+                guard let parentRaw,
+                      CFGetTypeID(parentRaw) == AXUIElementGetTypeID() else {
+                    return .indeterminate
+                }
+                let parent = unsafeBitCast(parentRaw, to: AXUIElement.self)
+                let parentAssessment = directProtectionAssessment(for: parent)
+                guard parentAssessment == .unprotected else {
+                    return parentAssessment
+                }
+                currentElement = parent
+            case .attributeUnsupported, .noValue:
+                return .unprotected
+            default:
+                return .indeterminate
+            }
+        }
+
+        return .unprotected
+    }
+
+    nonisolated static func isProtectedTextElementDescriptor(
+        subrole: String?,
+        flags: [String: Bool]
+    ) -> Bool {
         if let subrole, protectedTextSubroles.contains(subrole) {
             return true
         }
@@ -1271,11 +1543,25 @@ final class AccessibilityManager {
         return protectedTextBooleanAttributes.contains { flags[$0] == true }
     }
 
-    static func shouldSuppressSelectionPresentation(
+    nonisolated static func shouldSuppressSelectionPresentation(
         isProtectedElement: Bool,
         secureEventInputEnabled: Bool
     ) -> Bool {
         secureEventInputEnabled || isProtectedElement
+    }
+
+    nonisolated static func shouldSuppressSelectionPresentation(
+        elementAssessment: ProtectedTextAssessment,
+        ancestorAssessments: [ProtectedTextAssessment],
+        secureEventInputEnabled: Bool
+    ) -> Bool {
+        if secureEventInputEnabled {
+            return true
+        }
+
+        return ([elementAssessment] + ancestorAssessments).contains {
+            $0 != .unprotected
+        }
     }
 
     func focusedElementRoleDescription() -> String? {
@@ -1334,7 +1620,7 @@ final class AccessibilityManager {
         return roles
     }
 
-    static func shouldTreatElementAsText(
+    nonisolated static func shouldTreatElementAsText(
         role: String,
         ancestorRoles: [String],
         bundleID: String?,
@@ -1359,8 +1645,7 @@ final class AccessibilityManager {
         }
 
         if allowedRoles.contains(role) {
-            if let blockingAncestor = ancestorRoles.first(where: { forbiddenRoles.contains($0) || structuralAncestorRoles.contains($0) }) {
-                NSLog("[OpenFire-Debug] Blocking allowed role \(role) because an ancestor is \(blockingAncestor)")
+            if ancestorRoles.contains(where: { forbiddenRoles.contains($0) || structuralAncestorRoles.contains($0) }) {
                 return false
             }
             return true
@@ -1378,7 +1663,6 @@ final class AccessibilityManager {
            let bundleID,
            bundleID.lowercased().contains("jetbrains"),
            ancestorRoles.contains(where: structuralAncestorRoles.contains) {
-            NSLog("[OpenFire-Debug] Blocking AXGroup in JetBrains structural container: \(ancestorRoles)")
             return false
         }
 

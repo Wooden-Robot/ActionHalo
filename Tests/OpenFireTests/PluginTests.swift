@@ -203,26 +203,7 @@ final class PluginTests: XCTestCase {
         XCTAssertNotNil(plugin.executionTrustFingerprint)
     }
 
-    func testProtectedPluginWithoutReadablePackageFailsClosed() throws {
-        let json = """
-        {
-            "name": "Missing",
-            "identifier": "com.test.missing",
-            "action": { "type": "shell-script", "script": "script.sh" }
-        }
-        """.data(using: .utf8)!
-
-        let config = try JSONDecoder().decode(PluginConfig.self, from: json)
-        let missingURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString + ".openfireext")
-        let plugin = Plugin(config: config, directoryURL: missingURL)
-
-        XCTAssertTrue(plugin.requiresExecutionTrust)
-        XCTAssertNil(plugin.executionTrustFingerprint)
-        XCTAssertFalse(PluginManager.shared.isExecutionTrusted(for: plugin))
-    }
-
-    func testProtectedPluginRejectsOversizedPackage() throws {
+    func testPluginLoaderRejectsPackageAboveExecutionLimit() throws {
         let bundleURL = try makePluginBundle(
             identifier: "com.test.oversized",
             actionType: "shell-script",
@@ -235,10 +216,7 @@ final class PluginTests: XCTestCase {
         try handle.truncate(atOffset: UInt64(Plugin.maximumTrustedPackageBytes + 1))
         try handle.close()
 
-        let plugin = try XCTUnwrap(PluginLoader.load(from: bundleURL))
-
-        XCTAssertNil(plugin.executionTrustFingerprint)
-        XCTAssertFalse(plugin.canCreateProtectedExecutionSnapshot)
+        XCTAssertNil(PluginLoader.load(from: bundleURL))
     }
 
     func testPluginLoaderRejectsOversizedConfig() throws {
@@ -278,6 +256,46 @@ final class PluginTests: XCTestCase {
         )
 
         XCTAssertNil(PluginLoader.load(from: bundleURL))
+    }
+
+    func testPluginLoaderRejectsSymbolicLinkPackageRoot() throws {
+        let realBundleURL = try makePluginBundle(
+            identifier: "com.test.symlink-root",
+            actionJSON: #"{ "type": "copy" }"#
+        )
+        let symbolicLinkURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".openfireext")
+        temporaryDirectories.append(symbolicLinkURL)
+        try FileManager.default.createSymbolicLink(
+            at: symbolicLinkURL,
+            withDestinationURL: realBundleURL
+        )
+
+        XCTAssertNil(PluginLoader.load(from: symbolicLinkURL))
+    }
+
+    func testPluginLoaderRejectsUnsafeIdentifier() throws {
+        let bundleURL = try makePluginBundle(
+            identifier: "../../victim",
+            actionJSON: #"{ "type": "copy" }"#
+        )
+
+        XCTAssertNil(PluginLoader.load(from: bundleURL))
+    }
+
+    func testPluginLoaderOnlyAllowsReservedCoreIdentifierForBuiltInScan() throws {
+        let bundleURL = try makePluginBundle(
+            identifier: "com.openfire.copy",
+            actionJSON: #"{ "type": "copy" }"#
+        )
+
+        XCTAssertNil(PluginLoader.load(from: bundleURL))
+        XCTAssertNotNil(
+            PluginLoader.load(
+                from: bundleURL,
+                allowReservedCoreIdentifier: true
+            )
+        )
     }
 
     func testCoreDefaultKeyComboPluginDoesNotRequireExecutionTrust() throws {
@@ -439,9 +457,170 @@ final class PluginTests: XCTestCase {
         XCTAssertNotEqual(fingerprintA, fingerprintB)
     }
 
+    func testExecutionTrustFingerprintChangesWhenExecutableModeChanges() throws {
+        let bundleURL = try makePluginBundle(
+            identifier: "com.test.fingerprint-mode",
+            actionType: "shell-script",
+            scriptName: "script.sh",
+            scriptContent: "echo first"
+        )
+        let scriptURL = bundleURL.appendingPathComponent("script.sh")
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: scriptURL.path
+        )
+        let first = try XCTUnwrap(
+            PluginLoader.load(from: bundleURL)?.executionTrustFingerprint
+        )
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: scriptURL.path
+        )
+        let second = try XCTUnwrap(
+            PluginLoader.load(from: bundleURL)?.executionTrustFingerprint
+        )
+
+        XCTAssertNotEqual(first, second)
+    }
+
+    func testAmbiguousQuantifiersAreMatchedWithoutBacktracking() throws {
+        for pattern in ["(a+)+$", "(a|aa)+$", "(a|a?)+$"] {
+            let config = PluginConfig(
+                name: "Ambiguous Regex",
+                localizedNames: nil,
+                identifier: "com.test.ambiguous-regex",
+                action: PluginActionConfig(
+                    type: .copy,
+                    url: nil,
+                    script: nil,
+                    inline: nil,
+                    key: nil,
+                    modifiers: nil
+                ),
+                icon: nil,
+                description: nil,
+                localizedDescriptions: nil,
+                filter: PluginFilter(
+                    minLength: nil,
+                    maxLength: nil,
+                    regex: pattern,
+                    apps: nil,
+                    excludeApps: nil
+                ),
+                order: nil,
+                isDefaultDisabled: nil
+            )
+            let plugin = Plugin(
+                config: config,
+                directoryURL: URL(fileURLWithPath: "/")
+            )
+
+            XCTAssertTrue(
+                plugin.shouldShow(text: "aaaa", appBundleID: nil),
+                "Expected \(pattern) to preserve normal matching semantics"
+            )
+
+            let diagnostic = plugin.visibilityDiagnostic(
+                text: String(repeating: "a", count: 2_047) + "!",
+                appBundleID: nil
+            )
+            if pattern == "(a|a?)+$" {
+                // `a?` can match an empty branch, so an unanchored search
+                // correctly finds an empty match immediately before `$`.
+                XCTAssertFalse(
+                    diagnostic.reasons.contains(.regexNoMatch(pattern)),
+                    "Expected \(pattern) to finish safely and preserve its empty-match semantics"
+                )
+            } else {
+                XCTAssertTrue(
+                    diagnostic.reasons.contains(.regexNoMatch(pattern)),
+                    "Expected \(pattern) to finish safely with no match"
+                )
+            }
+            XCTAssertFalse(diagnostic.reasons.contains(.invalidRegex(pattern)))
+        }
+    }
+
+    func testPluginRejectsRegexFeaturesOutsideLinearSubset() {
+        for pattern in [#"(a)\1"#, #"a(?=b)"#, #"(?i)abc"#, #"a+?"#] {
+            let config = PluginConfig(
+                name: "Unsupported Regex",
+                localizedNames: nil,
+                identifier: "com.test.unsupported-regex",
+                action: PluginActionConfig(
+                    type: .copy,
+                    url: nil,
+                    script: nil,
+                    inline: nil,
+                    key: nil,
+                    modifiers: nil
+                ),
+                icon: nil,
+                description: nil,
+                localizedDescriptions: nil,
+                filter: PluginFilter(
+                    minLength: nil,
+                    maxLength: nil,
+                    regex: pattern,
+                    apps: nil,
+                    excludeApps: nil
+                ),
+                order: nil,
+                isDefaultDisabled: nil
+            )
+            let plugin = Plugin(
+                config: config,
+                directoryURL: URL(fileURLWithPath: "/")
+            )
+
+            let diagnostic = plugin.visibilityDiagnostic(text: "abc", appBundleID: nil)
+
+            XCTAssertTrue(diagnostic.reasons.contains(.invalidRegex(pattern)))
+        }
+    }
+
+    func testBuiltInPluginRegexesRemainCompatibleWithLinearMatcher() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let openURL = try XCTUnwrap(
+            PluginLoader.load(
+                from: repositoryRoot.appendingPathComponent("Plugins/OpenURL.openfireext"),
+                allowReservedCoreIdentifier: true
+            )
+        )
+        let revealPath = try XCTUnwrap(
+            PluginLoader.load(
+                from: repositoryRoot.appendingPathComponent("Plugins/RevealPath.openfireext"),
+                allowReservedCoreIdentifier: true
+            )
+        )
+
+        XCTAssertTrue(openURL.shouldShow(text: "https://openai.com/docs", appBundleID: nil))
+        XCTAssertTrue(openURL.shouldShow(text: "www.example.com", appBundleID: nil))
+        XCTAssertFalse(openURL.shouldShow(text: "plain text", appBundleID: nil))
+
+        XCTAssertTrue(revealPath.shouldShow(text: "  ~/Documents/file.txt  ", appBundleID: nil))
+        XCTAssertTrue(revealPath.shouldShow(text: "file:///tmp/example.txt", appBundleID: nil))
+        XCTAssertFalse(revealPath.shouldShow(text: "relative/path", appBundleID: nil))
+    }
+
     func testDeleteBuiltInPluginUsesDeleteKeyCombo() throws {
-        let pluginURL = URL(fileURLWithPath: "/Users/woodenrobot/code/github/OpenFire/Plugins/Delete.openfireext")
-        let plugin = try XCTUnwrap(PluginLoader.load(from: pluginURL))
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let pluginURL = repositoryRoot.appendingPathComponent(
+            "Plugins/Delete.openfireext"
+        )
+        let plugin = try XCTUnwrap(
+            PluginLoader.load(
+                from: pluginURL,
+                allowReservedCoreIdentifier: true
+            )
+        )
 
         XCTAssertEqual(plugin.id, "com.openfire.delete")
         XCTAssertEqual(plugin.config.action.type, .keyCombo)
@@ -470,5 +649,26 @@ final class PluginTests: XCTestCase {
         """
         try config.write(to: bundleURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
         return bundleURL
+    }
+}
+
+final class PluginTrustStateTests: GlobalStateTestCase {
+    func testProtectedPluginWithoutReadablePackageFailsClosed() throws {
+        let json = """
+        {
+            "name": "Missing",
+            "identifier": "com.test.missing",
+            "action": { "type": "shell-script", "script": "script.sh" }
+        }
+        """.data(using: .utf8)!
+
+        let config = try JSONDecoder().decode(PluginConfig.self, from: json)
+        let missingURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".openfireext")
+        let plugin = Plugin(config: config, directoryURL: missingURL)
+
+        XCTAssertTrue(plugin.requiresExecutionTrust)
+        XCTAssertNil(plugin.executionTrustFingerprint)
+        XCTAssertFalse(PluginManager.shared.isExecutionTrusted(for: plugin))
     }
 }

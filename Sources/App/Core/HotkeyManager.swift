@@ -4,9 +4,10 @@ import Carbon
 /// Manages the two global hotkeys:
 /// 1) open the radial menu for the current selection
 /// 2) toggle automatic text-selection triggering on/off
+@MainActor
 final class HotkeyManager {
-    private static let maximumVirtualKeyCode: UInt32 = 0x7E
-    private static let supportedModifierMask = UInt32(cmdKey | shiftKey | optionKey | controlKey)
+    nonisolated private static let maximumVirtualKeyCode: UInt32 = 0x7E
+    nonisolated private static let supportedModifierMask = UInt32(cmdKey | shiftKey | optionKey | controlKey)
 
     private enum Defaults {
         static let menuHotkeyConfiguredKey = "hotkeyConfigured"
@@ -81,11 +82,11 @@ final class HotkeyManager {
         loadHotkey()
     }
 
-    static func hasRequiredGlobalHotkeyModifier(_ modifiers: UInt32) -> Bool {
+    nonisolated static func hasRequiredGlobalHotkeyModifier(_ modifiers: UInt32) -> Bool {
         modifiers & UInt32(cmdKey | optionKey | controlKey) != 0
     }
 
-    static func validatedStoredHotkey(
+    nonisolated static func validatedStoredHotkey(
         keyCode: Int?,
         modifiers: Int?
     ) -> (keyCode: UInt32, modifiers: UInt32)? {
@@ -106,7 +107,7 @@ final class HotkeyManager {
         return (UInt32(keyCode), validatedModifiers)
     }
 
-    private static func validatedHotkey(
+    nonisolated private static func validatedHotkey(
         _ hotkey: (keyCode: UInt32, modifiers: UInt32)?
     ) -> (keyCode: UInt32, modifiers: UInt32)? {
         guard let hotkey,
@@ -169,10 +170,13 @@ final class HotkeyManager {
             )
             
             if status == noErr {
-                if hotkeyID.id == 1 {
-                    HotkeyManager.shared.onHotkeyPressed?()
-                } else if hotkeyID.id == 2 {
-                    HotkeyManager.shared.onToggleHotkeyPressed?()
+                let identifier = hotkeyID.id
+                DispatchQueue.main.async {
+                    if identifier == 1 {
+                        HotkeyManager.shared.onHotkeyPressed?()
+                    } else if identifier == 2 {
+                        HotkeyManager.shared.onToggleHotkeyPressed?()
+                    }
                 }
             }
             return noErr

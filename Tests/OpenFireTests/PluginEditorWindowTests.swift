@@ -172,6 +172,115 @@ final class PluginEditorWindowTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: iconURL), Data([1, 2, 3]))
     }
 
+    func testMergedConfigPreservesUnknownFieldsLocalesAndActionMetadata() throws {
+        let existing: [String: Any] = [
+            "name": "Old",
+            "identifier": "com.test.preserve",
+            "author": "Original Author",
+            "version": "2.0",
+            "customMetadata": ["channel": "stable"],
+            "localizedNames": ["en": "Old English", "zh-Hans": "保留名称"],
+            "localizedDescriptions": ["en": "Old Description", "zh-Hans": "保留描述"],
+            "action": [
+                "type": "shell-script",
+                "script": "old.sh",
+                "customActionMetadata": "keep",
+            ],
+        ]
+
+        let merged = PluginEditorWindow.mergedConfigDictionary(
+            preserving: existing,
+            name: "New",
+            englishName: "New English",
+            description: "New Description",
+            englishDescription: "New English Description",
+            identifier: "com.test.preserve",
+            icon: "star",
+            actionUpdates: [
+                "type": "url",
+                "url": "https://example.com?q={text}",
+            ]
+        )
+        let localizedNames = try XCTUnwrap(
+            merged["localizedNames"] as? [String: String]
+        )
+        let localizedDescriptions = try XCTUnwrap(
+            merged["localizedDescriptions"] as? [String: String]
+        )
+        let action = try XCTUnwrap(merged["action"] as? [String: Any])
+
+        XCTAssertEqual(merged["author"] as? String, "Original Author")
+        XCTAssertEqual(merged["version"] as? String, "2.0")
+        XCTAssertEqual(
+            (merged["customMetadata"] as? [String: String])?["channel"],
+            "stable"
+        )
+        XCTAssertEqual(localizedNames["zh-Hans"], "保留名称")
+        XCTAssertEqual(localizedNames["en"], "New English")
+        XCTAssertEqual(localizedDescriptions["zh-Hans"], "保留描述")
+        XCTAssertEqual(localizedDescriptions["en"], "New English Description")
+        XCTAssertEqual(action["customActionMetadata"] as? String, "keep")
+        XCTAssertEqual(action["type"] as? String, "url")
+        XCTAssertEqual(action["url"] as? String, "https://example.com?q={text}")
+        XCTAssertNil(action["script"])
+    }
+
+    func testWritePluginPackageAtomicallyRejectsSymbolicLinkTemplate() throws {
+        let realTemplateURL = try makePluginPackage(
+            config: #"{"name":"Real","identifier":"com.test.real","action":{"type":"copy"}}"#
+        )
+        let symbolicLinkURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".openfireext")
+        temporaryDirectories.append(symbolicLinkURL)
+        try FileManager.default.createSymbolicLink(
+            at: symbolicLinkURL,
+            withDestinationURL: realTemplateURL
+        )
+        let destinationParent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(destinationParent)
+        let destinationURL = destinationParent.appendingPathComponent(
+            "com.test.saved.openfireext"
+        )
+
+        XCTAssertThrowsError(
+            try PluginEditorWindow.writePluginPackageAtomically(
+                bundleURL: destinationURL,
+                templateURL: symbolicLinkURL,
+                configData: Data(
+                    #"{"name":"Saved","identifier":"com.test.saved","action":{"type":"copy"}}"#.utf8
+                ),
+                scriptFileName: nil,
+                scriptContent: nil,
+                customIconSourceURL: nil,
+                shouldKeepCustomIcon: false
+            )
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
+    }
+
+    func testWritePluginPackageAtomicallyRejectsInvalidFinalConfiguration() throws {
+        let bundleURL = try makePluginPackage(
+            config: #"{"name":"Old","identifier":"com.test.valid","action":{"type":"copy"}}"#
+        )
+
+        XCTAssertThrowsError(
+            try PluginEditorWindow.writePluginPackageAtomically(
+                bundleURL: bundleURL,
+                templateURL: bundleURL,
+                configData: Data(
+                    #"{"name":"Unsafe","identifier":"../outside","action":{"type":"copy"}}"#.utf8
+                ),
+                scriptFileName: nil,
+                scriptContent: nil,
+                customIconSourceURL: nil,
+                shouldKeepCustomIcon: false
+            )
+        )
+
+        XCTAssertEqual(PluginLoader.load(from: bundleURL)?.id, "com.test.valid")
+    }
+
     private func makePluginPackage(config: String) throws -> URL {
         let bundleURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".openfireext")
         temporaryDirectories.append(bundleURL)

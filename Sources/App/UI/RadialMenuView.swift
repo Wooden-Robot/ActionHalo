@@ -53,6 +53,8 @@ final class RadialMenuView: NSView {
     var onItemSelected: ((RadialMenuItem) -> Void)?
     
     private var hoveredIndex: Int = -1
+    private var acceptsInteraction = true
+    private let actionGate = SingleFireActionGate()
     private var sectorLayers: [CAShapeLayer] = []
     private var glowLayers: [CAShapeLayer] = []
     private var iconLayers: [CALayer] = []
@@ -205,6 +207,16 @@ final class RadialMenuView: NSView {
         )
         addTrackingArea(area)
         trackingArea = area
+    }
+
+    func beginInteractionSession() {
+        acceptsInteraction = true
+        actionGate.reset()
+    }
+
+    func endInteractionSession() {
+        acceptsInteraction = false
+        _ = actionGate.consume()
     }
     
     override func updateTrackingAreas() {
@@ -609,6 +621,7 @@ final class RadialMenuView: NSView {
     // MARK: - Mouse Handling
     
     override func mouseMoved(with event: NSEvent) {
+        guard acceptsInteraction else { return }
         let point = convert(event.locationInWindow, from: nil)
         let newIndex = hitTestSector(at: point)
         
@@ -632,6 +645,7 @@ final class RadialMenuView: NSView {
     }
     
     override func mouseExited(with event: NSEvent) {
+        guard acceptsInteraction else { return }
         // Clear all hover effects when mouse leaves the view
         if hoveredIndex >= 0 && hoveredIndex < sectorLayers.count {
             unhoverSector(at: hoveredIndex)
@@ -644,6 +658,7 @@ final class RadialMenuView: NSView {
     override var acceptsFirstResponder: Bool { true }
     
     override func mouseDown(with event: NSEvent) {
+        guard acceptsInteraction else { return }
         // Catch to ensure we receive mouseUp/mouseDragged
         let point = convert(event.locationInWindow, from: nil)
         let index = hitTestSector(at: point)
@@ -659,6 +674,7 @@ final class RadialMenuView: NSView {
     }
     
     override func mouseDragged(with event: NSEvent) {
+        guard acceptsInteraction else { return }
         let point = convert(event.locationInWindow, from: nil)
         let index = hitTestSector(at: point)
         if index != hoveredIndex {
@@ -673,8 +689,8 @@ final class RadialMenuView: NSView {
     }
     
     override func mouseUp(with event: NSEvent) {
+        guard acceptsInteraction else { return }
         let point = convert(event.locationInWindow, from: nil)
-        let eventSummary = "eventNumber=\(event.eventNumber) clickCount=\(event.clickCount) timestamp=\(String(format: "%.6f", event.timestamp))"
         
         let dx = point.x - trackingCenter.x
         let dy = point.y - trackingCenter.y
@@ -684,6 +700,8 @@ final class RadialMenuView: NSView {
         
         // If they click far away, dismiss
         if distanceSquared > dismissRadius * dismissRadius {
+            guard actionGate.consume() else { return }
+            acceptsInteraction = false
             onDismissRequested?()
             return
         }
@@ -692,6 +710,8 @@ final class RadialMenuView: NSView {
         // Set to 10 points so a standard stationary click can still act as a cancel 
         // without ruining the swiping feel.
         if distanceSquared < deadzoneSquared {
+            guard actionGate.consume() else { return }
+            acceptsInteraction = false
             onDismissRequested?()
             return
         }
@@ -700,17 +720,12 @@ final class RadialMenuView: NSView {
         
         if index >= 0 && index < menuItems.count {
             let item = menuItems[index]
-            NSLog("[OpenFire-Debug] RadialMenuView.mouseUp selected index=%d title=%@ %@",
-                  index,
-                  item.title,
-                  eventSummary)
+            guard item.isExecutable else { return }
+            guard actionGate.consume() else { return }
+            acceptsInteraction = false
             // Flash feedback and trigger immediately on mouse release
             flashSector(at: index) { [weak self] in
-                guard let self else { return }
-                NSLog("[OpenFire-Debug] RadialMenuView.onItemSelected dispatch title=%@ %@",
-                      item.title,
-                      eventSummary)
-                self.onItemSelected?(self.menuItems[index])
+                self?.onItemSelected?(item)
             }
         }
     }

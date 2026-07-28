@@ -2,11 +2,12 @@ import XCTest
 @testable import OpenFire
 
 final class AppExclusionStoreTests: XCTestCase {
-    private let suiteName = "OpenFire.AppExclusionStoreTests"
+    private var suiteName = ""
     private var defaults: UserDefaults!
 
     override func setUp() {
         super.setUp()
+        suiteName = "OpenFire.AppExclusionStoreTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
         defaults.removePersistentDomain(forName: suiteName)
     }

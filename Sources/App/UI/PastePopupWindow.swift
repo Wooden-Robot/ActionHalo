@@ -11,6 +11,9 @@ final class PastePopupWindow: NSPanel {
     private var pasteButton: CapsuleActionButton!
     private var clearButton: CapsuleActionButton!
     private let container = NSView()
+    private let actionGate = SingleFireActionGate()
+    private var presentationGeneration: UInt64 = 0
+    private var isDismissing = false
     
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(
@@ -108,35 +111,63 @@ final class PastePopupWindow: NSPanel {
     }
     
     @objc private func pasteAction() {
+        guard actionGate.consume() else { return }
+        disableInput()
         onPasteClicked?()
     }
     
     @objc private func clearAction() {
+        guard actionGate.consume() else { return }
+        disableInput()
         onClearClicked?()
     }
     
     func show(at screenPoint: NSPoint) {
+        presentationGeneration &+= 1
+        isDismissing = false
+        actionGate.reset()
+        ignoresMouseEvents = false
+        pasteButton.isEnabled = true
+        clearButton.isEnabled = true
+
         // Position slightly above the cursor
         let adjustedPoint = NSPoint(x: screenPoint.x - (popupWidth / 2), y: screenPoint.y + 15)
         setFrameOrigin(adjustedPoint)
-        
-        NSLog("[OpenFire-Debug] PastePopupWindow.show at: \(adjustedPoint)")
-        
+
         self.alphaValue = 1.0
         self.makeKeyAndOrderFront(nil)
-        
-        NSLog("[OpenFire-Debug] PastePopupWindow forced show, isVisible=\(self.isVisible)")
     }
     
-    func hidePopup(completion: (() -> Void)? = nil) {
+    func hidePopup(completion: (@MainActor @Sendable () -> Void)? = nil) {
+        guard !isDismissing else { return }
+        isDismissing = true
+        disableInput()
+        let hidingGeneration = presentationGeneration
+
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.15
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             self.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
-            self?.orderOut(nil)
-            completion?()
+            Task { @MainActor in
+                guard let self else {
+                    completion?()
+                    return
+                }
+                guard self.presentationGeneration == hidingGeneration else {
+                    completion?()
+                    return
+                }
+                self.orderOut(nil)
+                completion?()
+            }
         })
+    }
+
+    private func disableInput() {
+        ignoresMouseEvents = true
+        pasteButton.isEnabled = false
+        clearButton.isEnabled = false
     }
     
     override var canBecomeKey: Bool { false }

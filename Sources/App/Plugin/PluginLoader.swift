@@ -5,7 +5,19 @@ final class PluginLoader {
     static let maximumConfigBytes = 1 * 1024 * 1024
     
     /// Load a plugin from a .openfireext directory
-    static func load(from directoryURL: URL) -> Plugin? {
+    static func load(
+        from directoryURL: URL,
+        allowReservedCoreIdentifier: Bool = false
+    ) -> Plugin? {
+        let rootKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+        guard let rootValues = try? directoryURL.resourceValues(forKeys: rootKeys),
+              rootValues.isDirectory == true,
+              rootValues.isSymbolicLink != true,
+              PluginManager.isInstallPackageWithinLimits(directoryURL) else {
+            NSLog("[OpenFire] Plugin package root is unsafe or exceeds limits: \(directoryURL.path)")
+            return nil
+        }
+
         let configURL = directoryURL.appendingPathComponent("Config.json")
 
         let resourceKeys: Set<URLResourceKey> = [
@@ -28,9 +40,21 @@ final class PluginLoader {
             let config = try decoder.decode(PluginConfig.self, from: data)
             
             // Validate required fields
-            guard !config.name.isEmpty, !config.identifier.isEmpty else {
+            guard !config.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  PluginManager.pluginIdentifierValidationMessage(
+                    config.identifier,
+                    allowReservedCoreIdentifier: allowReservedCoreIdentifier
+                  ) == nil else {
                 NSLog("[OpenFire] Plugin config missing required fields: \(directoryURL.lastPathComponent)")
                 return nil
+            }
+
+            if config.action.type == .url {
+                guard let template = config.action.url,
+                      PluginManager.isAllowedPluginURLTemplate(template) else {
+                    NSLog("[OpenFire] Plugin uses an unsupported or invalid URL: \(directoryURL.lastPathComponent)")
+                    return nil
+                }
             }
             
             let plugin = Plugin(config: config, directoryURL: directoryURL)
@@ -44,7 +68,10 @@ final class PluginLoader {
     }
     
     /// Scan a directory for .openfireext packages
-    static func scanDirectory(_ directoryURL: URL) -> [Plugin] {
+    static func scanDirectory(
+        _ directoryURL: URL,
+        allowReservedCoreIdentifiers: Bool = false
+    ) -> [Plugin] {
         let fileManager = FileManager.default
         
         guard fileManager.fileExists(atPath: directoryURL.path) else {
@@ -78,7 +105,10 @@ final class PluginLoader {
             
             for itemURL in sortedContents {
                 if itemURL.pathExtension == "openfireext" {
-                    if let plugin = load(from: itemURL) {
+                    if let plugin = load(
+                        from: itemURL,
+                        allowReservedCoreIdentifier: allowReservedCoreIdentifiers
+                    ) {
                         plugins.append(plugin)
                     }
                 }

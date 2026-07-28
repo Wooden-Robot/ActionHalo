@@ -1,10 +1,16 @@
 import XCTest
 @testable import OpenFire
 
-final class UpdateCheckerTests: XCTestCase {
+final class UpdateCheckerTests: GlobalStateTestCase {
+    override func setUp() {
+        super.setUp()
+        isolateStandardUserDefaults(
+            keys: [UpdateChecker.autoCheckEnabledKey, "LastNotifiedVersion"]
+        )
+    }
+
     override func tearDown() {
         UpdateChecker.shared.finishUpdateCheck()
-        UpdateChecker.shared.setLastNotifiedVersion(nil)
         super.tearDown()
     }
 
@@ -91,5 +97,23 @@ final class UpdateCheckerTests: XCTestCase {
 
         checker.setLastNotifiedVersion(nil)
         XCTAssertNil(checker.lastNotifiedVersion())
+    }
+
+    func testValidatedDownloadURLAllowsOnlyHTTPSGitHubHosts() {
+        let checker = UpdateChecker.shared
+
+        XCTAssertEqual(
+            checker.validatedDownloadURL("https://github.com/Wooden-Robot/OpenFire/releases/tag/v1.0.0")?.host,
+            "github.com"
+        )
+        XCTAssertEqual(
+            checker.validatedDownloadURL("https://objects.githubusercontent.com/github-production-release-asset/example")?.host,
+            "objects.githubusercontent.com"
+        )
+        XCTAssertNil(checker.validatedDownloadURL("http://github.com/Wooden-Robot/OpenFire/releases/tag/v1.0.0"))
+        XCTAssertNil(checker.validatedDownloadURL("https://github.com.evil.example/OpenFire.dmg"))
+        XCTAssertNil(checker.validatedDownloadURL("https://example.com/OpenFire.dmg"))
+        XCTAssertNil(checker.validatedDownloadURL("https://user:password@github.com/OpenFire.dmg"))
+        XCTAssertNil(checker.validatedDownloadURL("https://github.com:8443/OpenFire.dmg"))
     }
 }

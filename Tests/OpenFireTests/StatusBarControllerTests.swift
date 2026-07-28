@@ -1,6 +1,7 @@
 import XCTest
 @testable import OpenFire
 
+@MainActor
 final class StatusBarControllerTests: XCTestCase {
     func testLaunchAgentPlistUsesBundleIdentifierInsteadOfBundlePath() {
         let plist = StatusBarController.launchAgentPlist(bundleIdentifier: "com.openfire.app")
@@ -16,5 +17,28 @@ final class StatusBarControllerTests: XCTestCase {
 
         XCTAssertEqual(args, ["/Applications/OpenFire Beta.app"])
         XCTAssertFalse(args[0].contains("%20"))
+    }
+
+    func testClosedAttachedMenuIsDetachedEvenAfterMainMenuWasRebuilt() {
+        let attachedMenu = NSMenu()
+        let rebuiltMenu = NSMenu()
+
+        XCTAssertTrue(
+            StatusBarController.shouldDetachStatusMenu(
+                attachedMenu: attachedMenu,
+                closedMenu: attachedMenu
+            )
+        )
+        XCTAssertFalse(
+            StatusBarController.shouldDetachStatusMenu(
+                attachedMenu: rebuiltMenu,
+                closedMenu: attachedMenu
+            )
+        )
+    }
+
+    func testBaseStatusIconTracksEnabledState() {
+        XCTAssertEqual(StatusBarController.baseStatusIconSymbolName(isEnabled: true), "flame.fill")
+        XCTAssertEqual(StatusBarController.baseStatusIconSymbolName(isEnabled: false), "flame")
     }
 }

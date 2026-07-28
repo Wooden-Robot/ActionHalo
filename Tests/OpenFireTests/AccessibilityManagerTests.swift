@@ -2,6 +2,7 @@ import XCTest
 @testable import OpenFire
 
 final class AccessibilityManagerTests: XCTestCase {
+    @MainActor
     func testAccessibilityScreenPointUsesPrimaryGlobalCoordinates() throws {
         guard let primaryScreen = NSScreen.screens.first else {
             throw XCTSkip("No main screen available")
@@ -41,6 +42,7 @@ final class AccessibilityManagerTests: XCTestCase {
         XCTAssertEqual(converted?.y ?? .zero, -100, accuracy: 0.001)
     }
 
+    @MainActor
     func testAccessibilityAndCoreGraphicsConversionsUseSameGlobalSpace() {
         let screens = [
             NSRect(x: 0, y: 0, width: 1440, height: 900),
@@ -239,49 +241,66 @@ final class AccessibilityManagerTests: XCTestCase {
         XCTAssertFalse(result)
     }
 
-    func testShouldRestorePasteboardSnapshotOnlyAfterFreshCopiedTextArrives() {
+    func testShouldRestorePasteboardSnapshotAfterAnyCopyMutation() {
         XCTAssertTrue(AccessibilityManager.shouldRestorePasteboardSnapshot(
-            initialChangeCount: 10,
-            observedChangeCount: 11,
-            copiedText: "copied"
+            initialState: .init(changeCount: 10, string: "before"),
+            observedState: .init(changeCount: 11, string: "copied"),
+            currentState: .init(changeCount: 11, string: "copied")
         ))
-        XCTAssertFalse(AccessibilityManager.shouldRestorePasteboardSnapshot(
-            initialChangeCount: 10,
-            observedChangeCount: 10,
-            copiedText: "copied"
+        XCTAssertTrue(AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialState: .init(changeCount: 10, string: "before"),
+            observedState: .init(changeCount: 11, string: nil),
+            currentState: .init(changeCount: 11, string: nil)
         ))
-        XCTAssertFalse(AccessibilityManager.shouldRestorePasteboardSnapshot(
-            initialChangeCount: 10,
-            observedChangeCount: 11,
-            copiedText: "   \n"
+        XCTAssertTrue(AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialState: .init(changeCount: 10, string: "before"),
+            observedState: .init(changeCount: 11, string: "   \n"),
+            currentState: .init(changeCount: 11, string: "   \n")
         ))
     }
 
-    func testShouldRestorePasteboardSnapshotRequiresClipboardToStillContainObservedCopy() {
-        XCTAssertTrue(AccessibilityManager.shouldRestorePasteboardSnapshot(
-            initialChangeCount: 10,
-            observedChangeCount: 11,
-            copiedText: "copied",
-            initialString: "before",
-            currentChangeCount: 11,
-            currentString: "copied"
+    func testShouldRestorePasteboardSnapshotDoesNotOverwriteLaterClipboardUpdate() {
+        XCTAssertFalse(AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialState: .init(changeCount: 10, string: "before"),
+            observedState: .init(changeCount: 11, string: nil),
+            currentState: .init(changeCount: 12, string: "other app update")
         ))
         XCTAssertFalse(AccessibilityManager.shouldRestorePasteboardSnapshot(
-            initialChangeCount: 10,
-            observedChangeCount: 11,
-            copiedText: "copied",
-            initialString: "before",
-            currentChangeCount: 12,
-            currentString: "other app update"
+            initialState: .init(changeCount: 10, string: "before"),
+            observedState: .init(changeCount: 11, string: "copied"),
+            currentState: .init(changeCount: 11, string: "different text")
         ))
         XCTAssertFalse(AccessibilityManager.shouldRestorePasteboardSnapshot(
-            initialChangeCount: 10,
-            observedChangeCount: 11,
-            copiedText: "copied",
-            initialString: "before",
-            currentChangeCount: 11,
-            currentString: "different text"
+            initialState: .init(changeCount: 10, string: "before"),
+            observedState: .init(changeCount: 10, string: "before"),
+            currentState: .init(changeCount: 10, string: "before")
         ))
+    }
+
+    func testStablePasteboardStateRetriesWhenClipboardChangesDuringRead() {
+        var counts = [10, 11, 11, 11]
+        var strings = ["stale", "copied"]
+
+        let state = AccessibilityManager.stablePasteboardState(
+            maximumAttempts: 2,
+            readChangeCount: { counts.removeFirst() },
+            readString: { strings.removeFirst() }
+        )
+
+        XCTAssertEqual(state, .init(changeCount: 11, string: "copied"))
+    }
+
+    func testStablePasteboardStateReturnsNilWhenEveryReadRaces() {
+        var counts = [10, 11, 11, 12]
+        var strings = ["stale", "also stale"]
+
+        let state = AccessibilityManager.stablePasteboardState(
+            maximumAttempts: 2,
+            readChangeCount: { counts.removeFirst() },
+            readString: { strings.removeFirst() }
+        )
+
+        XCTAssertNil(state)
     }
 
     func testShouldTreatCopiedTextAsFreshWhenStringChangesWithoutChangeCount() {
@@ -426,6 +445,24 @@ final class AccessibilityManagerTests: XCTestCase {
         ))
     }
 
+    func testIndeterminateOrAncestorProtectedAccessibilityStateSuppressesSelection() {
+        XCTAssertTrue(AccessibilityManager.shouldSuppressSelectionPresentation(
+            elementAssessment: .indeterminate,
+            ancestorAssessments: [],
+            secureEventInputEnabled: false
+        ))
+        XCTAssertTrue(AccessibilityManager.shouldSuppressSelectionPresentation(
+            elementAssessment: .unprotected,
+            ancestorAssessments: [.protectedContent],
+            secureEventInputEnabled: false
+        ))
+        XCTAssertFalse(AccessibilityManager.shouldSuppressSelectionPresentation(
+            elementAssessment: .unprotected,
+            ancestorAssessments: [.unprotected],
+            secureEventInputEnabled: false
+        ))
+    }
+
     func testPasteboardSnapshotRejectsDataBeyondConfiguredLimitWithoutMutation() {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("OpenFireTests-\(UUID().uuidString)"))
         pasteboard.clearContents()
@@ -466,7 +503,7 @@ final class AccessibilityManagerTests: XCTestCase {
         XCTAssertNil(snapshot?.temporaryDirectoryURL)
     }
 
-    func testPasteboardSnapshotSpillsLargePayloadAndRestoresItLazily() throws {
+    func testPasteboardSnapshotSpillsLargePayloadAndRestoresIt() throws {
         let source = NSPasteboard(name: NSPasteboard.Name("OpenFireTests-Source-\(UUID().uuidString)"))
         source.clearContents()
         let item = NSPasteboardItem()
@@ -495,8 +532,45 @@ final class AccessibilityManagerTests: XCTestCase {
             )
         )
 
+        snapshot?.discardTemporaryFiles()
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: temporaryDirectoryURL.path),
+            "The spill must stay available while the pasteboard owns its lazy data provider"
+        )
         snapshot = nil
         XCTAssertEqual(destination.data(forType: type), payload)
+    }
+
+    func testRestoreDoesNotRequireSnapshottingOversizedTemporaryClipboard() throws {
+        let source = NSPasteboard(name: NSPasteboard.Name("OpenFireTests-Source-\(UUID().uuidString)"))
+        source.clearContents()
+        let sourceItem = NSPasteboardItem()
+        sourceItem.setString("original clipboard", forType: .string)
+        XCTAssertTrue(source.writeObjects([sourceItem]))
+        let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(
+            from: source,
+            maxBytes: 64,
+            maxItems: 4,
+            maxTypes: 4
+        ))
+
+        let destination = NSPasteboard(
+            name: NSPasteboard.Name("OpenFireTests-Destination-\(UUID().uuidString)")
+        )
+        destination.clearContents()
+        let copiedItem = NSPasteboardItem()
+        let copiedType = NSPasteboard.PasteboardType("com.openfire.tests.oversized-copy")
+        copiedItem.setData(Data(repeating: 0x5A, count: 16), forType: copiedType)
+        XCTAssertTrue(destination.writeObjects([copiedItem]))
+
+        XCTAssertTrue(
+            AccessibilityManager.restorePasteboardSnapshot(
+                snapshot,
+                to: destination,
+                rollbackMaxBytes: 8
+            )
+        )
+        XCTAssertEqual(destination.string(forType: .string), "original clipboard")
     }
 
     func testDiscardingPasteboardSnapshotRemovesTemporaryFiles() throws {
@@ -519,5 +593,33 @@ final class AccessibilityManagerTests: XCTestCase {
         snapshot.discardTemporaryFiles()
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: temporaryDirectoryURL.path))
+    }
+
+    func testRestorePreflightsSpilledSnapshotBeforeClearingDestination() throws {
+        let source = NSPasteboard(name: NSPasteboard.Name("OpenFireTests-Source-\(UUID().uuidString)"))
+        source.clearContents()
+        let sourceItem = NSPasteboardItem()
+        let spilledType = NSPasteboard.PasteboardType("com.openfire.tests.missing-spill")
+        sourceItem.setData(Data(repeating: 0x41, count: 32), forType: spilledType)
+        XCTAssertTrue(source.writeObjects([sourceItem]))
+
+        let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(
+            from: source,
+            maxBytes: 64,
+            maxItems: 4,
+            maxTypes: 4,
+            maxInMemoryBytes: 0
+        ))
+        let temporaryDirectoryURL = try XCTUnwrap(snapshot.temporaryDirectoryURL)
+        try FileManager.default.removeItem(at: temporaryDirectoryURL)
+
+        let destination = NSPasteboard(name: NSPasteboard.Name("OpenFireTests-Destination-\(UUID().uuidString)"))
+        destination.clearContents()
+        let destinationItem = NSPasteboardItem()
+        destinationItem.setString("do not clear", forType: .string)
+        XCTAssertTrue(destination.writeObjects([destinationItem]))
+
+        XCTAssertFalse(AccessibilityManager.restorePasteboardSnapshot(snapshot, to: destination))
+        XCTAssertEqual(destination.string(forType: .string), "do not clear")
     }
 }

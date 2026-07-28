@@ -19,6 +19,9 @@ final class RadialMenuWindow: NSPanel {
     private var currentSelectedText: String = ""
     private var currentScreenPoint: NSPoint = .zero
     private var lastScreenFrame: NSRect = .zero
+    private var presentationGeneration: UInt64 = 0
+    private var isDismissing = false
+    private var dismissalRequested = false
     private let dismissDeadzoneRadius: CGFloat = 16
     private let outsideDismissPadding: CGFloat = 90
     private let compactWindowPadding: CGFloat = 28
@@ -80,10 +83,14 @@ final class RadialMenuWindow: NSPanel {
             case .pageNext:
                 self.currentPage += 1
                 self.renderCurrentPage(allowCursorWarp: false)
+                self.radialMenuView.beginInteractionSession()
             case .pagePrev:
                 self.currentPage -= 1
                 self.renderCurrentPage(allowCursorWarp: false)
+                self.radialMenuView.beginInteractionSession()
             default:
+                self.dismissalRequested = true
+                self.disableInput()
                 self.onItemSelected?(item)
             }
         }
@@ -98,6 +105,11 @@ final class RadialMenuWindow: NSPanel {
     // MARK: - Show / Hide
     
     func showMenu(at screenPoint: NSPoint, items: [RadialMenuItem], selectedText: String) {
+        presentationGeneration &+= 1
+        isDismissing = false
+        dismissalRequested = false
+        ignoresMouseEvents = false
+        radialMenuView.beginInteractionSession()
         self.allItems = items
         self.currentSelectedText = selectedText
         self.currentScreenPoint = screenPoint
@@ -140,7 +152,9 @@ final class RadialMenuWindow: NSPanel {
                     context.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 0.84, 0.24, 1.0)
                     self.visualEffectView.animator().alphaValue = self.radialMenuView.windowBaseAlpha
                 }, completionHandler: {
-                    self.suppressVisualEffectImmediateAlphaUpdate = false
+                    Task { @MainActor [weak self] in
+                        self?.suppressVisualEffectImmediateAlphaUpdate = false
+                    }
                 })
             }
         }
@@ -305,7 +319,12 @@ final class RadialMenuWindow: NSPanel {
         radialMenuView.buildMenu()
     }
     
-    func hideMenu(completion: (() -> Void)? = nil) {
+    func hideMenu(completion: (@MainActor @Sendable () -> Void)? = nil) {
+        guard !isDismissing else { return }
+        isDismissing = true
+        disableInput()
+        let hidingGeneration = presentationGeneration
+
         if radialMenuView.isGTAModeEnabled {
             suppressVisualEffectImmediateAlphaUpdate = false
             vignetteLayer.removeAllAnimations()
@@ -326,12 +345,20 @@ final class RadialMenuWindow: NSPanel {
                 context.timingFunction = CAMediaTimingFunction(name: .easeIn)
                 self.animator().alphaValue = 0
             }, completionHandler: { [weak self] in
-                self?.tearDownDismissMonitors()
-                self?.orderOut(nil)
-                completion?()
+                Task { @MainActor in
+                    guard let self else {
+                        completion?()
+                        return
+                    }
+                    guard self.presentationGeneration == hidingGeneration else {
+                        completion?()
+                        return
+                    }
+                    self.orderOut(nil)
+                    completion?()
+                }
             })
         } else {
-            tearDownDismissMonitors()
             orderOut(nil)
             completion?()
         }
@@ -342,11 +369,20 @@ final class RadialMenuWindow: NSPanel {
     }
 
     func requestDismissal() {
+        guard !dismissalRequested else { return }
+        dismissalRequested = true
+        disableInput()
         if let onDismissRequested {
             onDismissRequested()
         } else {
             hideMenu()
         }
+    }
+
+    private func disableInput() {
+        ignoresMouseEvents = true
+        radialMenuView.endInteractionSession()
+        tearDownDismissMonitors()
     }
 
     // MARK: - Screen positioning
@@ -360,11 +396,13 @@ final class RadialMenuWindow: NSPanel {
     
     internal func setupDismissMonitors() {
         tearDownDismissMonitors()
+        let monitorGeneration = presentationGeneration
         
         // Global monitor for clicks outside our app or scrolling
-        dismissMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .scrollWheel]) { [weak self] event in
+        dismissMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .scrollWheel]) { [weak self] _ in
             DispatchQueue.main.async {
-                self?.requestDismissal()
+                guard let self, self.presentationGeneration == monitorGeneration else { return }
+                self.requestDismissal()
             }
         }
         
@@ -372,7 +410,8 @@ final class RadialMenuWindow: NSPanel {
         localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 /* Esc */ {
                 DispatchQueue.main.async {
-                    self?.requestDismissal()
+                    guard let self, self.presentationGeneration == monitorGeneration else { return }
+                    self.requestDismissal()
                 }
                 return nil // Consume Esc
             }
@@ -406,7 +445,7 @@ final class RadialMenuWindow: NSPanel {
         // Click far away from tracking center -> dismiss
         // Also click in the absolute deadzone -> dismiss (matching the 10-point view deadzone)
         if distanceSquared > dismissRadius * dismissRadius || distanceSquared < deadzoneSquared {
-            hideMenu()
+            requestDismissal()
         }
     }
     

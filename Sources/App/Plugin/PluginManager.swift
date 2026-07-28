@@ -1,34 +1,84 @@
 import Cocoa
 import JavaScriptCore
+import os
+
+/// Bounded stderr storage shared by `FileHandle`'s callback and the process
+/// waiter. The callback can run on an arbitrary queue, so both fields are
+/// guarded by one lock and are never captured as unsynchronized local vars.
+private final class PluginProcessStderrAccumulator: Sendable {
+    private struct State: Sendable {
+        var data = Data()
+        var isTruncated = false
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    func append(_ chunk: Data) {
+        state.withLock {
+            $0.isTruncated =
+                PluginManager.appendPluginProcessStderrChunk(chunk, to: &$0.data) ||
+                $0.isTruncated
+        }
+    }
+
+    func snapshot() -> (data: Data, isTruncated: Bool) {
+        state.withLock { ($0.data, $0.isTruncated) }
+    }
+}
 
 /// Manages plugin lifecycle: loading, execution, filtering, and hot-reload
-final class PluginManager {
-    struct PerAppPluginOverride: Equatable {
+///
+/// Mutable manager state is protected by `state`, `trustStateQueue`, or the
+/// main actor. Plugins provide a lock-protected enabled flag and main-actor
+/// icon cache, so worker queues only exchange safe snapshots.
+final class PluginManager: Sendable {
+    struct PerAppPluginOverride: Equatable, Sendable {
         let appBundleID: String
         let pluginID: String
     }
 
-    struct TrustedExecutionSnapshot {
+    struct TrustedExecutionSnapshot: Sendable {
         let plugin: Plugin
         let containerURL: URL
         let fingerprint: String
     }
 
-    enum PluginScriptSource: Equatable {
+    struct PluginInstallPreview: Equatable, Sendable {
+        let name: String
+        let description: String?
+        let actionType: PluginActionType
+        let requiresExecutionTrust: Bool
+        let fingerprint: String
+    }
+
+    struct PendingOperationRecoveryResult: Equatable, Sendable {
+        var removedStagingPackages = 0
+        var restoredBackupPackages = 0
+        var removedRedundantBackups = 0
+
+        var didRecoverAnything: Bool {
+            removedStagingPackages > 0 ||
+                restoredBackupPackages > 0 ||
+                removedRedundantBackups > 0
+        }
+    }
+
+    enum PluginScriptSource: Equatable, Sendable {
         case bundledFile(URL)
         case inline(String)
     }
 
-    enum ExecutionPolicy: Equatable {
+    enum ExecutionPolicy: Equatable, Sendable {
         case standard
         case directKeyCombo
         case protected
     }
 
-    enum PluginInstallFailure: Equatable {
+    enum PluginInstallFailure: Equatable, Sendable {
         case invalidPackage
         case invalidIdentifier(String)
         case destinationIdentifierConflict(existingIdentifier: String)
+        case sourceChangedSinceConfirmation
         case stagedValidationFailed
         case fileOperationFailed(String)
 
@@ -43,6 +93,8 @@ final class PluginManager {
                     format: "Installing this plugin would replace a different plugin (%@). Rename one of the plugins and try again.".localized,
                     existingIdentifier
                 )
+            case .sourceChangedSinceConfirmation:
+                return "The plugin changed after the install confirmation was shown. Review it and try again.".localized
             case .stagedValidationFailed:
                 return "Plugin validation failed after copying. The package may have changed during installation.".localized
             case .fileOperationFailed(let message):
@@ -55,7 +107,7 @@ final class PluginManager {
         }
     }
 
-    enum PluginInstallResult: Equatable {
+    enum PluginInstallResult: Equatable, Sendable {
         case installed
         case failed(PluginInstallFailure)
 
@@ -75,8 +127,16 @@ final class PluginManager {
     static let perAppDisabledPluginsKey = "perAppDisabledPlugins"
     static let verbosePluginLoggingKey = "VerbosePluginLoggingEnabled"
     static let maxPluginProcessStderrBytes = 64 * 1024
-    static let maximumInstallPackageFileCount = 2_048
-    static let maximumInstallPackageBytes = 128 * 1024 * 1024
+    static let maximumInstallPackageFileCount = Plugin.maximumTrustedPackageFileCount
+    static let maximumInstallPackageBytes = Plugin.maximumTrustedPackageBytes
+    static let maximumPluginEnvironmentTextBytes = 32 * 1024
+    static let pendingOperationRecoveryMinimumAge: TimeInterval = 30
+    static let allowedPluginURLSchemes: Set<String> = [
+        "http",
+        "https",
+        "mailto",
+        "dict",
+    ]
     
     /// Core default plugins that can never be deleted
     static let coreDefaultPluginIDs: Set<String> = [
@@ -91,13 +151,27 @@ final class PluginManager {
         "com.openfire.reveal-path"
     ]
     
-    var plugins: [Plugin] = []
-    private var directoryWatchers: [String: DispatchSourceFileSystemObject] = [:]
-    private var pendingReloadWorkItem: DispatchWorkItem?
-    private let loadStateQueue = DispatchQueue(label: "com.openfire.plugin-load-state")
+    private struct State: Sendable {
+        var plugins: [Plugin] = []
+        var userPluginsDirectoryOverride: URL?
+        var latestScheduledLoadID: UInt64 = 0
+        var recoveredPluginDirectoryPaths: Set<String> = []
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+    @MainActor private var directoryWatchers: [String: DispatchSourceFileSystemObject] = [:]
+    @MainActor private var pendingReloadWorkItem: DispatchWorkItem?
+
+    var plugins: [Plugin] {
+        get { state.withLock { $0.plugins } }
+        set { state.withLock { $0.plugins = newValue } }
+    }
+
     private let trustStateQueue = DispatchQueue(label: "com.openfire.plugin-trust-state")
-    private var latestScheduledLoadID: UInt64 = 0
-    var userPluginsDirectoryOverride: URL?
+    var userPluginsDirectoryOverride: URL? {
+        get { state.withLock { $0.userPluginsDirectoryOverride } }
+        set { state.withLock { $0.userPluginsDirectoryOverride = newValue } }
+    }
     
     /// User plugins directory
     var userPluginsURL: URL {
@@ -150,6 +224,42 @@ final class PluginManager {
         userDefaults.bool(forKey: verbosePluginLoggingKey)
     }
 
+    private static func verboseLog(_ message: @autoclosure () -> String) {
+        guard isVerbosePluginLoggingEnabled() else { return }
+        NSLog("[OpenFire-Debug] %@", message())
+    }
+
+    static func pluginProcessEnvironment(
+        text: String,
+        textFilePath: String,
+        baseEnvironment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String: String] {
+        var environment = baseEnvironment
+        environment.removeValue(forKey: "OPENFIRE_TEXT")
+        environment["OPENFIRE_TEXT_FILE"] = textFilePath
+
+        if !text.contains("\0"),
+           text.utf8.count <= maximumPluginEnvironmentTextBytes {
+            environment["OPENFIRE_TEXT"] = text
+        }
+
+        return environment
+    }
+
+    static func isAllowedPluginURLTemplate(_ template: String) -> Bool {
+        let trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let sample = renderedURLString(template: trimmed, text: "openfire")
+        guard let components = URLComponents(string: sample),
+              let scheme = components.scheme?.lowercased(),
+              allowedPluginURLSchemes.contains(scheme) else {
+            return false
+        }
+
+        return true
+    }
+
     static func executionPolicy(for plugin: Plugin) -> ExecutionPolicy {
         switch plugin.config.action.type {
         case .shellScript, .applescript:
@@ -196,8 +306,8 @@ final class PluginManager {
     }
 
     static func isPluginDirectory(_ pluginURL: URL, inside parentURL: URL) -> Bool {
-        let parentPath = parentURL.standardizedFileURL.path
-        let pluginPath = pluginURL.standardizedFileURL.path
+        let parentPath = parentURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let pluginPath = pluginURL.standardizedFileURL.resolvingSymlinksInPath().path
         let parentPrefix = parentPath.hasSuffix("/") ? parentPath : parentPath + "/"
 
         return pluginPath.hasPrefix(parentPrefix)
@@ -216,14 +326,19 @@ final class PluginManager {
     ) -> [URL] {
         let contents = (try? fileManager.contentsOfDirectory(
             at: directoryURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         )) ?? []
 
         return contents
             .filter { url in
                 guard url.pathExtension == "openfireext" else { return false }
-                return (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+                guard let values = try? url.resourceValues(
+                    forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+                ) else {
+                    return false
+                }
+                return values.isDirectory == true && values.isSymbolicLink != true
             }
             .sorted {
                 $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
@@ -257,6 +372,10 @@ final class PluginManager {
             return "Name and Identifier cannot be empty.".localized
         }
 
+        if id != identifier || id.count > 128 {
+            return "Identifier must use only letters, numbers, dots, and hyphens.".localized
+        }
+
         let identifierPattern = #"^[A-Za-z0-9.-]+$"#
         if id.range(of: identifierPattern, options: .regularExpression) == nil {
             return "Identifier must use only letters, numbers, dots, and hyphens.".localized
@@ -287,6 +406,16 @@ final class PluginManager {
         return "\(visibleBase).openfireext"
     }
 
+    static func pendingPluginPackageURL(
+        in directoryURL: URL,
+        prefix: String
+    ) -> URL {
+        let timestamp = Int(Date().timeIntervalSince1970)
+        return directoryURL.appendingPathComponent(
+            ".\(prefix)-t\(timestamp)-\(UUID().uuidString).openfireext.pending"
+        )
+    }
+
     static func repairHiddenUserPluginPackages(in userPluginsURL: URL, fileManager: FileManager = .default) {
         let contents = (try? fileManager.contentsOfDirectory(
             at: userPluginsURL,
@@ -314,19 +443,105 @@ final class PluginManager {
             }
         }
     }
+
+    @discardableResult
+    static func recoverInterruptedPluginOperations(
+        in userPluginsURL: URL,
+        fileManager: FileManager = .default,
+        minimumAge: TimeInterval = pendingOperationRecoveryMinimumAge,
+        now: Date = Date()
+    ) -> PendingOperationRecoveryResult {
+        var result = PendingOperationRecoveryResult()
+        let contents = (try? fileManager.contentsOfDirectory(
+            at: userPluginsURL,
+            includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey],
+            options: []
+        )) ?? []
+
+        for pendingURL in contents {
+            let name = pendingURL.lastPathComponent
+            let isStaging = name.hasPrefix(".install-") || name.hasPrefix(".save-")
+            let isBackup = name.hasPrefix(".backup-")
+            guard (isStaging || isBackup),
+                  name.hasSuffix(".openfireext.pending") else {
+                continue
+            }
+
+            guard minimumAge <= 0 || {
+                let encodedTimestamp = name
+                    .split(separator: "-")
+                    .first(where: { $0.hasPrefix("t") })
+                    .flatMap { TimeInterval($0.dropFirst()) }
+                    .map(Date.init(timeIntervalSince1970:))
+                if let encodedTimestamp {
+                    return now.timeIntervalSince(encodedTimestamp) >= minimumAge
+                }
+
+                guard let values = try? pendingURL.resourceValues(
+                    forKeys: [.contentModificationDateKey, .creationDateKey]
+                ) else {
+                    return false
+                }
+                let timestamps = [
+                    values.contentModificationDate,
+                    values.creationDate,
+                ].compactMap { $0 }
+                guard let newestTimestamp = timestamps.max() else { return false }
+                return now.timeIntervalSince(newestTimestamp) >= minimumAge
+            }() else {
+                continue
+            }
+
+            if isStaging {
+                if (try? fileManager.removeItem(at: pendingURL)) != nil {
+                    result.removedStagingPackages += 1
+                }
+                continue
+            }
+
+            // A backup is only moved after the original destination was removed.
+            // Its validated identifier gives us a safe, canonical recovery target.
+            guard let backupPlugin = PluginLoader.load(from: pendingURL) else {
+                continue
+            }
+            let destinationURL = userPluginsURL.appendingPathComponent(
+                visibleUserPluginFileName(for: backupPlugin.id)
+            )
+            guard isPluginDirectory(destinationURL, inside: userPluginsURL) else {
+                continue
+            }
+
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                if (try? fileManager.removeItem(at: pendingURL)) != nil {
+                    result.removedRedundantBackups += 1
+                }
+            } else if (try? fileManager.moveItem(at: pendingURL, to: destinationURL)) != nil {
+                result.restoredBackupPackages += 1
+            }
+        }
+
+        return result
+    }
     
     // MARK: - Loading
 
     func beginPluginLoad() -> UInt64 {
-        loadStateQueue.sync {
-            latestScheduledLoadID += 1
-            return latestScheduledLoadID
+        state.withLock {
+            $0.latestScheduledLoadID += 1
+            return $0.latestScheduledLoadID
         }
     }
 
     func shouldApplyPluginLoadResult(_ loadID: UInt64) -> Bool {
-        loadStateQueue.sync {
-            loadID == latestScheduledLoadID
+        state.withLock {
+            loadID == $0.latestScheduledLoadID
+        }
+    }
+
+    private func shouldRecoverInterruptedOperations(in directoryURL: URL) -> Bool {
+        let path = directoryURL.standardizedFileURL.resolvingSymlinksInPath().path
+        return state.withLock {
+            $0.recoveredPluginDirectoryPaths.insert(path).inserted
         }
     }
     
@@ -337,9 +552,28 @@ final class PluginManager {
             guard let self = self else { return }
             
             // Load built-in plugins
-            let builtIn = PluginLoader.scanDirectory(self.builtInPluginsURL)
+            let builtIn = PluginLoader.scanDirectory(
+                self.builtInPluginsURL,
+                allowReservedCoreIdentifiers: true
+            )
             
             // Load user plugins
+            if self.shouldRecoverInterruptedOperations(in: self.userPluginsURL) {
+                let recoveryDirectoryURL = self.userPluginsURL
+                Self.recoverInterruptedPluginOperations(in: recoveryDirectoryURL)
+
+                // A crash may have happened less than the safety age ago. Retry
+                // once after the age expires, while avoiding active staging dirs.
+                DispatchQueue.global(qos: .utility).asyncAfter(
+                    deadline: .now() + Self.pendingOperationRecoveryMinimumAge
+                ) { [weak self] in
+                    let result = Self.recoverInterruptedPluginOperations(
+                        in: recoveryDirectoryURL
+                    )
+                    guard result.didRecoverAnything else { return }
+                    self?.reloadPlugins()
+                }
+            }
             Self.repairHiddenUserPluginPackages(in: self.userPluginsURL)
             let user = PluginLoader.scanDirectory(self.userPluginsURL)
             
@@ -377,6 +611,7 @@ final class PluginManager {
         loadAllPlugins()
     }
 
+    @MainActor
     private func scheduleReloadPlugins(after delay: TimeInterval = 0.2) {
         pendingReloadWorkItem?.cancel()
 
@@ -590,7 +825,7 @@ final class PluginManager {
             return true
         }
 
-        let prompt: () -> Bool = {
+        let prompt: @MainActor @Sendable () -> Bool = {
             let alert = NSAlert()
             alert.messageText = "Trust Plugin Before Running".localized
             alert.informativeText = String(
@@ -617,14 +852,12 @@ final class PluginManager {
         }
 
         if Thread.isMainThread {
-            return prompt()
+            return MainActor.assumeIsolated {
+                prompt()
+            }
         }
 
-        var result = false
-        DispatchQueue.main.sync {
-            result = prompt()
-        }
-        return result
+        return DispatchQueue.main.sync(execute: prompt)
     }
     
     private func savePluginStates() {
@@ -699,25 +932,41 @@ final class PluginManager {
     }
 
     func userPluginURL(for identifier: String) -> URL? {
-        let directMatch = userPluginsURL.appendingPathComponent("\(identifier).openfireext")
-        if FileManager.default.fileExists(atPath: directMatch.path) {
-            return directMatch
+        guard Self.pluginIdentifierValidationMessage(
+            identifier,
+            allowReservedCoreIdentifier: true
+        ) == nil else {
+            return nil
         }
-
         return userPluginURLs(for: identifier).first
     }
 
     func userPluginURLs(for identifier: String) -> [URL] {
+        guard Self.pluginIdentifierValidationMessage(
+            identifier,
+            allowReservedCoreIdentifier: true
+        ) == nil else {
+            return []
+        }
+
         let fileManager = FileManager.default
 
         let contents = (try? fileManager.contentsOfDirectory(
             at: userPluginsURL,
-            includingPropertiesForKeys: nil,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         )) ?? []
 
         var matches: [URL] = []
         for itemURL in contents where itemURL.pathExtension == "openfireext" {
+            guard Self.isPluginDirectory(itemURL, inside: userPluginsURL),
+                  let values = try? itemURL.resourceValues(
+                    forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+                  ),
+                  values.isDirectory == true,
+                  values.isSymbolicLink != true else {
+                continue
+            }
             guard let plugin = PluginLoader.load(from: itemURL) else { continue }
             if plugin.id == identifier {
                 matches.append(itemURL)
@@ -731,6 +980,7 @@ final class PluginManager {
 
     func removeDuplicateUserPlugins(for identifier: String, keeping preservedURL: URL? = nil) {
         for url in userPluginURLs(for: identifier) where !Self.shouldPreservePluginURL(url, preservedURL: preservedURL) {
+            guard Self.isPluginDirectory(url, inside: userPluginsURL) else { continue }
             try? FileManager.default.removeItem(at: url)
         }
     }
@@ -747,9 +997,14 @@ final class PluginManager {
         }
         
         let isBuiltIn = Self.isBuiltInPluginDirectory(plugin.directoryURL, builtInPluginsURL: builtInPluginsURL)
-        let userOverrideURL = userPluginURL(for: plugin.id)
-        
-        if let userOverrideURL {
+        let actualUserPluginURL = Self.isPluginDirectory(
+            plugin.directoryURL,
+            inside: userPluginsURL
+        ) ? plugin.directoryURL : nil
+        let userOverrideURL = actualUserPluginURL ?? userPluginURL(for: plugin.id)
+
+        if let userOverrideURL,
+           Self.isPluginDirectory(userOverrideURL, inside: userPluginsURL) {
             // Delete the user override file physically
             try FileManager.default.removeItem(at: userOverrideURL)
         } else if isBuiltIn {
@@ -761,8 +1016,8 @@ final class PluginManager {
                 UserDefaults.standard.set(deletedBuiltIns, forKey: "deletedBuiltInPlugins")
             }
         } else {
-            // It's a completely loose user plugin
-            try FileManager.default.removeItem(at: plugin.directoryURL)
+            // Refuse to remove arbitrary paths that are not one of our plugin roots.
+            throw CocoaError(.fileWriteNoPermission)
         }
         
         reloadPlugins()
@@ -770,6 +1025,7 @@ final class PluginManager {
     
     // MARK: - Hot Reload (File System Watching)
     
+    @MainActor
     func startWatchingPluginDirectories() {
         for directoryURL in Self.watchablePluginDirectories(userPluginsURL: userPluginsURL) {
             watchDirectory(
@@ -779,6 +1035,7 @@ final class PluginManager {
         }
     }
     
+    @MainActor
     func stopWatchingPluginDirectories() {
         pendingReloadWorkItem?.cancel()
         pendingReloadWorkItem = nil
@@ -792,6 +1049,7 @@ final class PluginManager {
         url.standardizedFileURL.path
     }
 
+    @MainActor
     private func refreshUserPluginPackageWatchers() {
         let userPluginsPath = Self.watchPath(for: userPluginsURL)
         let packageURLs = Self.pluginPackageDirectories(in: userPluginsURL)
@@ -810,6 +1068,7 @@ final class PluginManager {
         }
     }
 
+    @MainActor
     private func watchDirectory(_ url: URL, refreshPackageWatchersOnEvent: Bool) {
         // Ensure directory exists
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -829,11 +1088,13 @@ final class PluginManager {
         )
         
         source.setEventHandler { [weak self] in
-            NSLog("[OpenFire] Plugin directory changed, reloading...")
-            if refreshPackageWatchersOnEvent {
-                self?.refreshUserPluginPackageWatchers()
+            Task { @MainActor in
+                NSLog("[OpenFire] Plugin directory changed, reloading...")
+                if refreshPackageWatchersOnEvent {
+                    self?.refreshUserPluginPackageWatchers()
+                }
+                self?.scheduleReloadPlugins()
             }
-            self?.scheduleReloadPlugins()
         }
         
         source.setCancelHandler {
@@ -857,10 +1118,9 @@ final class PluginManager {
         let action = plugin.config.action
         let resolvedTargetProcessIdentifier =
             targetProcessIdentifier ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
-        NSLog("[OpenFire-Debug] executePlugin plugin=%@ type=%@ textLength=%ld",
-              plugin.id,
-              action.type.rawValue,
-              text.count)
+        Self.verboseLog(
+            "executePlugin plugin=\(plugin.id) type=\(action.type.rawValue) textLength=\(text.count)"
+        )
 
         switch Self.executionPolicy(for: plugin) {
         case .protected:
@@ -984,7 +1244,7 @@ final class PluginManager {
                 return
             }
 
-            let executeIfStillTargeted = {
+            let executeIfStillTargeted: @MainActor @Sendable () -> Void = {
                 defer { self.removeTrustedExecutionSnapshot(cleanupSnapshot) }
                 guard NSWorkspace.shared.frontmostApplication?.processIdentifier ==
                         targetProcessIdentifier else {
@@ -1016,10 +1276,18 @@ final class PluginManager {
     
     private func executeURLAction(_ action: PluginActionConfig, text: String) {
         guard var urlTemplate = action.url else { return }
-        
+        guard Self.isAllowedPluginURLTemplate(urlTemplate) else {
+            NSLog("[OpenFire] Refusing URL action with unsupported scheme.")
+            return
+        }
+
         urlTemplate = Self.renderedURLString(template: urlTemplate, text: text)
         
-        guard let url = URL(string: urlTemplate) else { return }
+        guard let url = URL(string: urlTemplate),
+              let scheme = url.scheme?.lowercased(),
+              Self.allowedPluginURLSchemes.contains(scheme) else {
+            return
+        }
         NSWorkspace.shared.open(url)
     }
 
@@ -1054,7 +1322,7 @@ final class PluginManager {
         text: String,
         cleanupSnapshot: TrustedExecutionSnapshot
     ) {
-        NSLog("[OpenFire-Debug] Entering executeShellScript for plugin: \(plugin.id)")
+        Self.verboseLog("Entering executeShellScript for plugin: \(plugin.id)")
         let scriptContent: String?
         
         if let scriptName = action.script {
@@ -1065,53 +1333,69 @@ final class PluginManager {
             case .bundledFile(let scriptURL):
                 var enc: String.Encoding = .utf8
                 scriptContent = try? String(contentsOf: scriptURL, usedEncoding: &enc)
-                NSLog("[OpenFire-Debug] Loaded shell script from file: \(scriptURL.path) (encoding: \(enc))")
+                Self.verboseLog("Loaded shell script from file: \(scriptURL.path) (encoding: \(enc))")
             case .inline(let inline):
                 scriptContent = inline
-                NSLog("[OpenFire-Debug] Using legacy inline shell script from the script field")
+                Self.verboseLog("Using legacy inline shell script from the script field")
             case nil:
                 NSLog("[OpenFire] Refusing shell script outside the verified plugin package: \(scriptName)")
                 scriptContent = nil
             }
         } else if let inline = action.inline {
-            NSLog("[OpenFire-Debug] Found inline action config for Shell Script")
+            Self.verboseLog("Found inline action config for Shell Script")
             scriptContent = inline
         } else {
-            NSLog("[OpenFire-Debug] Neither inline nor script field found in config!")
+            Self.verboseLog("Neither inline nor script field found in config!")
             removeTrustedExecutionSnapshot(cleanupSnapshot)
             return
         }
         
         guard let content = scriptContent else {
-            NSLog("[OpenFire-Debug] shell scriptContent is nil, ABORTING!")
+            Self.verboseLog("shell scriptContent is nil, aborting")
             removeTrustedExecutionSnapshot(cleanupSnapshot)
             return
         }
         
-        NSLog("[OpenFire-Debug] Shell script content resolved, preparing to run bash...")
+        Self.verboseLog("Shell script content resolved, preparing to run bash")
         
         DispatchQueue.global(qos: .userInitiated).async {
             defer { self.removeTrustedExecutionSnapshot(cleanupSnapshot) }
             // Write selected text to a temp file for reliable Unicode/CJK support
             let textFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
-            try? text.write(to: textFile, atomically: true, encoding: .utf8)
+            do {
+                try text.write(to: textFile, atomically: true, encoding: .utf8)
+            } catch {
+                NSLog("[OpenFire] Failed to prepare selected text for shell script: \(error.localizedDescription)")
+                return
+            }
+            defer { try? FileManager.default.removeItem(at: textFile) }
+            let scriptFile = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString + ".sh")
+            do {
+                try content.write(to: scriptFile, atomically: true, encoding: .utf8)
+            } catch {
+                NSLog("[OpenFire] Failed to prepare shell script: \(error.localizedDescription)")
+                return
+            }
+            defer { try? FileManager.default.removeItem(at: scriptFile) }
             
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = ["-c", content]
-            process.environment = ProcessInfo.processInfo.environment
-            process.environment?["OPENFIRE_TEXT"] = text
-            process.environment?["OPENFIRE_TEXT_FILE"] = textFile.path
+            // Keep untrusted script content out of argv. Embedded NUL and very
+            // large scripts are valid file content but unsafe Process arguments.
+            process.arguments = [scriptFile.path]
+            process.environment = Self.pluginProcessEnvironment(
+                text: text,
+                textFilePath: textFile.path
+            )
             process.currentDirectoryURL = plugin.directoryURL
             
-            NSLog("[OpenFire-Debug] Launching bash process...")
+            Self.verboseLog("Launching bash process")
             self.runProcessWithTimeout(
                 process,
                 timeout: 30,
                 logPrefix: "Shell script"
             )
-            
-            try? FileManager.default.removeItem(at: textFile)
         }
     }
     
@@ -1121,7 +1405,7 @@ final class PluginManager {
         text: String,
         cleanupSnapshot: TrustedExecutionSnapshot
     ) {
-        NSLog("[OpenFire-Debug] Entering executeAppleScript for plugin: \(plugin.id)")
+        Self.verboseLog("Entering executeAppleScript for plugin: \(plugin.id)")
         var source: String?
         
         if let scriptName = action.script {
@@ -1133,28 +1417,28 @@ final class PluginManager {
                 var enc: String.Encoding = .utf8
                 let fileSource = try? String(contentsOf: scriptURL, usedEncoding: &enc)
                 source = fileSource.map { Self.renderedAppleScriptSource($0, text: text) }
-                NSLog("[OpenFire-Debug] Loaded script from file: \(scriptURL.path)")
+                Self.verboseLog("Loaded script from file: \(scriptURL.path)")
             case .inline(let inline):
                 source = Self.renderedAppleScriptSource(inline, text: text)
-                NSLog("[OpenFire-Debug] Using legacy inline AppleScript from the script field")
+                Self.verboseLog("Using legacy inline AppleScript from the script field")
             case nil:
                 NSLog("[OpenFire] Refusing AppleScript outside the verified plugin package: \(scriptName)")
                 source = nil
             }
         } else if let inline = action.inline {
-            NSLog("[OpenFire-Debug] Found inline action config")
+            Self.verboseLog("Found inline action config")
             source = Self.renderedAppleScriptSource(inline, text: text)
         } else {
-            NSLog("[OpenFire-Debug] Neither inline nor script field found in config!")
+            Self.verboseLog("Neither inline nor script field found in config!")
         }
         
         guard let appleScriptSource = source else {
-            NSLog("[OpenFire-Debug] appleScriptSource is nil, ABORTING!")
+            Self.verboseLog("appleScriptSource is nil, aborting")
             removeTrustedExecutionSnapshot(cleanupSnapshot)
             return
         }
         
-        NSLog("[OpenFire-Debug] Preparing to execute AppleScript of length: \(appleScriptSource.count)")
+        Self.verboseLog("Preparing to execute AppleScript of length: \(appleScriptSource.count)")
         
         // Execute via osascript passing a temporary file path
         DispatchQueue.global(qos: .userInitiated).async {
@@ -1164,6 +1448,10 @@ final class PluginManager {
             // Write selected text to a temp file so AppleScript can read it with proper UTF-8 encoding
             // This avoids encoding issues with CJK characters via environment variables
             let textFile = tempDir.appendingPathComponent(UUID().uuidString + ".txt")
+            defer {
+                try? FileManager.default.removeItem(at: tempFile)
+                try? FileManager.default.removeItem(at: textFile)
+            }
             
             do {
                 try text.write(to: textFile, atomically: true, encoding: .utf8)
@@ -1176,25 +1464,23 @@ final class PluginManager {
                     .replacingOccurrences(of: "system attribute \"OPENFIRE_TEXT\"", with: fileReadExpr)
                 
                 try finalSource.write(to: tempFile, atomically: true, encoding: .utf8)
-                NSLog("[OpenFire-Debug] Wrote temp AppleScript file to \(tempFile.path)")
+                Self.verboseLog("Wrote temp AppleScript file to \(tempFile.path)")
                 
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
                 process.arguments = [tempFile.path]
-                process.environment = ProcessInfo.processInfo.environment
-                process.environment?["OPENFIRE_TEXT"] = text
-                process.environment?["OPENFIRE_TEXT_FILE"] = textFile.path
+                process.environment = Self.pluginProcessEnvironment(
+                    text: text,
+                    textFilePath: textFile.path
+                )
                 process.currentDirectoryURL = plugin.directoryURL
 
-                NSLog("[OpenFire-Debug] Launching osascript process...")
+                Self.verboseLog("Launching osascript process")
                 self.runProcessWithTimeout(
                     process,
                     timeout: 30,
                     logPrefix: "AppleScript"
                 )
-                
-                try? FileManager.default.removeItem(at: tempFile)
-                try? FileManager.default.removeItem(at: textFile)
             } catch {
                 NSLog("[OpenFire] Failed to execute AppleScript via osascript: \(error.localizedDescription)")
             }
@@ -1356,8 +1642,38 @@ final class PluginManager {
         installPluginDetailed(from: sourceURL).isSuccess
     }
 
+    /// Create an immutable description of the exact package shown in an install
+    /// confirmation. Pass its fingerprint back to `installPluginDetailed` after
+    /// the user accepts the prompt.
+    func makeInstallPreview(from sourceURL: URL) -> PluginInstallPreview? {
+        let accessGranted = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessGranted {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard Self.isInstallPackageWithinLimits(sourceURL),
+              let plugin = PluginLoader.load(from: sourceURL),
+              Self.pluginIdentifierValidationMessage(plugin.id) == nil,
+              let fingerprint = plugin.packageFingerprint else {
+            return nil
+        }
+
+        return PluginInstallPreview(
+            name: plugin.config.name,
+            description: plugin.config.description,
+            actionType: plugin.config.action.type,
+            requiresExecutionTrust: plugin.requiresExecutionTrust,
+            fingerprint: fingerprint
+        )
+    }
+
     /// Install a plugin and return the reason when validation or copying fails.
-    func installPluginDetailed(from sourceURL: URL) -> PluginInstallResult {
+    func installPluginDetailed(
+        from sourceURL: URL,
+        expectedPreviewFingerprint: String? = nil
+    ) -> PluginInstallResult {
         // macOS hands us a security-scoped URL when double-clicked outside our sandbox
         let accessGranted = sourceURL.startAccessingSecurityScopedResource()
         defer {
@@ -1380,9 +1696,16 @@ final class PluginManager {
             return .failed(.fileOperationFailed(error.localizedDescription))
         }
 
-        guard let sourcePlugin = PluginLoader.load(from: sourceURL) else {
+        guard let sourcePlugin = PluginLoader.load(from: sourceURL),
+              let sourceFingerprint = sourcePlugin.packageFingerprint else {
             NSLog("[OpenFire] Refusing to install invalid plugin package: \(sourceURL.path)")
             return .failed(.invalidPackage)
+        }
+
+        if let expectedPreviewFingerprint,
+           expectedPreviewFingerprint != sourceFingerprint {
+            NSLog("[OpenFire] Refusing plugin that changed after install confirmation: \(sourceURL.path)")
+            return .failed(.sourceChangedSinceConfirmation)
         }
 
         if let validationMessage = Self.pluginIdentifierValidationMessage(sourcePlugin.id) {
@@ -1392,6 +1715,11 @@ final class PluginManager {
 
         let canonicalFileName = Self.visibleUserPluginFileName(for: sourcePlugin.id)
         let destinationURL = userPluginsURL.appendingPathComponent(canonicalFileName)
+        guard Self.isPluginDirectory(destinationURL, inside: userPluginsURL) else {
+            return .failed(.invalidIdentifier(
+                "Identifier must use only letters, numbers, dots, and hyphens.".localized
+            ))
+        }
 
         if fileManager.fileExists(atPath: destinationURL.path),
            let existingPlugin = PluginLoader.load(from: destinationURL),
@@ -1406,8 +1734,14 @@ final class PluginManager {
             return .installed
         }
 
-        let stagingURL = userPluginsURL.appendingPathComponent(".install-\(UUID().uuidString).openfireext.pending")
-        let backupURL = userPluginsURL.appendingPathComponent(".backup-\(UUID().uuidString).openfireext.pending")
+        let stagingURL = Self.pendingPluginPackageURL(
+            in: userPluginsURL,
+            prefix: "install"
+        )
+        let backupURL = Self.pendingPluginPackageURL(
+            in: userPluginsURL,
+            prefix: "backup"
+        )
         var didMoveDestinationToBackup = false
         var shouldRemoveBackup = true
         
@@ -1422,7 +1756,10 @@ final class PluginManager {
             try fileManager.copyItem(at: sourceURL, to: stagingURL)
             guard Self.isInstallPackageWithinLimits(stagingURL, fileManager: fileManager),
                   let stagedPlugin = PluginLoader.load(from: stagingURL),
-                  stagedPlugin.config == sourcePlugin.config else {
+                  stagedPlugin.config == sourcePlugin.config,
+                  stagedPlugin.packageFingerprint == sourceFingerprint,
+                  expectedPreviewFingerprint == nil ||
+                    stagedPlugin.packageFingerprint == expectedPreviewFingerprint else {
                 NSLog("[OpenFire] Refusing staged plugin because validation failed after copy: \(sourceURL.path)")
                 return .failed(.stagedValidationFailed)
             }
@@ -1490,7 +1827,9 @@ final class PluginManager {
             return false
         }
 
-        var fileCount = 0
+        let rootPath = packageURL.standardizedFileURL.path
+        let rootPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        var entryCount = 0
         var totalBytes = 0
 
         for case let itemURL as URL in enumerator {
@@ -1498,21 +1837,30 @@ final class PluginManager {
                   values.isSymbolicLink != true else {
                 return false
             }
+
+            let itemPath = itemURL.standardizedFileURL.path
+            guard itemPath.hasPrefix(rootPrefix) else { return false }
+            let relativePath = String(itemPath.dropFirst(rootPrefix.count))
+            guard !relativePath.isEmpty,
+                  relativePath.split(separator: "/").count <= Plugin.maximumPackageTreeDepth,
+                  entryCount < maxFileCount else {
+                return false
+            }
+            entryCount += 1
+
             if values.isDirectory == true {
                 continue
             }
             guard values.isRegularFile == true,
                   let fileSize = values.fileSize,
                   fileSize >= 0,
-                  fileCount < maxFileCount,
                   fileSize <= maxTotalBytes - totalBytes else {
                 return false
             }
-            fileCount += 1
             totalBytes += fileSize
         }
 
-        return !enumerationFailed && fileCount > 0
+        return !enumerationFailed && entryCount > 0
     }
 
     static func restoreBackedUpPackageIfNeeded(
@@ -1601,16 +1949,11 @@ final class PluginManager {
         if process.standardOutput == nil, let nullDevice = FileHandle(forWritingAtPath: "/dev/null") {
             process.standardOutput = nullDevice
         }
-        let stderrQueue = DispatchQueue(label: "com.openfire.plugin-stderr")
-        var stderrData = Data()
-        var stderrTruncated = false
+        let stderrAccumulator = PluginProcessStderrAccumulator()
         errorPipe.fileHandleForReading.readabilityHandler = { handle in
             let availableData = handle.availableData
             guard !availableData.isEmpty else { return }
-            stderrQueue.sync {
-                let didTruncate = Self.appendPluginProcessStderrChunk(availableData, to: &stderrData)
-                stderrTruncated = stderrTruncated || didTruncate
-            }
+            stderrAccumulator.append(availableData)
         }
 
         let semaphore = DispatchSemaphore(value: 0)
@@ -1649,18 +1992,13 @@ final class PluginManager {
         }
 
         if Self.isVerbosePluginLoggingEnabled() {
-            NSLog("[OpenFire-Debug] \(logPrefix) process finished with exit code: \(process.terminationStatus)")
+            Self.verboseLog("\(logPrefix) process finished with exit code: \(process.terminationStatus)")
         }
 
         errorPipe.fileHandleForReading.readabilityHandler = nil
         let remainingErrorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        stderrQueue.sync {
-            let didTruncate = Self.appendPluginProcessStderrChunk(remainingErrorData, to: &stderrData)
-            stderrTruncated = stderrTruncated || didTruncate
-        }
-        let (errorData, wasStderrTruncated) = stderrQueue.sync {
-            (stderrData, stderrTruncated)
-        }
+        stderrAccumulator.append(remainingErrorData)
+        let (errorData, wasStderrTruncated) = stderrAccumulator.snapshot()
         if !errorData.isEmpty,
            var errorStr = String(data: errorData, encoding: .utf8),
            let message = Self.pluginProcessStderrLogMessage(

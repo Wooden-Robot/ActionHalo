@@ -66,7 +66,3 @@ Icon
 *.dll
 *.dylib
 *.a
-
-# User Requested
-Makefile
-makefile

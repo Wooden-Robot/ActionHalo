@@ -1,6 +1,45 @@
 import Cocoa
 
+/// Main-thread interaction gate used by transient UI surfaces.
+///
+/// Mouse-up events, button actions, and animation callbacks may be delivered
+/// again while a panel is fading out. Consuming this gate before dispatching an
+/// action keeps destructive and external operations single-shot.
+final class SingleFireActionGate {
+    private(set) var hasFired = false
+
+    func consume() -> Bool {
+        guard !hasFired else { return false }
+        hasFired = true
+        return true
+    }
+
+    func reset() {
+        hasFired = false
+    }
+}
+
+@MainActor
+private final class MenuDismissalBarrier {
+    private var remainingCount: Int
+    private let completion: @MainActor @Sendable () -> Void
+
+    init(count: Int, completion: @escaping @MainActor @Sendable () -> Void) {
+        remainingCount = count
+        self.completion = completion
+    }
+
+    func completeOne() {
+        guard remainingCount > 0 else { return }
+        remainingCount -= 1
+        if remainingCount == 0 {
+            completion()
+        }
+    }
+}
+
 /// Main application delegate — orchestrates all components
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static let cutPluginID = "com.openfire.cut"
     static let deletePluginID = "com.openfire.delete"
@@ -31,7 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var observersRegistered = false
     private var isDismissingMenus = false
     private var pendingMenuDismissCompletions: [() -> Void] = []
-    private var debugSelectionSequence: UInt64 = 0
+    private var pendingMenuPresentation: (() -> Void)?
+    private let menuActionGate = SingleFireActionGate()
+    private var startupPermissionTimer: Timer?
     private var permissionRecoveryTimer: Timer?
     private let pluginInstallQueue = DispatchQueue(
         label: "com.openfire.plugin-install",
@@ -41,6 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     // Global monitor for clicking outside
     private var globalClickMonitor: Any?
+    private var globalClickMonitorGeneration: UInt64 = 0
 
     static func monitoringStartFailureMessage(_ failure: TextSelectionMonitor.MonitoringStartFailure) -> String {
         switch failure {
@@ -205,10 +247,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !AccessibilityManager.shared.ensureAccessibilityPermission() {
             NSLog("[OpenFire] Waiting for accessibility permission...")
             // Poll until permission is granted
-            Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
-                if AccessibilityManager.shared.isAccessibilityEnabled {
-                    timer.invalidate()
-                    self?.startServices()
+            startupPermissionTimer = Timer.scheduledTimer(
+                withTimeInterval: 2.0,
+                repeats: true
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, AccessibilityManager.shared.isAccessibilityEnabled else {
+                        return
+                    }
+                    self.startupPermissionTimer?.invalidate()
+                    self.startupPermissionTimer = nil
+                    self.startServices()
                 }
             }
         } else {
@@ -310,6 +359,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PluginManager.shared.stopWatchingPluginDirectories()
         HotkeyManager.shared.unregisterHotkeys()
         unregisterServiceObservers()
+        startupPermissionTimer?.invalidate()
+        startupPermissionTimer = nil
         permissionRecoveryTimer?.invalidate()
         permissionRecoveryTimer = nil
     }
@@ -382,17 +433,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
 
-        // Try to load the plugin config for preview
-        var pluginName = url.deletingPathExtension().lastPathComponent
-        var pluginDescription = ""
-        
-        if let previewPlugin = PluginLoader.load(from: url) {
-            let config = previewPlugin.config
-            pluginName = config.name
-            pluginDescription = config.description ?? String(format: "Type: %@".localized, config.action.type.rawValue)
-            if previewPlugin.requiresExecutionTrust {
-                pluginDescription += "\n\n" + "Warning: this plugin can perform protected actions on your Mac. OpenFire will require explicit trust before the first run, and again after plugin changes.".localized
-            }
+        guard let preview = PluginManager.shared.makeInstallPreview(from: url) else {
+            let alert = NSAlert()
+            alert.messageText = "Install Failed".localized
+            alert.informativeText = PluginManager.PluginInstallFailure.invalidPackage.localizedMessage(
+                sourcePath: url.path
+            )
+            alert.alertStyle = .critical
+            alert.runModal()
+            return false
+        }
+
+        let pluginName = preview.name
+        var pluginDescription = preview.description ??
+            String(format: "Type: %@".localized, preview.actionType.rawValue)
+        if preview.requiresExecutionTrust {
+            pluginDescription += "\n\n" + "Warning: this plugin can perform protected actions on your Mac. OpenFire will require explicit trust before the first run, and again after plugin changes.".localized
         }
         
         // Show confirmation alert
@@ -418,32 +474,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 String(format: "Installing %@".localized, installingPluginName)
             )
 
-            let accessGranted = url.startAccessingSecurityScopedResource()
-            pluginInstallQueue.async { [weak self] in
-                let installResult = PluginManager.shared.installPluginDetailed(from: url)
-                if accessGranted {
-                    url.stopAccessingSecurityScopedResource()
+            let handleInstallResult: @MainActor @Sendable (PluginManager.PluginInstallResult) -> Void = {
+                [weak self] installResult in
+                guard let self else { return }
+                self.pendingPluginInstallPaths.remove(installPath)
+
+                guard !installResult.isSuccess else {
+                    NSLog("[OpenFire] Plugin '%@' installed successfully.", installingPluginName)
+                    self.statusBarController.showTemporaryStatusMessage(
+                        String(format: "Installed %@".localized, installingPluginName)
+                    )
+                    return
                 }
 
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    self.pendingPluginInstallPaths.remove(installPath)
+                let resultAlert = NSAlert()
+                resultAlert.messageText = "Install Failed".localized
+                if case .failed(let failure) = installResult {
+                    resultAlert.informativeText = failure.localizedMessage(sourcePath: url.path)
+                }
+                resultAlert.alertStyle = .critical
+                resultAlert.runModal()
+            }
 
-                    guard !installResult.isSuccess else {
-                        NSLog("[OpenFire] Plugin '%@' installed successfully.", installingPluginName)
-                        self.statusBarController.showTemporaryStatusMessage(
-                            String(format: "Installed %@".localized, installingPluginName)
-                        )
-                        return
-                    }
+            pluginInstallQueue.async {
+                let installResult = PluginManager.shared.installPluginDetailed(
+                    from: url,
+                    expectedPreviewFingerprint: preview.fingerprint
+                )
 
-                    let resultAlert = NSAlert()
-                    resultAlert.messageText = "Install Failed".localized
-                    if case .failed(let failure) = installResult {
-                        resultAlert.informativeText = failure.localizedMessage(sourcePath: url.path)
-                    }
-                    resultAlert.alertStyle = .critical
-                    resultAlert.runModal()
+                Task { @MainActor in
+                    handleInstallResult(installResult)
                 }
             }
             return true
@@ -558,12 +618,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func waitAndRecoverPermission() {
         guard permissionRecoveryTimer == nil else { return }
 
-        let timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
-            if AccessibilityManager.shared.isAccessibilityEnabled {
-                timer.invalidate()
-                self?.permissionRecoveryTimer = nil
-                self?.startServices()
-                
+        let timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, AccessibilityManager.shared.isAccessibilityEnabled else {
+                    return
+                }
+                self.permissionRecoveryTimer?.invalidate()
+                self.permissionRecoveryTimer = nil
+                self.startServices()
+
                 let alert = NSAlert()
                 alert.messageText = "Permission Restored".localized
                 alert.informativeText = "OpenFire has resumed working.".localized
@@ -727,20 +790,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func beginMenuDismiss(completion: (() -> Void)? = nil) -> Bool {
+        guard !isDismissingMenus else { return false }
+        isDismissingMenus = true
         if let completion {
             pendingMenuDismissCompletions.append(completion)
         }
-
-        guard !isDismissingMenus else { return false }
-        isDismissingMenus = true
         return true
     }
 
     func finishMenuDismiss() {
+        guard isDismissingMenus else { return }
         let completions = pendingMenuDismissCompletions
         pendingMenuDismissCompletions.removeAll()
         isDismissingMenus = false
         completions.forEach { $0() }
+        presentPendingMenuIfNeeded()
     }
     
     private func showRadialMenu(
@@ -749,8 +813,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         selectedText: String,
         targetProcessIdentifier: pid_t?
     ) {
-        dismissAllMenus()
-        
         var items: [RadialMenuItem] = []
         let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
         let isSelectionEditable = AccessibilityManager.shared.isFocusedSelectionEditable()
@@ -772,40 +834,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Don't show if no items available
         guard !items.isEmpty else { return }
-        
-        // Create and show the radial menu window
-        let window = RadialMenuWindow()
-        window.onDismissRequested = { [weak self] in
-            self?.dismissAllMenus()
-        }
-        window.onItemSelected = { [weak self] item in
-            guard let self = self else { return }
-            self.debugSelectionSequence += 1
-            let selectionID = self.debugSelectionSequence
-            let actionSummary: String
-            switch item.action {
-            case .plugin(let plugin):
-                actionSummary = "plugin:\(plugin.id)"
-            case .builtIn(let action):
-                actionSummary = "builtIn:\(String(describing: action))"
-            default:
-                actionSummary = "other"
+
+        scheduleMenuPresentation { [weak self] in
+            guard let self else { return }
+            guard self.currentContextAllowsMenuPresentation(
+                expectedProcessIdentifier: targetProcessIdentifier
+            ) else {
+                return
             }
-            NSLog("[OpenFire-Debug] AppDelegate.onItemSelected selectionID=%llu title=%@ action=%@ textLength=%ld",
-                  selectionID,
-                  item.title,
-                  actionSummary,
-                  selectedText.count)
-            self.handleMenuAction(
-                item,
-                text: selectedText,
-                targetProcessIdentifier: targetProcessIdentifier
-            )
+
+            let window = RadialMenuWindow()
+            window.onDismissRequested = { [weak self] in
+                self?.dismissAllMenus()
+            }
+            window.onItemSelected = { [weak self] item in
+                guard let self, self.menuActionGate.consume() else { return }
+                self.handleMenuAction(
+                    item,
+                    text: selectedText,
+                    targetProcessIdentifier: targetProcessIdentifier
+                )
+            }
+            self.menuActionGate.reset()
+            window.showMenu(at: point, items: items, selectedText: selectedText)
+
+            self.radialMenuWindow = window
+            self.setupGlobalClickMonitor()
         }
-        window.showMenu(at: point, items: items, selectedText: selectedText)
-        
-        radialMenuWindow = window
-        setupGlobalClickMonitor()
     }
     
     private func showPastePopup(
@@ -813,46 +868,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         plugin: Plugin,
         targetProcessIdentifier: pid_t
     ) {
-        dismissAllMenus()
-        
-        let window = PastePopupWindow()
-        window.onPasteClicked = { [weak self] in
+        scheduleMenuPresentation { [weak self] in
             guard let self else { return }
-            self.dismissAllMenus {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    guard AccessibilityManager.isExpectedCopyFallbackProcess(
-                        expectedProcessIdentifier: targetProcessIdentifier,
-                        currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier
-                    ) else {
-                        NSLog("[OpenFire] Paste cancelled because the target application changed.")
-                        return
+            guard self.currentContextAllowsMenuPresentation(
+                expectedProcessIdentifier: targetProcessIdentifier
+            ) else {
+                return
+            }
+
+            let window = PastePopupWindow()
+            window.onPasteClicked = { [weak self] in
+                guard let self, self.menuActionGate.consume() else { return }
+                self.dismissAllMenus {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        guard AccessibilityManager.isExpectedCopyFallbackProcess(
+                            expectedProcessIdentifier: targetProcessIdentifier,
+                            currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier
+                        ) else {
+                            NSLog("[OpenFire] Paste cancelled because the target application changed.")
+                            return
+                        }
+                        PluginManager.shared.executePlugin(
+                            plugin,
+                            with: "",
+                            targetProcessIdentifier: targetProcessIdentifier
+                        )
                     }
-                    PluginManager.shared.executePlugin(
-                        plugin,
-                        with: "",
-                        targetProcessIdentifier: targetProcessIdentifier
-                    )
                 }
             }
+
+            window.onClearClicked = { [weak self] in
+                guard let self, self.menuActionGate.consume() else { return }
+                NSPasteboard.general.clearContents()
+                self.dismissAllMenus()
+            }
+
+            self.menuActionGate.reset()
+            window.show(at: point)
+            self.pastePopupWindow = window
+            self.setupGlobalClickMonitor()
         }
-        
-        window.onClearClicked = { [weak self] in
-            NSPasteboard.general.clearContents()
-            self?.dismissAllMenus()
-        }
-        
-        window.show(at: point)
-        pastePopupWindow = window
-        setupGlobalClickMonitor()
     }
-    
-    private func dismissAllMenus(completion: (() -> Void)? = nil) {
-        let completionLabel = completion == nil ? "none" : "provided"
-        NSLog("[OpenFire-Debug] dismissAllMenus called completion=%@ radialVisible=%@ popupVisible=%@ isDismissing=%@",
-              completionLabel,
-              radialMenuWindow == nil ? "false" : "true",
-              pastePopupWindow == nil ? "false" : "true",
-              isDismissingMenus ? "true" : "false")
+
+    private func scheduleMenuPresentation(_ presentation: @escaping () -> Void) {
+        // The newest hotkey/selection wins while an older panel is fading out.
+        pendingMenuPresentation = presentation
+        dismissAllMenus(cancelPendingPresentation: false)
+    }
+
+    private func presentPendingMenuIfNeeded() {
+        guard !isDismissingMenus, let presentation = pendingMenuPresentation else { return }
+        pendingMenuPresentation = nil
+        presentation()
+    }
+
+    private func dismissAllMenus(
+        completion: (() -> Void)? = nil,
+        cancelPendingPresentation: Bool = true
+    ) {
+        if cancelPendingPresentation {
+            pendingMenuPresentation = nil
+        }
         guard beginMenuDismiss(completion: completion) else { return }
 
         let radialWindow = radialMenuWindow
@@ -867,21 +943,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        var pendingDismissals = dismissCount
-        let finishDismissal: () -> Void = { [weak self] in
-            guard pendingDismissals > 0 else { return }
-            pendingDismissals -= 1
-            if pendingDismissals == 0 {
-                self?.finishMenuDismiss()
-            }
+        let dismissalBarrier = MenuDismissalBarrier(count: dismissCount) { [weak self] in
+            self?.finishMenuDismiss()
         }
 
         if let popupWindow {
-            popupWindow.hidePopup(completion: finishDismissal)
+            popupWindow.hidePopup {
+                dismissalBarrier.completeOne()
+            }
         }
 
         if let radialWindow {
-            radialWindow.hideMenu(completion: finishDismissal)
+            radialWindow.hideMenu {
+                dismissalBarrier.completeOne()
+            }
         }
     }
     
@@ -890,18 +965,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         text: String,
         targetProcessIdentifier: pid_t?
     ) {
+        if let targetProcessIdentifier,
+           NSWorkspace.shared.frontmostApplication?.processIdentifier != targetProcessIdentifier {
+            dismissAllMenus()
+            return
+        }
+
+        let requiresEditableTarget: Bool
         switch item.action {
-        case .plugin(let plugin):
-            NSLog("[OpenFire-Debug] handleMenuAction plugin=%@ requiresTrust=%@ textLength=%ld",
-                  plugin.id,
-                  plugin.requiresExecutionTrust ? "true" : "false",
-                  text.count)
         case .builtIn(let action):
-            NSLog("[OpenFire-Debug] handleMenuAction builtIn=%@ textLength=%ld",
-                  String(describing: action),
-                  text.count)
+            requiresEditableTarget = action == .cut || action == .paste
+        case .plugin(let plugin):
+            requiresEditableTarget =
+                plugin.id == Self.cutPluginID ||
+                plugin.id == Self.deletePluginID ||
+                plugin.id == Self.pastePluginID
         default:
-            NSLog("[OpenFire-Debug] handleMenuAction other textLength=%ld", text.count)
+            requiresEditableTarget = false
+        }
+        if requiresEditableTarget && !AccessibilityManager.shared.isFocusedSelectionEditable() {
+            dismissAllMenus()
+            return
         }
 
         switch item.action {
@@ -915,8 +999,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .plugin(let plugin):
             if plugin.requiresExecutionTrust {
                 dismissAllMenus {
-                    NSLog("[OpenFire-Debug] dismissAllMenus completion executing trusted plugin=%@",
-                          plugin.id)
                     PluginManager.shared.executePlugin(
                         plugin,
                         with: text,
@@ -940,12 +1022,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Global Click Monitor
     
     private func setupGlobalClickMonitor() {
+        removeGlobalClickMonitor()
+        globalClickMonitorGeneration &+= 1
+        let monitorGeneration = globalClickMonitorGeneration
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.menuDismissEventMask) { [weak self] _ in
-            self?.dismissAllMenus()
+            DispatchQueue.main.async {
+                guard let self, self.globalClickMonitorGeneration == monitorGeneration else { return }
+                self.dismissAllMenus()
+            }
         }
     }
     
     private func removeGlobalClickMonitor() {
+        globalClickMonitorGeneration &+= 1
         if let monitor = globalClickMonitor {
             NSEvent.removeMonitor(monitor)
             globalClickMonitor = nil

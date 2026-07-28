@@ -1,29 +1,27 @@
 import Cocoa
+import os
 
-final class UpdateChecker: @unchecked Sendable {
+final class UpdateChecker: Sendable {
     static let shared = UpdateChecker()
     static let autoCheckEnabledKey = "AutoCheckUpdates"
 
     private let owner = "Wooden-Robot"
     private let repo = "OpenFire"
     private let lastNotifiedVersionKey = "LastNotifiedVersion"
-    private let stateQueue = DispatchQueue(label: "com.openfire.update-checker-state")
-    private var isCheckingUpdates = false
+    private let isCheckingUpdates = OSAllocatedUnfairLock(initialState: false)
 
     private init() {}
 
     func beginUpdateCheck() -> Bool {
-        stateQueue.sync {
-            guard !isCheckingUpdates else { return false }
-            isCheckingUpdates = true
+        isCheckingUpdates.withLock {
+            guard !$0 else { return false }
+            $0 = true
             return true
         }
     }
 
     func finishUpdateCheck() {
-        stateQueue.sync {
-            isCheckingUpdates = false
-        }
+        isCheckingUpdates.withLock { $0 = false }
     }
 
     func lastNotifiedVersion() -> String? {
@@ -62,8 +60,9 @@ final class UpdateChecker: @unchecked Sendable {
             defer { self.finishUpdateCheck() }
             if let error = error {
                 if showErrors {
+                    let message = self.userFriendlyErrorMessage(for: error)
                     DispatchQueue.main.async {
-                        self.presentUpdateErrorAlert(message: self.userFriendlyErrorMessage(for: error))
+                        self.presentUpdateErrorAlert(message: message)
                     }
                 }
                 return
@@ -123,7 +122,16 @@ final class UpdateChecker: @unchecked Sendable {
 
             let downloadURL = release.assets.first(where: { $0.name.lowercased().hasSuffix(".dmg") })?.browser_download_url
             let targetURL = downloadURL ?? release.html_url
-            guard let urlString = targetURL, let url = URL(string: urlString) else { return }
+            guard let url = self.validatedDownloadURL(targetURL) else {
+                if showErrors {
+                    DispatchQueue.main.async {
+                        self.presentUpdateErrorAlert(
+                            message: "The update server returned an untrusted download address.".localized
+                        )
+                    }
+                }
+                return
+            }
 
             DispatchQueue.main.async {
                 self.presentUpdateAlert(latestVersion: latestVersion, currentVersion: normalizedCurrent, url: url)
@@ -210,6 +218,23 @@ final class UpdateChecker: @unchecked Sendable {
 
     func latestReleaseAPIURL() -> URL? {
         URL(string: "https://api.github.com/repos/\(owner)/\(repo)/releases/latest")
+    }
+
+    func validatedDownloadURL(_ urlString: String?) -> URL? {
+        guard
+            let urlString,
+            let url = URL(string: urlString),
+            url.scheme?.lowercased() == "https",
+            url.user == nil,
+            url.password == nil,
+            url.port == nil || url.port == 443,
+            let host = url.host?.lowercased(),
+            ["github.com", "objects.githubusercontent.com"].contains(host)
+        else {
+            return nil
+        }
+
+        return url
     }
 }
 
