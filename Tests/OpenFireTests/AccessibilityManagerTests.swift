@@ -42,6 +42,29 @@ final class AccessibilityManagerTests: XCTestCase {
         XCTAssertEqual(converted?.y ?? .zero, -100, accuracy: 0.001)
     }
 
+    func testAppKitScreenPointRoundTripsCapturedCoreGraphicsEventLocation() throws {
+        let screens = [
+            NSRect(x: 0, y: 0, width: 1440, height: 900),
+            NSRect(x: 1440, y: -1080, width: 1920, height: 1080)
+        ]
+        let originalPoint = NSPoint(x: 1_600, y: -120)
+        let eventPoint = try XCTUnwrap(
+            AccessibilityManager.coreGraphicsScreenPoint(
+                for: originalPoint,
+                screenFrames: screens
+            )
+        )
+        let restoredPoint = try XCTUnwrap(
+            AccessibilityManager.appKitScreenPoint(
+                for: eventPoint,
+                screenFrames: screens
+            )
+        )
+
+        XCTAssertEqual(restoredPoint.x, originalPoint.x, accuracy: 0.001)
+        XCTAssertEqual(restoredPoint.y, originalPoint.y, accuracy: 0.001)
+    }
+
     @MainActor
     func testAccessibilityAndCoreGraphicsConversionsUseSameGlobalSpace() {
         let screens = [
@@ -316,6 +339,31 @@ final class AccessibilityManagerTests: XCTestCase {
             initialString: "before",
             observedString: "before"
         ))
+    }
+
+    func testCopyFallbackRequiresAQuietPeriodBeforeAcceptingFreshClipboardText() {
+        let initialState = AccessibilityManager.PasteboardState(
+            changeCount: 10,
+            string: "before"
+        )
+        let firstFreshState = AccessibilityManager.PasteboardState(
+            changeCount: 11,
+            string: "first candidate"
+        )
+        let replacementFreshState = AccessibilityManager.PasteboardState(
+            changeCount: 12,
+            string: "replacement candidate"
+        )
+        var candidate = AccessibilityManager.StableFreshPasteboardCandidate()
+
+        XCTAssertFalse(candidate.observe(firstFreshState, relativeTo: initialState))
+        XCTAssertFalse(candidate.observe(firstFreshState, relativeTo: initialState))
+        XCTAssertFalse(candidate.observe(replacementFreshState, relativeTo: initialState))
+        XCTAssertFalse(candidate.observe(replacementFreshState, relativeTo: initialState))
+        XCTAssertTrue(candidate.observe(replacementFreshState, relativeTo: initialState))
+
+        XCTAssertFalse(candidate.observe(initialState, relativeTo: initialState))
+        XCTAssertFalse(candidate.observe(replacementFreshState, relativeTo: initialState))
     }
 
     func testCopyFallbackWorstCaseIncludesLatePollingWindow() {

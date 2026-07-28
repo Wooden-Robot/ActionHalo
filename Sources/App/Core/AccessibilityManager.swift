@@ -228,6 +228,7 @@ final class AccessibilityManager {
     nonisolated static let copyFallbackPollAttempts = 12
     nonisolated static let copyFallbackLatePollAttempts = 8
     nonisolated static let copyFallbackPollInterval: TimeInterval = 0.025
+    nonisolated static let copyFallbackStableObservationSamples = 3
     nonisolated static let maximumPasteboardSnapshotBytes = 256 * 1024 * 1024
     nonisolated static let maximumPasteboardSnapshotInMemoryBytes = 8 * 1024 * 1024
     nonisolated static let maximumPasteboardSnapshotItems = 32
@@ -309,6 +310,36 @@ final class AccessibilityManager {
     struct PasteboardState: Equatable {
         let changeCount: Int
         let string: String?
+    }
+
+    struct StableFreshPasteboardCandidate {
+        private var state: PasteboardState?
+        private var consecutiveSampleCount = 0
+
+        mutating func observe(
+            _ observedState: PasteboardState,
+            relativeTo initialState: PasteboardState
+        ) -> Bool {
+            guard AccessibilityManager.shouldTreatCopiedTextAsFresh(
+                initialChangeCount: initialState.changeCount,
+                observedChangeCount: observedState.changeCount,
+                initialString: initialState.string,
+                observedString: observedState.string
+            ) else {
+                state = nil
+                consecutiveSampleCount = 0
+                return false
+            }
+
+            if state == observedState {
+                consecutiveSampleCount += 1
+            } else {
+                state = observedState
+                consecutiveSampleCount = 1
+            }
+            return consecutiveSampleCount >=
+                AccessibilityManager.copyFallbackStableObservationSamples
+        }
     }
     
     static let shared = AccessibilityManager()
@@ -437,6 +468,20 @@ final class AccessibilityManager {
     ) -> CGPoint? {
         guard let primaryScreenFrame = screenFrames.first else { return nil }
         return CGPoint(x: point.x, y: primaryScreenFrame.maxY - point.y)
+    }
+
+    /// Convert Quartz's top-left global event coordinates back into AppKit's
+    /// bottom-left global coordinate space.
+    static func appKitScreenPoint(for point: CGPoint) -> NSPoint? {
+        appKitScreenPoint(for: point, screenFrames: NSScreen.screens.map(\.frame))
+    }
+
+    nonisolated static func appKitScreenPoint(
+        for point: CGPoint,
+        screenFrames: [NSRect]
+    ) -> NSPoint? {
+        guard let primaryScreenFrame = screenFrames.first else { return nil }
+        return NSPoint(x: point.x, y: primaryScreenFrame.maxY - point.y)
     }
     
     func startWatchdog() {
@@ -735,7 +780,13 @@ final class AccessibilityManager {
             
             // Restore any mutation caused by Cmd+C, including an empty or non-text copy.
             // The final stable-state check prevents overwriting a later clipboard update.
-            if let currentState = Self.stablePasteboardState(from: pasteboard),
+            let contextWasValidBeforeRestore = Self.copyFallbackContextIsValid(
+                coordinator: coordinator,
+                requestID: requestID,
+                expectedProcessIdentifier: expectedProcessIdentifier
+            )
+            if contextWasValidBeforeRestore,
+               let currentState = Self.stablePasteboardState(from: pasteboard),
                Self.shouldRestorePasteboardSnapshot(
                 initialState: initialState,
                 observedState: copyObservation.state,
@@ -1069,6 +1120,7 @@ final class AccessibilityManager {
         attempts: Int = copyFallbackPollAttempts
     ) -> CopyObservation {
         var latestState = startingState ?? initialState
+        var stableFreshCandidate = StableFreshPasteboardCandidate()
 
         for _ in 0..<attempts {
             usleep(useconds_t(copyFallbackPollInterval * 1_000_000))
@@ -1077,12 +1129,7 @@ final class AccessibilityManager {
             }
             latestState = state
 
-            if shouldTreatCopiedTextAsFresh(
-                initialChangeCount: initialState.changeCount,
-                observedChangeCount: state.changeCount,
-                initialString: initialState.string,
-                observedString: state.string
-            ) {
+            if stableFreshCandidate.observe(state, relativeTo: initialState) {
                 return CopyObservation(
                     state: state,
                     hasFreshCopiedText: true
