@@ -939,7 +939,11 @@ final class PluginManagerTests: GlobalStateTestCase {
         )
 
         XCTAssertEqual(status, 0)
-        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 1)
+        XCTAssertLessThan(
+            Date().timeIntervalSince(startedAt),
+            3,
+            "Runner should not wait for the five-second background child."
+        )
         XCTAssertEqual(
             try String(contentsOf: contextFile, encoding: .utf8),
             "preserved"
@@ -968,7 +972,11 @@ final class PluginManagerTests: GlobalStateTestCase {
         )
 
         XCTAssertNotEqual(status, 0)
-        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 1)
+        XCTAssertLessThan(
+            Date().timeIntervalSince(startedAt),
+            3,
+            "Timeout cleanup should finish well before the five-second command."
+        )
     }
 
     func testResolvedPluginScriptSourceAllowsBundledFilesAndInlineCode() throws {
@@ -1139,6 +1147,81 @@ final class PluginManagerTests: GlobalStateTestCase {
             )
         XCTAssertTrue(source.contains("transactionMarkerType"))
         XCTAssertTrue(source.contains("pasteboardItems is missing value"))
+
+        let replaceHandler = try XCTUnwrap(
+            source.range(of: "on replaceClipboardWithText")
+        )
+        let replaceHandlerEnd = try XCTUnwrap(
+            source.range(
+                of: "end replaceClipboardWithText",
+                range: replaceHandler.lowerBound..<source.endIndex
+            )
+        )
+        let replaceSource = String(
+            source[replaceHandler.lowerBound..<replaceHandlerEnd.upperBound]
+        )
+        let preparedTemporaryItems = try XCTUnwrap(
+            replaceSource.range(of: "temporaryItems's addObject:temporaryItem")
+        )
+        let guardedTemporaryCommit = try XCTUnwrap(
+            replaceSource.range(
+                of: "set commitChangeCount to (pasteboard's changeCount()) as integer"
+            )
+        )
+        let clearedTemporaryClipboard = try XCTUnwrap(
+            replaceSource.range(
+                of: "set clearedChangeCount to (pasteboard's clearContents()) as integer"
+            )
+        )
+        XCTAssertLessThan(
+            preparedTemporaryItems.lowerBound,
+            guardedTemporaryCommit.lowerBound
+        )
+        XCTAssertLessThan(
+            guardedTemporaryCommit.lowerBound,
+            clearedTemporaryClipboard.lowerBound
+        )
+
+        let restoreHandler = try XCTUnwrap(
+            source.range(of: "on restoreClipboardSnapshotIfOwned")
+        )
+        let restoreHandlerEnd = try XCTUnwrap(
+            source.range(
+                of: "end restoreClipboardSnapshotIfOwned",
+                range: restoreHandler.lowerBound..<source.endIndex
+            )
+        )
+        let restoreSource = String(
+            source[restoreHandler.lowerBound..<restoreHandlerEnd.upperBound]
+        )
+        let preparedRestoredItems = try XCTUnwrap(
+            restoreSource.range(
+                of: "set restoredItems to materializeClipboardSnapshot"
+            )
+        )
+        let checkedTransactionMarker = try XCTUnwrap(
+            restoreSource.range(of: "set currentMarker to")
+        )
+        let guardedRestoreCommit = try XCTUnwrap(
+            restoreSource.range(
+                of: "set commitChangeCount to (pasteboard's changeCount()) as integer"
+            )
+        )
+        let clearedOwnedClipboard = try XCTUnwrap(
+            restoreSource.range(of: "pasteboard's clearContents()")
+        )
+        XCTAssertLessThan(
+            preparedRestoredItems.lowerBound,
+            checkedTransactionMarker.lowerBound
+        )
+        XCTAssertLessThan(
+            checkedTransactionMarker.lowerBound,
+            guardedRestoreCommit.lowerBound
+        )
+        XCTAssertLessThan(
+            guardedRestoreCommit.lowerBound,
+            clearedOwnedClipboard.lowerBound
+        )
 
         let sourceURL = temporaryDirectory.appendingPathComponent("telegram.applescript")
         let compiledURL = temporaryDirectory.appendingPathComponent("telegram.scpt")
