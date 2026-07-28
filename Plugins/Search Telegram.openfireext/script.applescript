@@ -143,9 +143,6 @@ end captureClipboardSnapshot
 
 on replaceClipboardWithText(newText, transactionMarker, expectedChangeCount, clipboardSnapshot)
     set pasteboard to NSPasteboard's generalPasteboard()
-    if ((pasteboard's changeCount()) as integer) is not expectedChangeCount then
-        error "The clipboard changed before OpenFire could use it."
-    end if
 
     set temporaryItem to NSPasteboardItem's alloc()'s init()
     if not (temporaryItem's setString:newText forType:NSPasteboardTypeString) then
@@ -157,10 +154,18 @@ on replaceClipboardWithText(newText, transactionMarker, expectedChangeCount, cli
 
     set temporaryItems to NSMutableArray's array()
     temporaryItems's addObject:temporaryItem
-    pasteboard's clearContents()
+
+    -- Materialize the replacement before the commit guard so preparation time
+    -- cannot widen the window in which a user's newer copy may be overwritten.
+    set commitChangeCount to (pasteboard's changeCount()) as integer
+    if commitChangeCount is not expectedChangeCount then
+        error "The clipboard changed before OpenFire could use it."
+    end if
+
+    set clearedChangeCount to (pasteboard's clearContents()) as integer
     if not (pasteboard's writeObjects:temporaryItems) then
         try
-            restoreClipboardSnapshot(clipboardSnapshot)
+            restoreClipboardSnapshotIfUnchanged(clipboardSnapshot, clearedChangeCount)
         end try
         error "Unable to write the temporary clipboard text."
     end if
@@ -170,6 +175,9 @@ end replaceClipboardWithText
 on restoreClipboardSnapshotIfOwned(clipboardSnapshot, expectedChangeCount, transactionMarker)
     if expectedChangeCount is missing value then return false
 
+    -- Rebuild every representation before checking ownership. Some clipboard
+    -- payloads are large, and rebuilding them after the check creates a race.
+    set restoredItems to materializeClipboardSnapshot(clipboardSnapshot)
     set pasteboard to NSPasteboard's generalPasteboard()
     if ((pasteboard's changeCount()) as integer) is not expectedChangeCount then return false
 
@@ -182,11 +190,33 @@ on restoreClipboardSnapshotIfOwned(clipboardSnapshot, expectedChangeCount, trans
     if currentMarker is missing value then return false
     if (currentMarker as text) is not transactionMarker then return false
 
-    restoreClipboardSnapshot(clipboardSnapshot)
+    -- Reading the item and marker is not atomic with clearContents(), so verify
+    -- the generation once more at the narrowest possible commit point.
+    set commitChangeCount to (pasteboard's changeCount()) as integer
+    if commitChangeCount is not expectedChangeCount then return false
+
+    pasteboard's clearContents()
+    if (restoredItems's |count|()) > 0 then
+        if not (pasteboard's writeObjects:restoredItems) then error "Unable to restore the clipboard."
+    end if
     return true
 end restoreClipboardSnapshotIfOwned
 
-on restoreClipboardSnapshot(clipboardSnapshot)
+on restoreClipboardSnapshotIfUnchanged(clipboardSnapshot, expectedChangeCount)
+    set restoredItems to materializeClipboardSnapshot(clipboardSnapshot)
+    set pasteboard to NSPasteboard's generalPasteboard()
+
+    set commitChangeCount to (pasteboard's changeCount()) as integer
+    if commitChangeCount is not expectedChangeCount then return false
+
+    pasteboard's clearContents()
+    if (restoredItems's |count|()) > 0 then
+        if not (pasteboard's writeObjects:restoredItems) then error "Unable to restore the clipboard."
+    end if
+    return true
+end restoreClipboardSnapshotIfUnchanged
+
+on materializeClipboardSnapshot(clipboardSnapshot)
     set restoredItems to NSMutableArray's array()
 
     repeat with rawItemSnapshot in clipboardSnapshot
@@ -203,9 +233,5 @@ on restoreClipboardSnapshot(clipboardSnapshot)
         restoredItems's addObject:restoredItem
     end repeat
 
-    set pasteboard to NSPasteboard's generalPasteboard()
-    pasteboard's clearContents()
-    if (restoredItems's |count|()) > 0 then
-        if not (pasteboard's writeObjects:restoredItems) then error "Unable to restore the clipboard."
-    end if
-end restoreClipboardSnapshot
+    return restoredItems
+end materializeClipboardSnapshot
