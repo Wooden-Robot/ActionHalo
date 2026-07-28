@@ -300,6 +300,28 @@ final class AccessibilityManagerTests: XCTestCase {
         ))
     }
 
+    func testCancelledCopyFallbackStillRollsBackItsClipboardMutationWithoutDeliveringText() {
+        let initialState = AccessibilityManager.PasteboardState(
+            changeCount: 10,
+            string: "before"
+        )
+        let copiedState = AccessibilityManager.PasteboardState(
+            changeCount: 11,
+            string: "temporary copied text"
+        )
+
+        XCTAssertTrue(AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialState: initialState,
+            observedState: copiedState,
+            currentState: copiedState
+        ))
+        XCTAssertNil(AccessibilityManager.copyFallbackResult(
+            copiedText: copiedState.string,
+            hasFreshCopiedText: true,
+            contextIsValid: false
+        ))
+    }
+
     func testStablePasteboardStateRetriesWhenClipboardChangesDuringRead() {
         var counts = [10, 11, 11, 11]
         var strings = ["stale", "copied"]
