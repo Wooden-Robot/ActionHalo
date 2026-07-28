@@ -1,4 +1,5 @@
 import Cocoa
+import Darwin
 import JavaScriptCore
 import os
 
@@ -1905,102 +1906,92 @@ final class PluginManager: Sendable {
         return true
     }
 
-    static func processList(from psOutput: String) -> [(pid: pid_t, parentPID: pid_t)] {
-        psOutput
-            .split(whereSeparator: \.isNewline)
-            .compactMap { line in
-                let parts = line.split(whereSeparator: \.isWhitespace)
-                guard parts.count >= 2,
-                      let pid = pid_t(parts[0]),
-                      let parentPID = pid_t(parts[1]) else {
-                    return nil
-                }
-                return (pid: pid, parentPID: parentPID)
-            }
-    }
-
-    static func processTreeTerminationOrder(
-        rootPID: pid_t,
-        processList: [(pid: pid_t, parentPID: pid_t)]
-    ) -> [pid_t] {
-        var childrenByParent: [pid_t: [pid_t]] = [:]
-        for process in processList {
-            childrenByParent[process.parentPID, default: []].append(process.pid)
-        }
-
-        for parent in childrenByParent.keys {
-            childrenByParent[parent]?.sort()
-        }
-
-        var order: [pid_t] = []
-        func appendSubtree(_ pid: pid_t) {
-            for childPID in childrenByParent[pid] ?? [] {
-                appendSubtree(childPID)
-            }
-            order.append(pid)
-        }
-        appendSubtree(rootPID)
-        return order
-    }
-
-    private func runProcessWithTimeout(_ process: Process, timeout: TimeInterval, logPrefix: String) {
+    @discardableResult
+    func runProcessWithTimeout(
+        _ process: Process,
+        timeout: TimeInterval,
+        logPrefix: String
+    ) -> Int32? {
         let errorPipe = Pipe()
-        process.standardError = errorPipe
-        if process.standardOutput == nil, let nullDevice = FileHandle(forWritingAtPath: "/dev/null") {
-            process.standardOutput = nullDevice
-        }
         let stderrAccumulator = PluginProcessStderrAccumulator()
+        let stderrReachedEOF = DispatchSemaphore(value: 0)
         errorPipe.fileHandleForReading.readabilityHandler = { handle in
             let availableData = handle.availableData
-            guard !availableData.isEmpty else { return }
+            guard !availableData.isEmpty else {
+                stderrReachedEOF.signal()
+                return
+            }
             stderrAccumulator.append(availableData)
         }
 
-        let semaphore = DispatchSemaphore(value: 0)
-        process.terminationHandler = { _ in
-            semaphore.signal()
-        }
-
+        let rootPID: pid_t
+        let stderrReadFileDescriptor =
+            errorPipe.fileHandleForReading.fileDescriptor
+        let stderrWriteFileDescriptor =
+            errorPipe.fileHandleForWriting.fileDescriptor
         do {
-            try process.run()
+            rootPID = try Self.spawnPluginProcess(
+                process,
+                standardErrorReadFileDescriptor: stderrReadFileDescriptor,
+                standardErrorFileDescriptor: stderrWriteFileDescriptor
+            )
         } catch {
             errorPipe.fileHandleForReading.readabilityHandler = nil
-            NSLog("[OpenFire] Failed to launch \(logPrefix): \(error.localizedDescription)")
-            return
-        }
-
-        let waitResult = semaphore.wait(timeout: .now() + timeout)
-        if waitResult == .timedOut {
-            NSLog("[OpenFire] \(logPrefix) timed out after \(Int(timeout))s, terminating process.")
-            if process.isRunning {
-                Self.terminateProcessTree(rootPID: process.processIdentifier, signal: SIGTERM)
-                let terminationResult = semaphore.wait(timeout: .now() + 2)
-                if terminationResult == .timedOut, process.isRunning {
-                    // Re-scan before escalation. Never signal PIDs retained from an older snapshot,
-                    // because an exited child's PID may already belong to an unrelated process.
-                    Self.terminateProcessTree(rootPID: process.processIdentifier, signal: SIGKILL)
-                    _ = semaphore.wait(timeout: .now() + 2)
-                }
-            }
-        }
-
-        guard !process.isRunning else {
-            errorPipe.fileHandleForReading.readabilityHandler = nil
+            try? errorPipe.fileHandleForWriting.close()
             try? errorPipe.fileHandleForReading.close()
+            NSLog("[OpenFire] Failed to launch \(logPrefix): \(error.localizedDescription)")
+            return nil
+        }
+        try? errorPipe.fileHandleForWriting.close()
+
+        let initialWait = Self.waitForChildProcess(
+            rootPID,
+            timeout: max(0, timeout)
+        )
+        let rawWaitStatus: Int32?
+        switch initialWait {
+        case .exited(let status):
+            rawWaitStatus = status
+            Self.terminateRemainingProcessGroup(rootPID)
+        case .timedOut:
+            NSLog("[OpenFire] \(logPrefix) timed out after \(Int(timeout))s, terminating process.")
+            Self.signalProcessGroup(rootPID, signal: SIGTERM)
+            switch Self.waitForChildProcess(rootPID, timeout: 2) {
+            case .exited(let status):
+                rawWaitStatus = status
+            case .timedOut:
+                Self.signalProcessGroup(rootPID, signal: SIGKILL)
+                if case .exited(let status) = Self.waitForChildProcess(rootPID, timeout: 2) {
+                    rawWaitStatus = status
+                } else {
+                    rawWaitStatus = nil
+                }
+            case .unavailable:
+                rawWaitStatus = nil
+            }
+            Self.terminateRemainingProcessGroup(rootPID)
+        case .unavailable:
+            rawWaitStatus = nil
+            Self.signalProcessGroup(rootPID, signal: SIGKILL)
+        }
+
+        let terminationStatus = rawWaitStatus.map(Self.terminationStatus(fromWaitStatus:))
+        if let terminationStatus, Self.isVerbosePluginLoggingEnabled() {
+            Self.verboseLog("\(logPrefix) process finished with exit code: \(terminationStatus)")
+        } else if terminationStatus == nil {
             NSLog("[OpenFire] \(logPrefix) did not exit after termination escalation.")
-            return
         }
 
-        if Self.isVerbosePluginLoggingEnabled() {
-            Self.verboseLog("\(logPrefix) process finished with exit code: \(process.terminationStatus)")
-        }
-
+        // A descendant can deliberately detach and keep stderr open. Never use
+        // readDataToEndOfFile here: cleanup must remain bounded even when EOF
+        // never arrives.
+        _ = stderrReachedEOF.wait(timeout: .now() + 0.2)
         errorPipe.fileHandleForReading.readabilityHandler = nil
-        let remainingErrorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        stderrAccumulator.append(remainingErrorData)
+        try? errorPipe.fileHandleForReading.close()
         let (errorData, wasStderrTruncated) = stderrAccumulator.snapshot()
         if !errorData.isEmpty,
            var errorStr = String(data: errorData, encoding: .utf8),
+           let terminationStatus,
            let message = Self.pluginProcessStderrLogMessage(
             logPrefix: logPrefix,
             stderr: {
@@ -2009,45 +2000,203 @@ final class PluginManager: Sendable {
                 }
                 return errorStr
             }(),
-            terminationStatus: process.terminationStatus,
+            terminationStatus: terminationStatus,
             verboseLoggingEnabled: Self.isVerbosePluginLoggingEnabled()
            ) {
             NSLog("[OpenFire] %@", message)
         }
+        return terminationStatus
     }
 
-    private static func currentProcessList() -> [(pid: pid_t, parentPID: pid_t)] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-axo", "pid=,ppid="]
+    private enum ChildProcessWaitResult {
+        case exited(Int32)
+        case timedOut
+        case unavailable
+    }
 
-        let outputPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = FileHandle(forWritingAtPath: "/dev/null")
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            NSLog("[OpenFire] Failed to inspect child processes: \(error.localizedDescription)")
-            return []
+    private static func spawnPluginProcess(
+        _ process: Process,
+        standardErrorReadFileDescriptor: Int32,
+        standardErrorFileDescriptor: Int32
+    ) throws -> pid_t {
+        guard let executableURL = process.executableURL else {
+            throw CocoaError(.executableNotLoadable)
         }
 
-        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
-        return processList(from: output)
-    }
-
-    @discardableResult
-    private static func terminateProcessTree(rootPID: pid_t, signal: Int32) -> [pid_t] {
-        let order = processTreeTerminationOrder(rootPID: rootPID, processList: currentProcessList())
-        terminateProcessIDs(order, signal: signal)
-        return order
-    }
-
-    private static func terminateProcessIDs(_ pids: [pid_t], signal: Int32) {
-        for pid in pids {
-            kill(pid, signal)
+        var fileActions: posix_spawn_file_actions_t?
+        var attributes: posix_spawnattr_t?
+        guard posix_spawn_file_actions_init(&fileActions) == 0 else {
+            throw CocoaError(.executableNotLoadable)
         }
+        defer {
+            posix_spawn_file_actions_destroy(&fileActions)
+        }
+        guard posix_spawnattr_init(&attributes) == 0 else {
+            throw CocoaError(.executableNotLoadable)
+        }
+        defer {
+            posix_spawnattr_destroy(&attributes)
+        }
+
+        guard posix_spawn_file_actions_addclose(
+            &fileActions,
+            standardErrorReadFileDescriptor
+        ) == 0,
+        posix_spawn_file_actions_adddup2(
+            &fileActions,
+            standardErrorFileDescriptor,
+            STDERR_FILENO
+        ) == 0,
+        posix_spawn_file_actions_addclose(
+            &fileActions,
+            standardErrorFileDescriptor
+        ) == 0 else {
+            throw CocoaError(.executableNotLoadable)
+        }
+
+        let addNullOutputResult = "/dev/null".withCString {
+            posix_spawn_file_actions_addopen(
+                &fileActions,
+                STDOUT_FILENO,
+                $0,
+                O_WRONLY,
+                0
+            )
+        }
+        guard addNullOutputResult == 0 else {
+            throw CocoaError(.executableNotLoadable)
+        }
+
+        let spawnFlags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT)
+        guard posix_spawnattr_setflags(&attributes, spawnFlags) == 0,
+              posix_spawnattr_setpgroup(&attributes, 0) == 0 else {
+            throw CocoaError(.executableNotLoadable)
+        }
+
+        let targetExecutable = executableURL.path
+        let targetArguments = process.arguments ?? []
+        let spawnExecutable: String
+        let spawnArguments: [String]
+        if let currentDirectory = process.currentDirectoryURL?.path {
+            spawnExecutable = "/bin/sh"
+            spawnArguments = [
+                "sh",
+                "-c",
+                "cd \"$1\" || exit 126\nshift\nexec \"$@\"",
+                "openfire-plugin-runner",
+                currentDirectory,
+                targetExecutable
+            ] + targetArguments
+        } else {
+            spawnExecutable = targetExecutable
+            spawnArguments = [targetExecutable] + targetArguments
+        }
+
+        let environment = (process.environment ?? ProcessInfo.processInfo.environment)
+            .map { "\($0.key)=\($0.value)" }
+            .sorted()
+        var childPID: pid_t = 0
+        let spawnResult = try withMutableCStringArray(spawnArguments) { arguments in
+            try withMutableCStringArray(environment) { environment in
+                spawnExecutable.withCString {
+                    posix_spawn(
+                        &childPID,
+                        $0,
+                        &fileActions,
+                        &attributes,
+                        arguments,
+                        environment
+                    )
+                }
+            }
+        }
+        guard spawnResult == 0 else {
+            throw NSError(
+                domain: NSPOSIXErrorDomain,
+                code: Int(spawnResult),
+                userInfo: nil
+            )
+        }
+        return childPID
+    }
+
+    private static func withMutableCStringArray<Result>(
+        _ strings: [String],
+        body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) throws -> Result
+    ) throws -> Result {
+        guard strings.allSatisfy({ !$0.contains("\0") }) else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(EINVAL))
+        }
+        var pointers: [UnsafeMutablePointer<CChar>?] = strings.map { strdup($0) }
+        defer {
+            pointers.forEach { free($0) }
+        }
+        guard pointers.allSatisfy({ $0 != nil }) else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(ENOMEM))
+        }
+        pointers.append(nil)
+        return try pointers.withUnsafeMutableBufferPointer {
+            try body($0.baseAddress!)
+        }
+    }
+
+    private static func waitForChildProcess(
+        _ pid: pid_t,
+        timeout: TimeInterval
+    ) -> ChildProcessWaitResult {
+        let deadline = ProcessInfo.processInfo.systemUptime + max(0, timeout)
+        var waitStatus: Int32 = 0
+
+        while true {
+            let waitResult = waitpid(pid, &waitStatus, WNOHANG)
+            if waitResult == pid {
+                return .exited(waitStatus)
+            }
+            if waitResult == -1 {
+                if errno == EINTR {
+                    continue
+                }
+                return .unavailable
+            }
+            if ProcessInfo.processInfo.systemUptime >= deadline {
+                return .timedOut
+            }
+            usleep(10_000)
+        }
+    }
+
+    private static func signalProcessGroup(_ groupID: pid_t, signal: Int32) {
+        guard groupID > 1 else { return }
+        _ = kill(-groupID, signal)
+    }
+
+    private static func processGroupExists(_ groupID: pid_t) -> Bool {
+        guard groupID > 1 else { return false }
+        if kill(-groupID, 0) == 0 {
+            return true
+        }
+        return errno == EPERM
+    }
+
+    private static func terminateRemainingProcessGroup(_ groupID: pid_t) {
+        guard processGroupExists(groupID) else { return }
+        signalProcessGroup(groupID, signal: SIGTERM)
+
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.2
+        while processGroupExists(groupID),
+              ProcessInfo.processInfo.systemUptime < deadline {
+            usleep(10_000)
+        }
+        if processGroupExists(groupID) {
+            signalProcessGroup(groupID, signal: SIGKILL)
+        }
+    }
+
+    nonisolated static func terminationStatus(fromWaitStatus waitStatus: Int32) -> Int32 {
+        let terminatingSignal = waitStatus & 0x7f
+        if terminatingSignal == 0 {
+            return (waitStatus >> 8) & 0xff
+        }
+        return 128 + terminatingSignal
     }
 }

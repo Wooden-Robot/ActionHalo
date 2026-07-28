@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import OpenFire
 
@@ -904,44 +905,70 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertEqual(String(data: stderrData, encoding: .utf8), "abcd")
     }
 
-    func testProcessListParserIgnoresMalformedRows() {
-        let processes = PluginManager.processList(from: """
-             PID PPID
-             10  1
-             nope 10
-             11  10 extra
-        """)
+    func testPluginProcessRunnerCleansBackgroundChildHoldingStderrWithoutBlocking() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(temporaryDirectory)
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory,
+            withIntermediateDirectories: true
+        )
+        let childPIDFile = temporaryDirectory.appendingPathComponent("child.pid")
+        let contextFile = temporaryDirectory.appendingPathComponent("runner-context.txt")
 
-        XCTAssertEqual(processes.map(\.pid), [10, 11])
-        XCTAssertEqual(processes.map(\.parentPID), [1, 10])
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [
+            "-c",
+            """
+            printf '%s' "$OPENFIRE_TEST_VALUE" > runner-context.txt
+            sleep 5 >&2 &
+            echo $! > child.pid
+            """
+        ]
+        process.currentDirectoryURL = temporaryDirectory
+        var environment = ProcessInfo.processInfo.environment
+        environment["OPENFIRE_TEST_VALUE"] = "preserved"
+        process.environment = environment
+
+        let startedAt = Date()
+        let status = PluginManager.shared.runProcessWithTimeout(
+            process,
+            timeout: 1,
+            logPrefix: "Background child test"
+        )
+
+        XCTAssertEqual(status, 0)
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 1)
+        XCTAssertEqual(
+            try String(contentsOf: contextFile, encoding: .utf8),
+            "preserved"
+        )
+
+        let childPIDText = try String(contentsOf: childPIDFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let childPID = try XCTUnwrap(pid_t(childPIDText))
+        for _ in 0..<20 where kill(childPID, 0) == 0 {
+            usleep(10_000)
+        }
+        XCTAssertEqual(kill(childPID, 0), -1)
+        XCTAssertEqual(errno, ESRCH)
     }
 
-    func testProcessTreeTerminationOrderKillsChildrenBeforeParents() {
-        let processes: [(pid: pid_t, parentPID: pid_t)] = [
-            (pid: 10, parentPID: 1),
-            (pid: 11, parentPID: 10),
-            (pid: 12, parentPID: 11),
-            (pid: 13, parentPID: 10),
-            (pid: 99, parentPID: 1)
-        ]
+    func testPluginProcessRunnerTerminatesTimedOutProcessGroup() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "sleep 5"]
 
-        XCTAssertEqual(
-            PluginManager.processTreeTerminationOrder(rootPID: 10, processList: processes),
-            [12, 11, 13, 10]
+        let startedAt = Date()
+        let status = PluginManager.shared.runProcessWithTimeout(
+            process,
+            timeout: 0.02,
+            logPrefix: "Timeout test"
         )
-    }
 
-    func testProcessTreeEscalationUsesOnlyCurrentlyVerifiedDescendants() {
-        let currentProcesses: [(pid: pid_t, parentPID: pid_t)] = [
-            (pid: 10, parentPID: 1),
-            (pid: 12, parentPID: 10),
-            (pid: 11, parentPID: 1)
-        ]
-
-        XCTAssertEqual(
-            PluginManager.processTreeTerminationOrder(rootPID: 10, processList: currentProcesses),
-            [12, 10]
-        )
+        XCTAssertNotEqual(status, 0)
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 1)
     }
 
     func testResolvedPluginScriptSourceAllowsBundledFilesAndInlineCode() throws {
@@ -1046,6 +1073,88 @@ final class PluginManagerTests: GlobalStateTestCase {
             baseEnvironment: [:]
         )
         XCTAssertEqual(normalEnvironment["OPENFIRE_TEXT"], "hello")
+    }
+
+    func testBuiltInRunShellReadsBinaryUnsafeSelectionFromTextFile() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(temporaryDirectory)
+        let desktopDirectory = temporaryDirectory.appendingPathComponent("Desktop")
+        try FileManager.default.createDirectory(
+            at: desktopDirectory,
+            withIntermediateDirectories: true
+        )
+        let textFile = temporaryDirectory.appendingPathComponent("selection.txt")
+        let selectedText = Data([0x61, 0x00, 0x62])
+        try selectedText.write(to: textFile)
+
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let scriptURL = repositoryRoot.appendingPathComponent(
+            "Plugins/Run Shell.openfireext/script.sh"
+        )
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [scriptURL.path]
+        var environment = ProcessInfo.processInfo.environment
+        environment["HOME"] = temporaryDirectory.path
+        environment["OPENFIRE_TEXT_FILE"] = textFile.path
+        environment.removeValue(forKey: "OPENFIRE_TEXT")
+        process.environment = environment
+
+        try process.run()
+        process.waitUntilExit()
+
+        XCTAssertEqual(process.terminationStatus, 0)
+        var expectedLog = Data("OpenFire triggered this script!\nSelected text was: ".utf8)
+        expectedLog.append(selectedText)
+        expectedLog.append(Data("\n".utf8))
+        XCTAssertEqual(
+            try Data(contentsOf: desktopDirectory.appendingPathComponent("openfire.log")),
+            expectedLog
+        )
+    }
+
+    func testTelegramScriptCompilesWithTransactionalClipboardHandlers() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(temporaryDirectory)
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory,
+            withIntermediateDirectories: true
+        )
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let scriptURL = repositoryRoot.appendingPathComponent(
+            "Plugins/Search Telegram.openfireext/script.applescript"
+        )
+        let source = try String(contentsOf: scriptURL, encoding: .utf8)
+            .replacingOccurrences(
+                of: "(system attribute \"OPENFIRE_TEXT\")",
+                with: "\"test\""
+            )
+        XCTAssertTrue(source.contains("transactionMarkerType"))
+        XCTAssertTrue(source.contains("pasteboardItems is missing value"))
+
+        let sourceURL = temporaryDirectory.appendingPathComponent("telegram.applescript")
+        let compiledURL = temporaryDirectory.appendingPathComponent("telegram.scpt")
+        try source.write(to: sourceURL, atomically: true, encoding: .utf8)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osacompile")
+        process.arguments = ["-o", compiledURL.path, sourceURL.path]
+
+        let status = PluginManager.shared.runProcessWithTimeout(
+            process,
+            timeout: 5,
+            logPrefix: "Telegram AppleScript compile"
+        )
+
+        XCTAssertEqual(status, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: compiledURL.path))
     }
 
     func testDeletePluginUsesActualContainedDirectoryInsteadOfIdentifierPath() throws {

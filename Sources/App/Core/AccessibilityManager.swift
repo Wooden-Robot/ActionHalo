@@ -779,14 +779,10 @@ final class AccessibilityManager {
             }
             
             // Restore any mutation caused by Cmd+C, including an empty or non-text copy.
-            // The final stable-state check prevents overwriting a later clipboard update.
-            let contextWasValidBeforeRestore = Self.copyFallbackContextIsValid(
-                coordinator: coordinator,
-                requestID: requestID,
-                expectedProcessIdentifier: expectedProcessIdentifier
-            )
-            if contextWasValidBeforeRestore,
-               let currentState = Self.stablePasteboardState(from: pasteboard),
+            // Request validity controls result delivery, not rollback. The pasteboard
+            // state comparison is the ownership check that prevents overwriting a
+            // later user or third-party update.
+            if let currentState = Self.stablePasteboardState(from: pasteboard),
                Self.shouldRestorePasteboardSnapshot(
                 initialState: initialState,
                 observedState: copyObservation.state,
@@ -807,9 +803,11 @@ final class AccessibilityManager {
                 requestID: requestID,
                 expectedProcessIdentifier: expectedProcessIdentifier
             )
-            let result = contextIsStillValid &&
-                copyObservation.hasFreshCopiedText &&
-                (trimmed?.isEmpty == false) ? trimmed : nil
+            let result = Self.copyFallbackResult(
+                copiedText: trimmed,
+                hasFreshCopiedText: copyObservation.hasFreshCopiedText,
+                contextIsValid: contextIsStillValid
+            )
 
             Self.finishCopyFallbackRequest(
                 coordinator: coordinator,
@@ -1168,6 +1166,19 @@ final class AccessibilityManager {
     ) -> Bool {
         guard observedState != initialState else { return false }
         return currentState == observedState
+    }
+
+    nonisolated static func copyFallbackResult(
+        copiedText: String?,
+        hasFreshCopiedText: Bool,
+        contextIsValid: Bool
+    ) -> String? {
+        guard contextIsValid, hasFreshCopiedText,
+              let copiedText,
+              !copiedText.isEmpty else {
+            return nil
+        }
+        return copiedText
     }
 
     nonisolated static func shouldAssumeFocusedTextInputContainsClickWhenBoundsUnavailable() -> Bool {
