@@ -9,7 +9,12 @@ private let currentBundle = Bundle.main
 extension String {
     /// Returns a localized version of the string using standard macOS `NSLocalizedString`
     var localized: String {
-        let preferredLanguage = UserDefaults.standard.string(forKey: "AppLanguage") ?? "auto"
+        localized(
+            preferredLanguage: UserDefaults.standard.string(forKey: "AppLanguage") ?? "auto"
+        )
+    }
+
+    func localized(preferredLanguage: String) -> String {
         var bundle = currentBundle
         
         if preferredLanguage != "auto" {

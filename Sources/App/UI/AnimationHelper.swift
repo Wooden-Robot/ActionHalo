@@ -2,10 +2,14 @@ import Cocoa
 import QuartzCore
 
 /// Animation helpers for the radial menu
+@MainActor
 struct AnimationHelper {
     
     /// Spring animation for menu appearing with a sci-fi spin
-    static func showAnimation(for view: NSView, completion: (() -> Void)? = nil) {
+    static func showAnimation(
+        for view: NSView,
+        completion: (@MainActor @Sendable () -> Void)? = nil
+    ) {
         view.alphaValue = 0
         
         // Ensure layer is ready
@@ -59,9 +63,11 @@ struct AnimationHelper {
         // Ensure the final transform snaps to identity when animation completes
         CATransaction.begin()
         CATransaction.setCompletionBlock {
-            view.layer?.transform = CATransform3DIdentity
-            view.layer?.removeAnimation(forKey: "sciFiReveal")
-            completion?()
+            Task { @MainActor in
+                view.layer?.transform = CATransform3DIdentity
+                view.layer?.removeAnimation(forKey: "sciFiReveal")
+                completion?()
+            }
         }
         
         view.alphaValue = 1.0
@@ -70,7 +76,10 @@ struct AnimationHelper {
     }
     
     /// Ease-out animation for menu disappearing with rotation
-    static func hideAnimation(for view: NSView, completion: (() -> Void)? = nil) {
+    static func hideAnimation(
+        for view: NSView,
+        completion: (@MainActor @Sendable () -> Void)? = nil
+    ) {
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.15
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
@@ -80,7 +89,11 @@ struct AnimationHelper {
             transform = CATransform3DScale(transform, 0.4, 0.4, 1)
             transform = CATransform3DRotate(transform, .pi / 4, 0, 0, 1) // spin away
             view.layer?.transform = transform
-        }, completionHandler: completion)
+        }, completionHandler: {
+            Task { @MainActor in
+                completion?()
+            }
+        })
     }
     
     /// Hover scale animation for menu sectors

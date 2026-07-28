@@ -160,16 +160,19 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
 
         guard !protectedPlugins.isEmpty else { return }
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        let applyStatuses: @MainActor @Sendable ([String: Bool]) -> Void = { [weak self] statuses in
+            guard let self, self.trustStatusGeneration == generation else { return }
+            self.trustStatuses = statuses
+            self.tableView.reloadData()
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
             var statuses: [String: Bool] = [:]
             for plugin in protectedPlugins {
                 statuses[plugin.id] = PluginManager.shared.isExecutionTrusted(for: plugin)
             }
 
-            DispatchQueue.main.async {
-                guard let self, self.trustStatusGeneration == generation else { return }
-                self.trustStatuses = statuses
-                self.tableView.reloadData()
+            Task { @MainActor in
+                applyStatuses(statuses)
             }
         }
     }

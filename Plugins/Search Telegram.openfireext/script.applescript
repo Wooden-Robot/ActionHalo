@@ -5,86 +5,92 @@ if envText is "" or envText is missing value then return
 set maxLaunchAttempts to 50
 set telegramWasRunning to false
 set readyStreak to 0
+set clipboardWasCaptured to false
 
 try
     set oldClipboard to the clipboard
+    set clipboardWasCaptured to true
 on error
-    set oldClipboard to ""
+    set clipboardWasCaptured to false
 end try
+if not clipboardWasCaptured then return
 
-do shell script "/usr/bin/logger '[OpenFire-Script] Telegram search start'"
+try
+    tell application "System Events"
+        set telegramWasRunning to (exists process "Telegram")
+    end tell
 
-tell application "System Events"
-    set telegramWasRunning to (exists process "Telegram")
-end tell
+    tell application "Telegram"
+        activate
+    end tell
 
-tell application "Telegram"
-    activate
-end tell
-
-tell application "System Events"
-    repeat with attempt from 1 to maxLaunchAttempts
-        if exists process "Telegram" then
-            tell process "Telegram"
-                try
-                    set frontmost to true
-                end try
-
-                if (exists window 1) then
+    tell application "System Events"
+        repeat with attempt from 1 to maxLaunchAttempts
+            if exists process "Telegram" then
+                tell process "Telegram"
                     try
-                        if enabled of menu item "Global Search" of menu 1 of menu bar item "Edit" of menu bar 1 then
-                            set readyStreak to readyStreak + 1
-                        else
-                            set readyStreak to 0
-                        end if
-                    on error
-                        set readyStreak to 0
+                        set frontmost to true
                     end try
 
-                    if readyStreak ≥ 2 then exit repeat
-                else
-                    set readyStreak to 0
-                end if
-            end tell
-        end if
-        delay 0.1
-    end repeat
+                    if (exists window 1) then
+                        try
+                            if enabled of menu item "Global Search" of menu 1 of menu bar item "Edit" of menu bar 1 then
+                                set readyStreak to readyStreak + 1
+                            else
+                                set readyStreak to 0
+                            end if
+                        on error
+                            set readyStreak to 0
+                        end try
 
-    if not (exists process "Telegram") then error "Telegram process not found"
-end tell
+                        if readyStreak ≥ 2 then exit repeat
+                    else
+                        set readyStreak to 0
+                    end if
+                end tell
+            end if
+            delay 0.1
+        end repeat
 
-if telegramWasRunning then
-    delay 0.1
-else
-    do shell script "/usr/bin/logger '[OpenFire-Script] Telegram cold start ready gate passed'"
-    delay 0.6
-end if
-
-tell application "System Events"
-    tell process "Telegram"
-        set frontmost to true
-        set the clipboard to envText
-
-        do shell script "/usr/bin/logger '[OpenFire-Script] Telegram search attempt 1 menu'"
-        click menu item "Global Search" of menu 1 of menu bar item "Edit" of menu bar 1
-        delay 0.22
-
-        do shell script "/usr/bin/logger '[OpenFire-Script] Telegram search attempt 1 shortcut Cmd+Shift+F'"
-        keystroke "F" using {command down, shift down}
-        delay 0.32
-
-        try
-            keystroke "a" using {command down}
-            delay 0.05
-            key code 51
-            delay 0.05
-        end try
-
-        do shell script "/usr/bin/logger '[OpenFire-Script] Telegram search paste once'"
-        keystroke "v" using {command down}
+        if not (exists process "Telegram") then error "Telegram process not found"
     end tell
-end tell
 
-delay 0.2
-set the clipboard to oldClipboard
-do shell script "/usr/bin/logger '[OpenFire-Script] Telegram search end'"
+    if telegramWasRunning then
+        delay 0.1
+    else
+        delay 0.6
+    end if
+
+    tell application "System Events"
+        tell process "Telegram"
+            set frontmost to true
+            set the clipboard to envText
+
+            click menu item "Global Search" of menu 1 of menu bar item "Edit" of menu bar 1
+            delay 0.22
+
+            keystroke "F" using {command down, shift down}
+            delay 0.32
+
+            try
+                keystroke "a" using {command down}
+                delay 0.05
+                key code 51
+                delay 0.05
+            end try
+
+            keystroke "v" using {command down}
+        end tell
+    end tell
+
+    delay 0.2
+on error errorMessage number errorNumber
+    if clipboardWasCaptured then
+        try
+            set the clipboard to oldClipboard
+        end try
+    end if
+    error errorMessage number errorNumber
+end try
+
+if clipboardWasCaptured then set the clipboard to oldClipboard

@@ -202,6 +202,22 @@ class ShortcutRecorderField: NSView {
 
 /// A visual editor window for creating and modifying OpenFire plugins
 final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegate {
+    enum PluginPackageWriteError: LocalizedError, Sendable {
+        case unsafeTemplate
+        case invalidConfiguration
+        case unsafeDestination
+
+        var errorDescription: String? {
+            switch self {
+            case .unsafeTemplate:
+                return "The existing plugin package is unsafe or exceeds package limits.".localized
+            case .invalidConfiguration:
+                return "The saved plugin configuration failed final validation.".localized
+            case .unsafeDestination:
+                return "The plugin destination is outside the managed plugin directory.".localized
+            }
+        }
+    }
 
     private var editingPlugin: Plugin?
     
@@ -260,12 +276,15 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         }
 
         editingPluginTrustStatus = nil
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        let applyTrustStatus: @MainActor @Sendable (Bool) -> Void = { [weak self] isTrusted in
+            guard let self, self.trustStatusGeneration == generation else { return }
+            self.editingPluginTrustStatus = isTrusted
+            self.typeChanged()
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
             let isTrusted = PluginManager.shared.isExecutionTrusted(for: plugin)
-            DispatchQueue.main.async {
-                guard let self, self.trustStatusGeneration == generation else { return }
-                self.editingPluginTrustStatus = isTrusted
-                self.typeChanged()
+            Task { @MainActor in
+                applyTrustStatus(isTrusted)
             }
         }
     }
@@ -811,11 +830,8 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         case 0 where content.isEmpty:
             return "URL cannot be empty".localized
         case 0:
-            let sampleURL = content.replacingOccurrences(of: "{text}", with: "openfire")
-            guard let parsedURL = URL(string: sampleURL),
-                  let scheme = parsedURL.scheme,
-                  !scheme.isEmpty else {
-                return "URL must be a valid absolute URL.".localized
+            guard PluginManager.isAllowedPluginURLTemplate(content) else {
+                return "URL must use http, https, mailto, or dict.".localized
             }
             return nil
         case 1 where content.isEmpty:
@@ -904,77 +920,51 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         let isCustomIcon = (iconPopUp.titleOfSelectedItem == "Custom Image".localized)
         let iconToSave = isCustomIcon ? (editingPlugin?.iconName ?? "bolt.fill") : (icon.isEmpty ? "bolt.fill" : icon)
         
-        var actionDict: [String: Any] = [:]
+        let existingConfigDict = Self.existingConfigDictionary(
+            from: editingPlugin?.directoryURL
+        )
+        var actionUpdates: [String: Any] = [:]
         
         switch typeIndex {
         case 0: // URL
             if content.isEmpty { return showError("URL cannot be empty".localized) }
-            actionDict = ["type": "url", "url": content]
+            actionUpdates["type"] = "url"
+            actionUpdates["url"] = content
         case 1: // Shell script
             if content.isEmpty { return showError("Script cannot be empty".localized) }
-            actionDict = ["type": "shell-script", "script": "script.sh"] // Reference external file
+            actionUpdates["type"] = "shell-script"
+            actionUpdates["script"] = "script.sh" // Reference external file
         case 2: // AppleScript
             if content.isEmpty { return showError("Code cannot be empty".localized) }
-            actionDict = ["type": "applescript", "script": "script.applescript"] // Reference external file
+            actionUpdates["type"] = "applescript"
+            actionUpdates["script"] = "script.applescript" // Reference external file
         case 3: // Key Combo
             if content.isEmpty { return showError("Key combo cannot be empty".localized) }
             let parts = content.components(separatedBy: "+")
             let key = parts.last?.lowercased() ?? ""
             let mods = parts.dropLast().map { $0.capitalized } // e.g., ["Command", "Shift"]
-            actionDict = ["type": "key-combo", "key": key, "modifiers": mods]
+            actionUpdates["type"] = "key-combo"
+            actionUpdates["key"] = key
+            actionUpdates["modifiers"] = mods
         case 4: // Copy
-            actionDict = ["type": "copy"]
+            actionUpdates["type"] = "copy"
         case 5: // Paste
-            actionDict = ["type": "paste"]
+            actionUpdates["type"] = "paste"
         case 6: // Reveal in Finder
-            actionDict = ["type": "reveal-path"]
+            actionUpdates["type"] = "reveal-path"
         default:
             return showError("Unsupported plugin type for saving".localized)
         }
-        
-        var locNames: [String: String]? = nil
-        if !enName.isEmpty {
-            locNames = ["en": enName]
-        }
-        
-        var locDescs: [String: String]? = nil
-        if !enDesc.isEmpty {
-            locDescs = ["en": enDesc]
-        }
-        
-        var configDict: [String: Any] = [
-            "name": name,
-            "identifier": id,
-            "icon": iconToSave,
-            "action": actionDict
-        ]
-        
-        if !desc.isEmpty {
-            configDict["description"] = desc
-        }
-        
-        if let locales = locNames {
-            configDict["localizedNames"] = locales
-        }
-        if let descLocales = locDescs {
-            configDict["localizedDescriptions"] = descLocales
-        }
-        
-        // Preserve existing config like filter, order, isDefaultDisabled
-        if let existing = editingPlugin?.config {
-            if let filter = existing.filter {
-                if let encoded = try? JSONEncoder().encode(filter),
-                   let dict = try? JSONSerialization.jsonObject(with: encoded) as? [String: Any] {
-                    configDict["filter"] = dict
-                }
-            }
-            if let order = existing.order {
-                configDict["order"] = order
-            }
-            if let isDefaultDisabled = existing.isDefaultDisabled {
-                configDict["isDefaultDisabled"] = isDefaultDisabled
-            }
-        }
+        let configDict = Self.mergedConfigDictionary(
+            preserving: existingConfigDict,
+            name: name,
+            englishName: enName,
+            description: desc,
+            englishDescription: enDesc,
+            identifier: id,
+            icon: iconToSave,
+            actionUpdates: actionUpdates
+        )
         
         // Create Plugin Bundle
         let pluginsURL = PluginManager.shared.userPluginsURL
@@ -986,44 +976,64 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         }
         let editingPluginWasNil = (editingPlugin == nil)
         let templateURL = editingPlugin?.directoryURL
-        
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        let customIconSourceURL = customIconURL
+        let scriptFileName = Self.scriptFileName(for: typeIndex)
+        let configData: Data
+        do {
+            // Serialize the heterogeneous editor model before crossing the
+            // actor boundary. Worker queues receive only Sendable value types.
+            configData = try JSONSerialization.data(
+                withJSONObject: configDict,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+        } catch {
+            showError(String(format: "Failed to write plugin: %@".localized, error.localizedDescription))
+            return
+        }
+
+        let finishSave: @MainActor @Sendable (String?) -> Void = { [weak self] errorMessage in
+            guard let self else { return }
+            if let errorMessage {
+                self.showError(String(format: "Failed to write plugin: %@".localized, errorMessage))
+            } else {
+                PluginManager.shared.reloadPlugins()
+                self.close()
+            }
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
             do {
                 if editingPluginWasNil, FileManager.default.fileExists(atPath: bundleURL.path) {
-                    DispatchQueue.main.async { self?.showError("A plugin with this identifier already exists".localized) }
+                    Task { @MainActor in
+                        finishSave("A plugin with this identifier already exists".localized)
+                    }
                     return
                 }
-
-                let data = try JSONSerialization.data(withJSONObject: configDict, options: .prettyPrinted)
 
                 try Self.writePluginPackageAtomically(
                     bundleURL: bundleURL,
                     templateURL: templateURL,
-                    configData: data,
-                    scriptFileName: Self.scriptFileName(for: typeIndex),
-                    scriptContent: Self.scriptFileName(for: typeIndex) == nil ? nil : content,
-                    customIconSourceURL: self?.customIconURL,
+                    configData: configData,
+                    scriptFileName: scriptFileName,
+                    scriptContent: scriptFileName == nil ? nil : content,
+                    customIconSourceURL: customIconSourceURL,
                     shouldKeepCustomIcon: isCustomIcon
                 )
 
                 PluginManager.shared.removeDuplicateUserPlugins(for: id, keeping: bundleURL)
-
-                
-                DispatchQueue.main.async {
-                    // Force reload plugins
-                    PluginManager.shared.reloadPlugins()
-                    self?.close()
+                Task { @MainActor in
+                    finishSave(nil)
                 }
-                
             } catch {
-                DispatchQueue.main.async {
-                    self?.showError(String(format: "Failed to write plugin: %@".localized, error.localizedDescription))
+                let message = error.localizedDescription
+                Task { @MainActor in
+                    finishSave(message)
                 }
             }
         }
     }
 
-    static func scriptFileName(for typeIndex: Int) -> String? {
+    nonisolated static func scriptFileName(for typeIndex: Int) -> String? {
         switch typeIndex {
         case 1:
             return "script.sh"
@@ -1034,7 +1044,82 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         }
     }
 
-    static func writePluginPackageAtomically(
+    static func existingConfigDictionary(from packageURL: URL?) -> [String: Any] {
+        guard let packageURL else { return [:] }
+        let configURL = packageURL.appendingPathComponent("Config.json")
+        guard let values = try? configURL.resourceValues(
+            forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+        ),
+        values.isRegularFile == true,
+        values.isSymbolicLink != true,
+        let size = values.fileSize,
+        size <= PluginLoader.maximumConfigBytes,
+        let data = try? Data(contentsOf: configURL, options: .mappedIfSafe),
+        let dictionary = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return [:]
+        }
+        return dictionary
+    }
+
+    static func mergedConfigDictionary(
+        preserving existing: [String: Any],
+        name: String,
+        englishName: String,
+        description: String,
+        englishDescription: String,
+        identifier: String,
+        icon: String,
+        actionUpdates: [String: Any]
+    ) -> [String: Any] {
+        var result = existing
+        var action = result["action"] as? [String: Any] ?? [:]
+        for knownActionKey in ["type", "url", "script", "inline", "key", "modifiers"] {
+            action.removeValue(forKey: knownActionKey)
+        }
+        for (key, value) in actionUpdates {
+            action[key] = value
+        }
+
+        var localizedNames = result["localizedNames"] as? [String: String] ?? [:]
+        if englishName.isEmpty {
+            localizedNames.removeValue(forKey: "en")
+        } else {
+            localizedNames["en"] = englishName
+        }
+
+        var localizedDescriptions =
+            result["localizedDescriptions"] as? [String: String] ?? [:]
+        if englishDescription.isEmpty {
+            localizedDescriptions.removeValue(forKey: "en")
+        } else {
+            localizedDescriptions["en"] = englishDescription
+        }
+
+        result["name"] = name
+        result["identifier"] = identifier
+        result["icon"] = icon
+        result["action"] = action
+
+        if description.isEmpty {
+            result.removeValue(forKey: "description")
+        } else {
+            result["description"] = description
+        }
+        if localizedNames.isEmpty {
+            result.removeValue(forKey: "localizedNames")
+        } else {
+            result["localizedNames"] = localizedNames
+        }
+        if localizedDescriptions.isEmpty {
+            result.removeValue(forKey: "localizedDescriptions")
+        } else {
+            result["localizedDescriptions"] = localizedDescriptions
+        }
+
+        return result
+    }
+
+    nonisolated static func writePluginPackageAtomically(
         bundleURL: URL,
         templateURL: URL?,
         configData: Data,
@@ -1046,9 +1131,43 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
     ) throws {
         let parentURL = bundleURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
+        guard PluginManager.isPluginDirectory(bundleURL, inside: parentURL) else {
+            throw PluginPackageWriteError.unsafeDestination
+        }
+        if fileManager.fileExists(atPath: bundleURL.path) {
+            guard let destinationValues = try? bundleURL.resourceValues(
+                forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+            ),
+            destinationValues.isDirectory == true,
+            destinationValues.isSymbolicLink != true else {
+                throw PluginPackageWriteError.unsafeDestination
+            }
+        }
+        if let templateURL, fileManager.fileExists(atPath: templateURL.path),
+           !PluginManager.isInstallPackageWithinLimits(templateURL, fileManager: fileManager) {
+            throw PluginPackageWriteError.unsafeTemplate
+        }
+        guard configData.count <= PluginLoader.maximumConfigBytes,
+              let expectedConfig = try? JSONDecoder().decode(
+                PluginConfig.self,
+                from: configData
+              ) else {
+            throw PluginPackageWriteError.invalidConfiguration
+        }
 
-        let stagingURL = parentURL.appendingPathComponent(".save-\(UUID().uuidString).openfireext.pending")
-        let backupURL = parentURL.appendingPathComponent(".backup-\(UUID().uuidString).openfireext.pending")
+        PluginManager.recoverInterruptedPluginOperations(
+            in: parentURL,
+            fileManager: fileManager
+        )
+
+        let stagingURL = PluginManager.pendingPluginPackageURL(
+            in: parentURL,
+            prefix: "save"
+        )
+        let backupURL = PluginManager.pendingPluginPackageURL(
+            in: parentURL,
+            prefix: "backup"
+        )
         var didMoveBundleToBackup = false
         var shouldRemoveBackup = true
 
@@ -1085,6 +1204,15 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             }
         } else if fileManager.fileExists(atPath: iconDestURL.path) {
             try fileManager.removeItem(at: iconDestURL)
+        }
+
+        guard PluginManager.isInstallPackageWithinLimits(
+            stagingURL,
+            fileManager: fileManager
+        ),
+        let stagedPlugin = PluginLoader.load(from: stagingURL),
+        stagedPlugin.config == expectedConfig else {
+            throw PluginPackageWriteError.invalidConfiguration
         }
 
         if fileManager.fileExists(atPath: bundleURL.path) {
@@ -1130,16 +1258,24 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         alert.addButton(withTitle: "Cancel".localized)
         
         if alert.runModal() == .alertFirstButtonReturn {
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let finishDelete: @MainActor @Sendable (String?) -> Void = { [weak self] errorMessage in
+                guard let self else { return }
+                if let errorMessage {
+                    self.showError(String(format: "Delete Failed: %@".localized, errorMessage))
+                } else {
+                    self.close()
+                }
+            }
+            DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     try PluginManager.shared.deletePlugin(p)
-                    
-                    DispatchQueue.main.async {
-                        self?.close()
+                    Task { @MainActor in
+                        finishDelete(nil)
                     }
                 } catch {
-                    DispatchQueue.main.async {
-                        self?.showError(String(format: "Delete Failed: %@".localized, error.localizedDescription))
+                    let message = error.localizedDescription
+                    Task { @MainActor in
+                        finishDelete(message)
                     }
                 }
             }

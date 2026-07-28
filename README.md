@@ -184,8 +184,11 @@ OpenFire comes with a fully-featured **Visual Plugin Editor** built right into t
 - 📝 `paste`: Paste into the current input area
 - 📂 `reveal-path`: Open the selected file path in Finder
 
+#### Safe Regex Filters
+Plugin `filter.regex` values run through a linear-time, non-backtracking matcher so an imported plugin cannot freeze the menu with pathological input. The supported subset includes literals, `.`, `^` / `$`, groups and `(?:...)`, alternation, character classes, `*` / `+` / `?` / `{m,n}`, and the `\s`, `\d`, and `\w` families. Lookarounds, backreferences, mode modifiers, lazy quantifiers, and possessive quantifiers are rejected. Patterns are limited to 1 KiB and regex-filtered selections to 4,096 UTF-16 code units; omit `filter.regex` when every selection should match.
+
 #### Script Extensions
-For `shell-script` and `applescript`, the standard plugin layout is to point `action.script` at a bundled script file inside the `.openfireext` package. OpenFire also supports inline script text in the same `script` field for short snippets. When triggered, the selected text is injected into `$OPENFIRE_TEXT` and `OPENFIRE_TEXT_FILE`.
+For `shell-script` and `applescript`, the standard plugin layout is to point `action.script` at a bundled script file inside the `.openfireext` package. OpenFire also supports inline script text in the same `script` field for short snippets. `OPENFIRE_TEXT_FILE` is always the canonical UTF-8 input. For compatibility, `OPENFIRE_TEXT` is also provided when the text is at most 32 KiB and contains no NUL character.
 
 **Recommended package layout**
 ```text
@@ -217,6 +220,31 @@ My Script.openfireext/
   "script": "echo \"Selected: $OPENFIRE_TEXT\" >> ~/Desktop/openfire.log"
 }
 ```
+
+---
+
+## 🔨 Building and Verification
+
+The tracked `Makefile` is the release source of truth:
+
+```bash
+make all                 # optimized universal binary
+make test                # serial test suite
+swift test --parallel    # parallel runner regression check
+make package             # local verification .app and .dmg
+```
+
+`make package` always produces a local verification artifact and never notarizes it. A distributable build must use the separate `make release` gate, which requires both a Developer ID Application identity and a configured `notarytool` keychain profile:
+
+```bash
+make release \
+  CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
+  NOTARYTOOL_PROFILE="openfire-notary"
+```
+
+`make release` fails before packaging if either credential is missing, then signs the app and DMG, waits for notarization, staples the ticket, and validates both signatures and the disk image.
+
+CI pins Xcode 16.4, runs serial and parallel tests, treats strict-concurrency diagnostics as errors, builds the SwiftPM release executable, and smoke-tests an ad-hoc universal app/DMG package.
 
 ---
 

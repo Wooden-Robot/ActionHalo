@@ -184,8 +184,11 @@ OpenFire 内置了功能完善的**可视化插件编辑器**，无需再手动�
 - 📝 `paste`: 粘贴到当前输入区
 - 📂 `reveal-path`: 当选中文本是文件路径时，在 Finder 中打开对应位置
 
+#### 安全正则筛选
+插件的 `filter.regex` 使用线性时间、无回溯的匹配器，避免导入的插件用恶意表达式卡住菜单。支持的子集包括字面量、`.`、`^` / `$`、分组与 `(?:...)`、或、字符类、`*` / `+` / `?` / `{m,n}`，以及 `\s`、`\d`、`\w` 系列；前后查找、反向引用、模式修饰符、惰性量词和占有量词会被拒绝。表达式上限为 1 KiB，参与正则筛选的选中文本上限为 4,096 个 UTF-16 code unit；若希望匹配所有文本，请省略 `filter.regex`。
+
 #### 脚本类扩展
-对于 `shell-script` 和 `applescript`，标准插件写法是让 `action.script` 指向 `.openfireext` 包内附带的脚本文件。OpenFire 也支持把简短脚本直接内联写进同一个 `script` 字段。当触发脚本时，OpenFire 会自动注入 `$OPENFIRE_TEXT` 和 `OPENFIRE_TEXT_FILE`。
+对于 `shell-script` 和 `applescript`，标准插件写法是让 `action.script` 指向 `.openfireext` 包内附带的脚本文件。OpenFire 也支持把简短脚本直接内联写进同一个 `script` 字段。`OPENFIRE_TEXT_FILE` 始终是规范的 UTF-8 输入；为兼容旧插件，仅当文本不超过 32 KiB 且不含 NUL 字符时才同时提供 `OPENFIRE_TEXT`。
 
 **推荐的插件结构**
 ```text
@@ -217,6 +220,31 @@ My Script.openfireext/
   "script": "echo \"Selected: $OPENFIRE_TEXT\" >> ~/Desktop/openfire.log"
 }
 ```
+
+---
+
+## 🔨 构建与验证
+
+仓库内受版本管理的 `Makefile` 是发布构建的真源：
+
+```bash
+make all                 # 优化后的 universal 二进制
+make test                # 串行测试
+swift test --parallel    # 并行运行回归检查
+make package             # 本地验证用 .app 与 .dmg
+```
+
+`make package` 只生成本地验证产物，并且绝不会执行公证。正式分发必须使用独立的 `make release` 门禁，同时提供 Developer ID Application 身份和已配置的 `notarytool` 钥匙串配置：
+
+```bash
+make release \
+  CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
+  NOTARYTOOL_PROFILE="openfire-notary"
+```
+
+`make release` 会在缺少任一凭据时提前失败；凭据齐全后，它会签名 App 与 DMG、等待公证、装订票据，并验证两份签名和磁盘镜像。
+
+CI 固定使用 Xcode 16.4，执行串行与并行测试，将严格并发诊断视为错误，构建 SwiftPM Release 产物，并对 ad-hoc 签名的 universal App/DMG 做完整冒烟验证。
 
 ---
 

@@ -1,6 +1,7 @@
 import Cocoa
 
 /// Controls the menu bar status item — plugin management via embedded submenu view
+@MainActor
 final class StatusBarController: NSObject {
     private static let wheelBackdropEnabledKey = "WheelBackdropEnabled"
     private static let enabledKey = "OpenFireEnabled"
@@ -19,9 +20,18 @@ final class StatusBarController: NSObject {
     private var currentAppPluginsWindow: CurrentAppPluginsWindow?
     private var perAppOverridesWindow: PerAppOverridesWindow?
     private var statusFeedbackTimer: Timer?
+    private var baseStatusItemToolTip: String?
     
     var onEnabledChanged: ((Bool) -> Void)?
     var currentEnabledState: Bool { isEnabled }
+
+    static func baseStatusIconSymbolName(isEnabled: Bool) -> String {
+        isEnabled ? "flame.fill" : "flame"
+    }
+
+    static func shouldDetachStatusMenu(attachedMenu: NSMenu?, closedMenu: NSMenu) -> Bool {
+        attachedMenu === closedMenu
+    }
 
     static func launchAgentURL(fileManager: FileManager = .default) -> URL {
         fileManager.homeDirectoryForCurrentUser
@@ -72,6 +82,7 @@ final class StatusBarController: NSObject {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
         if let button = statusItem?.button {
+            baseStatusItemToolTip = button.toolTip
             updateStatusItemIcon(button: button)
             button.target = self
             button.action = #selector(handleStatusItemClick(_:))
@@ -308,8 +319,9 @@ final class StatusBarController: NSObject {
     }
 
     private func updateStatusItemIcon(button: NSStatusBarButton) {
+        guard statusFeedbackTimer == nil else { return }
         button.image = NSImage(
-            systemSymbolName: isEnabled ? "flame.fill" : "flame",
+            systemSymbolName: Self.baseStatusIconSymbolName(isEnabled: isEnabled),
             accessibilityDescription: "OpenFire"
         )
         button.image?.size = NSSize(width: 18, height: 18)
@@ -320,8 +332,6 @@ final class StatusBarController: NSObject {
         guard let button = statusItem?.button else { return }
 
         statusFeedbackTimer?.invalidate()
-        let originalTooltip = button.toolTip
-        let originalImage = button.image
 
         button.toolTip = message
         button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: message)
@@ -329,10 +339,12 @@ final class StatusBarController: NSObject {
         button.image?.isTemplate = true
 
         let timer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self, weak button] _ in
-            guard let self, let button else { return }
-            button.toolTip = originalTooltip
-            button.image = originalImage
-            self.statusFeedbackTimer = nil
+            Task { @MainActor [weak self, weak button] in
+                guard let self, let button else { return }
+                self.statusFeedbackTimer = nil
+                button.toolTip = self.baseStatusItemToolTip
+                self.updateStatusItemIcon(button: button)
+            }
         }
         statusFeedbackTimer = timer
     }
@@ -425,8 +437,6 @@ final class StatusBarController: NSObject {
             UserDefaults.standard.set(limit, forKey: "maxRadialMenuItems")
             UserDefaults.standard.synchronize()
             rebuildMenu()
-            // Force a reload so the active plugin list is truncated immediately
-            PluginManager.shared.reloadPlugins()
         }
     }
     
@@ -598,7 +608,7 @@ extension StatusBarController: NSMenuDelegate {
     }
 
     func menuDidClose(_ menu: NSMenu) {
-        if menu === mainMenu {
+        if Self.shouldDetachStatusMenu(attachedMenu: statusItem?.menu, closedMenu: menu) {
             statusItem?.menu = nil
         }
     }

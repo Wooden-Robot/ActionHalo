@@ -1,6 +1,7 @@
 import XCTest
 @testable import OpenFire
 
+@MainActor
 final class AppDelegateTests: XCTestCase {
     func testMonitoringStartFailureMessagesExplainNextStep() {
         XCTAssertEqual(
@@ -70,34 +71,6 @@ final class AppDelegateTests: XCTestCase {
         let filtered = AppDelegate.radialMenuPlugins(from: [first, second])
 
         XCTAssertEqual(filtered.map(\.id), ["com.openfire.copy", "com.openfire.reveal-path"])
-    }
-
-    func testEmptyInputPastePluginRespectsPerAppDisabledOverrides() throws {
-        let paste = try makePlugin(
-            name: "Paste",
-            identifier: "com.openfire.builtin.paste",
-            actionType: "paste"
-        )
-        let search = try makePlugin(
-            name: "Search",
-            identifier: "com.openfire.search",
-            actionType: "url",
-            actionContent: "\"url\":\"https://example.com?q={text}\""
-        )
-
-        PluginManager.shared.setPluginEnabled("com.openfire.builtin.paste", enabled: false, forAppBundleID: "com.apple.Safari")
-
-        let safariPaste = AppDelegate.emptyInputPastePlugin(
-            from: [paste, search],
-            appBundleID: "com.apple.Safari"
-        )
-        let finderPaste = AppDelegate.emptyInputPastePlugin(
-            from: [paste, search],
-            appBundleID: "com.apple.finder"
-        )
-
-        XCTAssertNil(safariPaste)
-        XCTAssertEqual(finderPaste?.id, "com.openfire.builtin.paste")
     }
 
     func testEmptyInputPastePluginRespectsVisibilityRules() throws {
@@ -291,8 +264,19 @@ final class AppDelegateTests: XCTestCase {
 
         appDelegate.finishMenuDismiss()
 
-        XCTAssertEqual(completionCount, 2)
+        XCTAssertEqual(completionCount, 1)
         XCTAssertTrue(appDelegate.beginMenuDismiss())
+    }
+
+    func testSingleFireActionGateConsumesOnlyOnceUntilReset() {
+        let gate = SingleFireActionGate()
+
+        XCTAssertTrue(gate.consume())
+        XCTAssertFalse(gate.consume())
+
+        gate.reset()
+
+        XCTAssertTrue(gate.consume())
     }
 
     func testShouldResetAccessibilityPermissionsOnVersionChangeIsDisabledByDefault() {
@@ -458,5 +442,56 @@ final class AppDelegateTests: XCTestCase {
 
         let config = try JSONDecoder().decode(PluginConfig.self, from: Data(json.utf8))
         return Plugin(config: config, directoryURL: URL(fileURLWithPath: "/tmp/\(identifier)"))
+    }
+}
+
+@MainActor
+final class AppDelegateGlobalStateTests: GlobalStateTestCase {
+    override func setUp() {
+        super.setUp()
+        isolateStandardUserDefaults(keys: [PluginManager.perAppDisabledPluginsKey])
+    }
+
+    func testEmptyInputPastePluginRespectsPerAppDisabledOverrides() throws {
+        let pasteConfig = try JSONDecoder().decode(
+            PluginConfig.self,
+            from: Data(
+                #"{"name":"Paste","identifier":"com.openfire.builtin.paste","action":{"type":"paste"}}"#.utf8
+            )
+        )
+        let searchConfig = try JSONDecoder().decode(
+            PluginConfig.self,
+            from: Data(
+                #"{"name":"Search","identifier":"com.openfire.search","action":{"type":"url","url":"https://example.com?q={text}"}}"#.utf8
+            )
+        )
+        let paste = Plugin(
+            config: pasteConfig,
+            directoryURL: URL(fileURLWithPath: "/tmp/com.openfire.builtin.paste")
+        )
+        let search = Plugin(
+            config: searchConfig,
+            directoryURL: URL(fileURLWithPath: "/tmp/com.openfire.search")
+        )
+
+        PluginManager.shared.setPluginEnabled(
+            "com.openfire.builtin.paste",
+            enabled: false,
+            forAppBundleID: "com.apple.Safari"
+        )
+
+        XCTAssertNil(
+            AppDelegate.emptyInputPastePlugin(
+                from: [paste, search],
+                appBundleID: "com.apple.Safari"
+            )
+        )
+        XCTAssertEqual(
+            AppDelegate.emptyInputPastePlugin(
+                from: [paste, search],
+                appBundleID: "com.apple.finder"
+            )?.id,
+            "com.openfire.builtin.paste"
+        )
     }
 }

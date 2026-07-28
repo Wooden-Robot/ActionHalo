@@ -1,12 +1,22 @@
 import XCTest
 @testable import OpenFire
 
-final class PluginManagerTests: XCTestCase {
+final class PluginManagerTests: GlobalStateTestCase {
     private var temporaryDirectories: [URL] = []
+    private let defaultsKeys = [
+        "maxRadialMenuItems",
+        "disabledPlugins",
+        "userEnabledPlugins",
+        "deletedBuiltInPlugins",
+        "pluginOrder",
+        PluginManager.perAppDisabledPluginsKey,
+        PluginManager.trustedPluginFingerprintsKey,
+        PluginManager.verbosePluginLoggingKey,
+    ]
     
     override func setUp() {
         super.setUp()
-        UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
+        isolateStandardUserDefaults(keys: defaultsKeys)
         let userPluginsURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         PluginManager.shared.userPluginsDirectoryOverride = userPluginsURL
         temporaryDirectories.append(userPluginsURL)
@@ -18,7 +28,6 @@ final class PluginManagerTests: XCTestCase {
         }
         temporaryDirectories.removeAll()
         PluginManager.shared.userPluginsDirectoryOverride = nil
-        UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
         super.tearDown()
     }
     
@@ -318,6 +327,32 @@ final class PluginManagerTests: XCTestCase {
         ))
     }
 
+    func testPluginDirectoryContainmentRejectsSymlinkEscape() throws {
+        let parentURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        let outsideURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(parentURL)
+        temporaryDirectories.append(outsideURL)
+        try FileManager.default.createDirectory(
+            at: parentURL,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: outsideURL,
+            withIntermediateDirectories: true
+        )
+        let symbolicLinkURL = parentURL.appendingPathComponent("Escape.openfireext")
+        try FileManager.default.createSymbolicLink(
+            at: symbolicLinkURL,
+            withDestinationURL: outsideURL
+        )
+
+        XCTAssertFalse(
+            PluginManager.isPluginDirectory(symbolicLinkURL, inside: parentURL)
+        )
+    }
+
     func testBuiltInPluginDirectoryUsesConfiguredBuiltInDirectory() {
         let builtInPluginsURL = URL(fileURLWithPath: "/Applications/OpenFire.app/Contents/Resources/Plugins")
 
@@ -387,7 +422,7 @@ final class PluginManagerTests: XCTestCase {
         )
     }
 
-    func testRepairHiddenUserPluginPackagesRenamesDotPrefixedPackage() throws {
+    func testRepairHiddenUserPluginPackagesLeavesInvalidPackageQuarantined() throws {
         let pluginsURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let hiddenPackageURL = pluginsURL.appendingPathComponent(".book.openfireext")
         let visiblePackageURL = pluginsURL.appendingPathComponent("book.openfireext")
@@ -405,9 +440,9 @@ final class PluginManagerTests: XCTestCase {
 
         PluginManager.repairHiddenUserPluginPackages(in: pluginsURL)
 
-        XCTAssertFalse(FileManager.default.fileExists(atPath: hiddenPackageURL.path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: visiblePackageURL.path))
-        XCTAssertEqual(PluginLoader.load(from: visiblePackageURL)?.id, ".book")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: hiddenPackageURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: visiblePackageURL.path))
+        XCTAssertNil(PluginLoader.load(from: hiddenPackageURL))
     }
 
     func testWatchablePluginDirectoriesIncludesExistingPluginPackages() throws {
@@ -596,6 +631,43 @@ final class PluginManagerTests: XCTestCase {
         XCTAssertFalse(PluginManager.isInstallPackageWithinLimits(pluginURL))
     }
 
+    func testInstallPackagePreflightCountsDirectoriesAndRejectsDeepTrees() throws {
+        let pluginURL = try makePluginBundle(
+            identifier: "com.test.install-tree",
+            name: "Tree"
+        )
+        let nestedDirectory = pluginURL.appendingPathComponent("one")
+        try FileManager.default.createDirectory(
+            at: nestedDirectory,
+            withIntermediateDirectories: true
+        )
+
+        XCTAssertTrue(
+            PluginManager.isInstallPackageWithinLimits(
+                pluginURL,
+                maxFileCount: 2,
+                maxTotalBytes: 4_096
+            )
+        )
+        XCTAssertFalse(
+            PluginManager.isInstallPackageWithinLimits(
+                pluginURL,
+                maxFileCount: 1,
+                maxTotalBytes: 4_096
+            )
+        )
+
+        var deepURL = nestedDirectory
+        for index in 0...Plugin.maximumPackageTreeDepth {
+            deepURL.appendPathComponent("d\(index)")
+        }
+        try FileManager.default.createDirectory(
+            at: deepURL,
+            withIntermediateDirectories: true
+        )
+        XCTAssertFalse(PluginManager.isInstallPackageWithinLimits(pluginURL))
+    }
+
     func testInstallPluginRejectsCorePluginIdentifierOverride() throws {
         let manager = PluginManager.shared
         let pluginURL = try makePluginBundle(identifier: "com.openfire.copy", name: "Fake Copy")
@@ -632,7 +704,7 @@ final class PluginManagerTests: XCTestCase {
 
         XCTAssertEqual(
             manager.installPluginDetailed(from: pluginURL),
-            .failed(.invalidIdentifier("Identifier must use only letters, numbers, dots, and hyphens.".localized))
+            .failed(.invalidPackage)
         )
     }
 
@@ -658,6 +730,76 @@ final class PluginManagerTests: XCTestCase {
             (try FileManager.default.contentsOfDirectory(atPath: manager.userPluginsURL.path))
                 .contains { $0.hasSuffix(".openfireext.pending") }
         )
+    }
+
+    func testInstallPreviewFingerprintRejectsPackageChangedAfterConfirmation() throws {
+        let manager = PluginManager.shared
+        let sourceURL = try makePluginBundle(
+            identifier: "com.test.preview-binding",
+            name: "Before"
+        )
+        let preview = try XCTUnwrap(manager.makeInstallPreview(from: sourceURL))
+
+        try pluginConfig(
+            identifier: "com.test.preview-binding",
+            name: "After"
+        ).write(
+            to: sourceURL.appendingPathComponent("Config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        XCTAssertEqual(
+            manager.installPluginDetailed(
+                from: sourceURL,
+                expectedPreviewFingerprint: preview.fingerprint
+            ),
+            .failed(.sourceChangedSinceConfirmation)
+        )
+    }
+
+    func testRecoverInterruptedPluginOperationsRestoresBackupAndRemovesStaging() throws {
+        let manager = PluginManager.shared
+        try FileManager.default.createDirectory(
+            at: manager.userPluginsURL,
+            withIntermediateDirectories: true
+        )
+        let backupURL = manager.userPluginsURL.appendingPathComponent(
+            ".backup-test.openfireext.pending"
+        )
+        try FileManager.default.createDirectory(
+            at: backupURL,
+            withIntermediateDirectories: true
+        )
+        try pluginConfig(
+            identifier: "com.test.recovered",
+            name: "Recovered"
+        ).write(
+            to: backupURL.appendingPathComponent("Config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let stagingURL = manager.userPluginsURL.appendingPathComponent(
+            ".install-test.openfireext.pending"
+        )
+        try FileManager.default.createDirectory(
+            at: stagingURL,
+            withIntermediateDirectories: true
+        )
+
+        let result = PluginManager.recoverInterruptedPluginOperations(
+            in: manager.userPluginsURL,
+            minimumAge: 0
+        )
+        let restoredURL = manager.userPluginsURL.appendingPathComponent(
+            "com.test.recovered.openfireext"
+        )
+
+        XCTAssertEqual(result.removedStagingPackages, 1)
+        XCTAssertEqual(result.restoredBackupPackages, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: restoredURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backupURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagingURL.path))
     }
 
     func testRestoreBackedUpPackageMovesBackupWhenDestinationIsMissing() throws {
@@ -856,6 +998,93 @@ final class PluginManagerTests: XCTestCase {
         XCTAssertEqual(
             PluginManager.renderedURLString(template: "{text}", text: "https://example.com?a=1&b=2"),
             "https://example.com?a=1&b=2"
+        )
+    }
+
+    func testPluginURLSchemeAllowlistRejectsRiskySchemes() {
+        XCTAssertTrue(
+            PluginManager.isAllowedPluginURLTemplate(
+                "https://example.com/search?q={text}"
+            )
+        )
+        XCTAssertTrue(PluginManager.isAllowedPluginURLTemplate("dict://{text}"))
+        XCTAssertFalse(
+            PluginManager.isAllowedPluginURLTemplate(
+                "javascript:alert({text})"
+            )
+        )
+        XCTAssertFalse(
+            PluginManager.isAllowedPluginURLTemplate(
+                "x-apple.systempreferences:{text}"
+            )
+        )
+    }
+
+    func testPluginProcessEnvironmentOmitsUnsafeOrOversizedText() {
+        let nulEnvironment = PluginManager.pluginProcessEnvironment(
+            text: "safe\0unsafe",
+            textFilePath: "/tmp/text",
+            baseEnvironment: ["OPENFIRE_TEXT": "stale"]
+        )
+        XCTAssertNil(nulEnvironment["OPENFIRE_TEXT"])
+        XCTAssertEqual(nulEnvironment["OPENFIRE_TEXT_FILE"], "/tmp/text")
+
+        let oversizedEnvironment = PluginManager.pluginProcessEnvironment(
+            text: String(
+                repeating: "a",
+                count: PluginManager.maximumPluginEnvironmentTextBytes + 1
+            ),
+            textFilePath: "/tmp/large",
+            baseEnvironment: [:]
+        )
+        XCTAssertNil(oversizedEnvironment["OPENFIRE_TEXT"])
+        XCTAssertEqual(oversizedEnvironment["OPENFIRE_TEXT_FILE"], "/tmp/large")
+
+        let normalEnvironment = PluginManager.pluginProcessEnvironment(
+            text: "hello",
+            textFilePath: "/tmp/normal",
+            baseEnvironment: [:]
+        )
+        XCTAssertEqual(normalEnvironment["OPENFIRE_TEXT"], "hello")
+    }
+
+    func testDeletePluginUsesActualContainedDirectoryInsteadOfIdentifierPath() throws {
+        let manager = PluginManager.shared
+        try FileManager.default.createDirectory(
+            at: manager.userPluginsURL,
+            withIntermediateDirectories: true
+        )
+        let maliciousPackageURL = manager.userPluginsURL.appendingPathComponent(
+            "Malicious.openfireext"
+        )
+        try FileManager.default.createDirectory(
+            at: maliciousPackageURL,
+            withIntermediateDirectories: true
+        )
+        let outsideVictimURL = manager.userPluginsURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("victim.openfireext")
+        temporaryDirectories.append(outsideVictimURL)
+        try FileManager.default.createDirectory(
+            at: outsideVictimURL,
+            withIntermediateDirectories: true
+        )
+
+        let config = try JSONDecoder().decode(
+            PluginConfig.self,
+            from: Data(
+                #"{"name":"Bad","identifier":"../victim","action":{"type":"copy"}}"#.utf8
+            )
+        )
+        let plugin = Plugin(config: config, directoryURL: maliciousPackageURL)
+
+        try manager.deletePlugin(plugin)
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: maliciousPackageURL.path)
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: outsideVictimURL.path)
         )
     }
 

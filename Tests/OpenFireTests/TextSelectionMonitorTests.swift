@@ -7,6 +7,7 @@ final class TextSelectionMonitorTests: XCTestCase {
         XCTAssertEqual(TextSelectionMonitor.emptyTextInputClickedNotification.rawValue, "OpenFireEmptyTextInputClicked")
     }
 
+    @MainActor
     func testSingletonInstance() {
         let instance1 = TextSelectionMonitor.shared
         let instance2 = TextSelectionMonitor.shared
@@ -79,6 +80,70 @@ final class TextSelectionMonitorTests: XCTestCase {
         XCTAssertTrue(TextSelectionMonitor.didFrontmostWindowMove(from: before, to: afterMoved))
         XCTAssertFalse(TextSelectionMonitor.didFrontmostWindowMove(from: before, to: afterSame))
         XCTAssertFalse(TextSelectionMonitor.didFrontmostWindowMove(from: before, to: nil))
+    }
+
+    func testMouseGestureContextRequiresSameProcessAndWindowButAllowsFocusToChange() {
+        let window = TextSelectionMonitor.FrontmostWindowSnapshot(
+            windowID: 7,
+            ownerPID: 42,
+            bounds: CGRect(x: 100, y: 100, width: 800, height: 600)
+        )
+
+        XCTAssertTrue(TextSelectionMonitor.shouldContinueMouseGesture(
+            mouseDownProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            windowAtMouseDown: window,
+            windowAtMouseUp: window
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueMouseGesture(
+            mouseDownProcessIdentifier: 42,
+            currentProcessIdentifier: 99,
+            windowAtMouseDown: window,
+            windowAtMouseUp: window
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldContinueMouseGesture(
+            mouseDownProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            windowAtMouseDown: window,
+            windowAtMouseUp: window
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueMouseGesture(
+            mouseDownProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            windowAtMouseDown: window,
+            windowAtMouseUp: nil
+        ))
+    }
+
+    func testMouseGestureContextRejectsMovedOrReplacedWindow() {
+        let before = TextSelectionMonitor.FrontmostWindowSnapshot(
+            windowID: 7,
+            ownerPID: 42,
+            bounds: CGRect(x: 100, y: 100, width: 800, height: 600)
+        )
+        let moved = TextSelectionMonitor.FrontmostWindowSnapshot(
+            windowID: 7,
+            ownerPID: 42,
+            bounds: CGRect(x: 120, y: 100, width: 800, height: 600)
+        )
+        let replaced = TextSelectionMonitor.FrontmostWindowSnapshot(
+            windowID: 8,
+            ownerPID: 42,
+            bounds: before.bounds
+        )
+
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueMouseGesture(
+            mouseDownProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            windowAtMouseDown: before,
+            windowAtMouseUp: moved
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueMouseGesture(
+            mouseDownProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            windowAtMouseDown: before,
+            windowAtMouseUp: replaced
+        ))
     }
 
     func testFrontmostWindowSnapshotCanUseMouseHitWindowInsteadOfFirstWindow() {
@@ -418,6 +483,19 @@ final class TextSelectionMonitorTests: XCTestCase {
             bundleID: "com.apple.finder",
             localizedName: "Finder",
             isFocusedSelectionEditable: false
+        ))
+    }
+
+    func testCriticalAppSuppressionCannotBeBypassedByEditableElement() {
+        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.openfire.app",
+            localizedName: "OpenFire",
+            isFocusedSelectionEditable: true
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
+            bundleID: "com.apple.screencaptureui",
+            localizedName: "Screenshot",
+            isFocusedSelectionEditable: true
         ))
     }
 

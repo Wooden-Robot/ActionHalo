@@ -1,15 +1,16 @@
 import XCTest
 @testable import OpenFire
 
-final class RadialMenuWindowTests: XCTestCase {
+final class RadialMenuWindowTests: GlobalStateTestCase {
 
     override func setUp() {
         super.setUp()
-        UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
+        isolateStandardUserDefaults(
+            keys: ["maxRadialMenuItems", "WheelBackdropEnabled", "ringOpacity"]
+        )
     }
 
     override func tearDown() {
-        UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier!)
         super.tearDown()
     }
 
@@ -87,9 +88,50 @@ final class RadialMenuWindowTests: XCTestCase {
         }
 
         window.requestDismissal()
+        window.requestDismissal()
 
         XCTAssertEqual(requestCount, 1)
         XCTAssertTrue(window.isVisible)
+        window.hideMenu()
+    }
+
+    func testRepeatedMouseUpDispatchesExecutableActionOnlyOnce() throws {
+        UserDefaults.standard.set(false, forKey: "WheelBackdropEnabled")
+        let window = RadialMenuWindow()
+        window.showMenu(
+            at: NSPoint(x: 400, y: 300),
+            items: makeItems(count: 4),
+            selectedText: "hello"
+        )
+        let radialMenuView = try XCTUnwrap(renderedMenuView(in: window))
+        var selectionCount = 0
+        window.onItemSelected = { _ in
+            selectionCount += 1
+        }
+
+        let radius = (radialMenuView.innerRadius + radialMenuView.outerRadius) / 2
+        let point = NSPoint(
+            x: radialMenuView.trackingCenter.x + radius * cos(.pi / 4),
+            y: radialMenuView.trackingCenter.y + radius * sin(.pi / 4)
+        )
+        let event = try XCTUnwrap(
+            NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: point,
+                modifierFlags: [],
+                timestamp: 1,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 0
+            )
+        )
+
+        radialMenuView.mouseUp(with: event)
+        radialMenuView.mouseUp(with: event)
+
+        XCTAssertEqual(selectionCount, 1)
         window.hideMenu()
     }
 
