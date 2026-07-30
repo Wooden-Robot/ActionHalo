@@ -300,6 +300,14 @@ final class AccessibilityManagerTests: XCTestCase {
         ))
     }
 
+    func testShouldRestorePasteboardSnapshotRejectsMultipleClipboardGenerations() {
+        XCTAssertFalse(AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialState: .init(changeCount: 10, string: "before"),
+            observedState: .init(changeCount: 12, string: "third-party rewrite"),
+            currentState: .init(changeCount: 12, string: "third-party rewrite")
+        ))
+    }
+
     func testCancelledCopyFallbackStillRollsBackItsClipboardMutationWithoutDeliveringText() {
         let initialState = AccessibilityManager.PasteboardState(
             changeCount: 10,
@@ -319,6 +327,22 @@ final class AccessibilityManagerTests: XCTestCase {
             copiedText: copiedState.string,
             hasFreshCopiedText: true,
             contextIsValid: false
+        ))
+    }
+
+    func testCopyFallbackPreservesMeaningfulWhitespaceAndRejectsWhitespaceOnlyText() {
+        XCTAssertEqual(
+            AccessibilityManager.copyFallbackResult(
+                copiedText: "  copied text\n",
+                hasFreshCopiedText: true,
+                contextIsValid: true
+            ),
+            "  copied text\n"
+        )
+        XCTAssertNil(AccessibilityManager.copyFallbackResult(
+            copiedText: " \n\t ",
+            hasFreshCopiedText: true,
+            contextIsValid: true
         ))
     }
 
@@ -432,6 +456,24 @@ final class AccessibilityManagerTests: XCTestCase {
         XCTAssertFalse(rangeReadableSnapshot.canReadSelectedTextViaAccessibility)
     }
 
+    func testSelectionSnapshotPreservesMeaningfulTextWhitespaceForDelivery() {
+        let meaningfulSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: "  selected text\n",
+            rangeLocation: 0,
+            rangeLength: 16,
+            hasReadableSelectedTextAttribute: true
+        )
+        let whitespaceOnlySnapshot = AccessibilityManager.SelectionSnapshot(
+            text: " \n\t ",
+            rangeLocation: 0,
+            rangeLength: 4,
+            hasReadableSelectedTextAttribute: true
+        )
+
+        XCTAssertEqual(meaningfulSnapshot.usableText, "  selected text\n")
+        XCTAssertNil(whitespaceOnlySnapshot.usableText)
+    }
+
     func testDidSelectionChangeDetectsTextAndRangeUpdates() {
         let previousSnapshot = AccessibilityManager.SelectionSnapshot(
             text: "before",
@@ -493,25 +535,59 @@ final class AccessibilityManagerTests: XCTestCase {
             requestIsActive: true,
             expectedProcessIdentifier: 42,
             currentProcessIdentifier: 42,
-            isSelectionSuppressed: false
+            isSelectionSuppressed: false,
+            focusedElementMatches: true
         ))
         XCTAssertFalse(AccessibilityManager.shouldContinueCopyFallback(
             requestIsActive: false,
             expectedProcessIdentifier: 42,
             currentProcessIdentifier: 42,
-            isSelectionSuppressed: false
+            isSelectionSuppressed: false,
+            focusedElementMatches: true
         ))
         XCTAssertFalse(AccessibilityManager.shouldContinueCopyFallback(
             requestIsActive: true,
             expectedProcessIdentifier: 42,
             currentProcessIdentifier: 99,
-            isSelectionSuppressed: false
+            isSelectionSuppressed: false,
+            focusedElementMatches: true
         ))
         XCTAssertFalse(AccessibilityManager.shouldContinueCopyFallback(
             requestIsActive: true,
             expectedProcessIdentifier: 42,
             currentProcessIdentifier: 42,
-            isSelectionSuppressed: true
+            isSelectionSuppressed: true,
+            focusedElementMatches: true
+        ))
+        XCTAssertFalse(AccessibilityManager.shouldContinueCopyFallback(
+            requestIsActive: true,
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            isSelectionSuppressed: false,
+            focusedElementMatches: false
+        ))
+    }
+
+    func testCopyFallbackRevalidatesContextAndPasteboardAfterSnapshot() {
+        let initialState = AccessibilityManager.PasteboardState(
+            changeCount: 10,
+            string: "before"
+        )
+
+        XCTAssertTrue(AccessibilityManager.shouldPostCopyFallbackEvents(
+            contextIsValidAfterSnapshot: true,
+            initialPasteboardState: initialState,
+            currentPasteboardState: initialState
+        ))
+        XCTAssertFalse(AccessibilityManager.shouldPostCopyFallbackEvents(
+            contextIsValidAfterSnapshot: false,
+            initialPasteboardState: initialState,
+            currentPasteboardState: initialState
+        ))
+        XCTAssertFalse(AccessibilityManager.shouldPostCopyFallbackEvents(
+            contextIsValidAfterSnapshot: true,
+            initialPasteboardState: initialState,
+            currentPasteboardState: .init(changeCount: 11, string: "changed")
         ))
     }
 

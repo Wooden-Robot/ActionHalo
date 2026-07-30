@@ -234,6 +234,31 @@ final class AppDelegateTests: XCTestCase {
         )
     }
 
+    func testCustomPasteActionAlsoRequiresEditableSelection() throws {
+        let paste = try makePlugin(
+            name: "Custom Paste",
+            identifier: "com.example.custom-paste",
+            actionType: "paste"
+        )
+
+        XCTAssertFalse(
+            AppDelegate.isPluginExecutable(
+                paste,
+                text: "selected",
+                appBundleID: nil,
+                isSelectionEditable: false
+            )
+        )
+        XCTAssertTrue(
+            AppDelegate.isPluginExecutable(
+                paste,
+                text: "selected",
+                appBundleID: nil,
+                isSelectionEditable: true
+            )
+        )
+    }
+
     func testNonDeletePluginDoesNotRequireEditableSelection() throws {
         let copy = try makePlugin(
             name: "Copy",
@@ -249,6 +274,103 @@ final class AppDelegateTests: XCTestCase {
                 isSelectionEditable: false
             )
         )
+    }
+
+    func testEditableMenuActionRequiresOriginalFocusedElement() {
+        XCTAssertFalse(
+            AppDelegate.shouldExecuteMenuAction(
+                expectedProcessIdentifier: 42,
+                currentProcessIdentifier: 42,
+                requiresEditableTarget: true,
+                focusedElementMatches: false,
+                isFocusedSelectionEditable: true
+            )
+        )
+        XCTAssertTrue(
+            AppDelegate.shouldExecuteMenuAction(
+                expectedProcessIdentifier: 42,
+                currentProcessIdentifier: 42,
+                requiresEditableTarget: true,
+                focusedElementMatches: true,
+                isFocusedSelectionEditable: true
+            )
+        )
+        XCTAssertFalse(
+            AppDelegate.shouldExecuteMenuAction(
+                expectedProcessIdentifier: 42,
+                currentProcessIdentifier: 42,
+                requiresEditableTarget: true,
+                focusedElementMatches: true,
+                isFocusedSelectionEditable: false
+            )
+        )
+    }
+
+    func testReadOnlyMenuActionDoesNotDependOnFocusedElementIdentity() {
+        XCTAssertTrue(
+            AppDelegate.shouldExecuteMenuAction(
+                expectedProcessIdentifier: 42,
+                currentProcessIdentifier: 42,
+                requiresEditableTarget: false,
+                focusedElementMatches: false,
+                isFocusedSelectionEditable: false
+            )
+        )
+        XCTAssertFalse(
+            AppDelegate.shouldExecuteMenuAction(
+                expectedProcessIdentifier: 42,
+                currentProcessIdentifier: 7,
+                requiresEditableTarget: false,
+                focusedElementMatches: true,
+                isFocusedSelectionEditable: true
+            )
+        )
+    }
+
+    func testNotificationAccessibilityElementExtractionRejectsWrongTypes() {
+        let element = AXUIElementCreateApplication(42)
+
+        XCTAssertNil(AppDelegate.accessibilityElement(from: nil))
+        XCTAssertNil(AppDelegate.accessibilityElement(from: "not an accessibility element"))
+        XCTAssertTrue(
+            AccessibilityManager.areSameAccessibilityElement(
+                AppDelegate.accessibilityElement(from: element),
+                element
+            )
+        )
+    }
+
+    func testAccessibilityElementIdentityMatchesEquivalentTargetsOnly() {
+        let firstTarget = AXUIElementCreateApplication(42)
+        let sameTarget = AXUIElementCreateApplication(42)
+        let otherTarget = AXUIElementCreateApplication(43)
+
+        XCTAssertTrue(
+            AccessibilityManager.areSameAccessibilityElement(firstTarget, sameTarget)
+        )
+        XCTAssertFalse(
+            AccessibilityManager.areSameAccessibilityElement(firstTarget, otherTarget)
+        )
+    }
+
+    func testPluginInstallPreviewRunsOffMainThreadAndReturnsOnMainActor() async {
+        let completed = expectation(description: "preview completion")
+
+        AppDelegate.loadPluginInstallPreview(
+            from: URL(fileURLWithPath: "/tmp/Test.openfireext"),
+            on: DispatchQueue(label: "com.openfire.tests.install-preview"),
+            previewProvider: { _ -> PluginManager.PluginInstallPreview? in
+                XCTAssertFalse(Thread.isMainThread)
+                return nil
+            },
+            completion: { preview in
+                XCTAssertTrue(Thread.isMainThread)
+                XCTAssertNil(preview)
+                completed.fulfill()
+            }
+        )
+
+        await fulfillment(of: [completed], timeout: 1)
     }
 
     func testMenuDismissIsIdempotentWhileAlreadyInProgress() {

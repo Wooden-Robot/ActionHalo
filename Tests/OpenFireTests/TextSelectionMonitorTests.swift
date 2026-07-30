@@ -8,6 +8,31 @@ final class TextSelectionMonitorTests: XCTestCase {
     }
 
     @MainActor
+    func testNotificationPayloadsKeepVerifiedFocusedElementAndProcessIdentifier() throws {
+        let focusedElement = AXUIElementCreateApplication(getpid())
+        let location = NSPoint(x: 120, y: 240)
+        let textSelectedUserInfo = TextSelectionMonitor.textSelectedNotificationUserInfo(
+            text: "selected",
+            location: location,
+            processIdentifier: 42,
+            focusedElement: focusedElement
+        )
+        let emptyInputUserInfo = TextSelectionMonitor.emptyTextInputClickedNotificationUserInfo(
+            location: location,
+            processIdentifier: 42,
+            focusedElement: focusedElement
+        )
+
+        XCTAssertEqual(textSelectedUserInfo["text"] as? String, "selected")
+        for userInfo in [textSelectedUserInfo, emptyInputUserInfo] {
+            XCTAssertEqual(userInfo["processIdentifier"] as? NSNumber, NSNumber(value: 42))
+            let deliveredElement = try XCTUnwrap(userInfo["focusedElement"])
+            XCTAssertEqual(CFGetTypeID(deliveredElement as CFTypeRef), AXUIElementGetTypeID())
+            XCTAssertTrue(CFEqual(deliveredElement as CFTypeRef, focusedElement))
+        }
+    }
+
+    @MainActor
     func testSingletonInstance() {
         let instance1 = TextSelectionMonitor.shared
         let instance2 = TextSelectionMonitor.shared

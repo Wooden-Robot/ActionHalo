@@ -40,6 +40,7 @@
 "Invalid plugin package. Make sure the .openfireext folder contains a valid Config.json." = "插件包无效。请确认 .openfireext 文件夹里包含有效的 Config.json。";
 "Plugin identifier is invalid: %@" = "插件标识符无效：%@";
 "Installing this plugin would replace a different plugin (%@). Rename one of the plugins and try again." = "安装这个插件会替换另一个插件（%@）。请重命名其中一个插件后再试。";
+"The plugin changed after the install confirmation was shown. Review it and try again." = "显示安装确认后插件已发生变化，请重新检查后再试。";
 "Plugin validation failed after copying. The package may have changed during installation." = "复制后插件校验失败。插件包可能在安装过程中发生了变化。";
 "Failed to copy plugin to installation directory. Check permissions.\n(%@)\n%@" = "无法复制插件文件到安装目录，请检查权限。\n(%@)\n%@";
 "Accessibility Permission Lost" = "辅助功能权限已失效";
@@ -73,6 +74,7 @@
 "DNS Lookup Failed" = "DNS 解析失败。";
 "Retry" = "重试";
 "Unexpected server response (%@)." = "服务器响应异常（%@）。";
+"The update server returned an untrusted download address." = "更新服务器返回了不受信任的下载地址。";
 "Auto Check Updates" = "自动检查更新";
 "✓ Auto Check Updates" = "✓ 自动检查更新";
 
@@ -176,6 +178,7 @@
 "Identifier cannot be changed after the plugin is created." = "插件创建后不能修改标识符。";
 "URL cannot be empty" = "URL 不能为空";
 "URL must be a valid absolute URL." = "URL 必须是合法的绝对地址。";
+"URL must use http, https, mailto, or dict." = "URL 必须使用 http、https、mailto 或 dict 协议。";
 "Script cannot be empty" = "脚本不能为空";
 "Code cannot be empty" = "代码不能为空";
 "Key combo cannot be empty" = "快捷键不能为空";
@@ -194,6 +197,9 @@
 "Delete Failed: %@" = "删除失败: %@";
 "Choose Icon" = "选择图标";
 "Error" = "错误";
+"The existing plugin package is unsafe or exceeds package limits." = "现有插件包不安全或超出包限制。";
+"The saved plugin configuration failed final validation." = "已保存的插件配置未通过最终校验。";
+"The plugin destination is outside the managed plugin directory." = "插件目标位置超出受管理的插件目录。";
 
 /* OpenFire UI / Other */
 "App Blacklist" = "已禁用的应用 (App Blacklist)";
@@ -211,8 +217,10 @@
 "Current OpenFire context and plugin visibility report." = "当前 OpenFire 上下文与插件可见性报告。";
 "Refresh" = "刷新";
 "Copy Report" = "复制报告";
+"Unable to capture diagnostics context." = "无法获取诊断上下文。";
 "Empty-input probe point" = "空输入检测点";
 "Visible plugins: %d / %d" = "可见插件：%d / %d";
+"Shown plugins: %d / %d" = "已显示插件：%d / %d";
 "OpenFire Diagnostics" = "OpenFire 诊断";
 "Frontmost app" = "前台应用";
 "Bundle ID" = "Bundle ID";
@@ -225,6 +233,9 @@
 "Selected text length" = "选中文本长度";
 "Selected text preview" = "选中文本预览";
 "Focused element" = "焦点元素";
+"Clipboard" = "剪贴板";
+"Empty" = "空";
+"Has text" = "有文本";
 "Selection source" = "选中来源";
 "Last selection failure" = "最近一次选中失败";
 "Menu readiness" = "菜单触发状态";
@@ -232,7 +243,10 @@
 "Blocked" = "被阻塞";
 "Plugins" = "插件";
 "visible" = "可见";
+"shown" = "已显示";
 "Visible" = "可见";
+"Shown" = "已显示";
+"Shown, Disabled" = "已显示但不可用";
 "Hidden" = "隐藏";
 "Type" = "类型";
 "Reason" = "原因";
@@ -249,7 +263,12 @@
 "%@ · %@" = "%@ · %@";
 "Accessibility permission is missing" = "辅助功能权限缺失";
 "OpenFire is disabled in the current app" = "OpenFire 在当前应用中已被禁用";
+"OpenFire is intentionally suppressed for the current frontmost app" = "OpenFire 已针对当前前台应用主动抑制";
 "No selected text was detected via Accessibility" = "辅助功能未检测到选中文本";
+"No active selected text or empty-input shortcut is currently available" = "当前没有活动选中文本，空输入框快捷入口也不可用";
+"Empty-input Paste / Clear shortcut is currently available" = "空输入框的“粘贴 / 清空”快捷入口当前可用";
+"Executable in current context" = "当前上下文可执行";
+"Requires an editable text context" = "需要可编辑文本上下文";
 "Accessibility read returned no selected text" = "辅助功能读取未返回选中文本";
 "Cmd+C fallback returned no selected text" = "Cmd+C 回退未返回选中文本";
 "AX observer could not be attached" = "AX 观察器无法挂载";

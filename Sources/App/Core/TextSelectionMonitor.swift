@@ -52,12 +52,39 @@ final class TextSelectionMonitor {
     
     static let shared = TextSelectionMonitor()
     
-    /// Notification posted when text is selected. UserInfo contains "text" and "mouseLocation"
+    /// Notification posted when text is selected. UserInfo contains the text,
+    /// location, target PID, and the focused element verified for this selection.
     nonisolated static let textSelectedNotification = Notification.Name("OpenFireTextSelected")
 
     nonisolated static func hasUsableClipboardText(_ text: String?) -> Bool {
         guard let text else { return false }
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func textSelectedNotificationUserInfo(
+        text: String,
+        location: NSPoint,
+        processIdentifier: pid_t,
+        focusedElement: AXUIElement
+    ) -> [String: Any] {
+        [
+            "text": text,
+            "mouseLocation": NSValue(point: location),
+            "processIdentifier": NSNumber(value: processIdentifier),
+            "focusedElement": focusedElement
+        ]
+    }
+
+    static func emptyTextInputClickedNotificationUserInfo(
+        location: NSPoint,
+        processIdentifier: pid_t,
+        focusedElement: AXUIElement
+    ) -> [String: Any] {
+        [
+            "mouseLocation": NSValue(point: location),
+            "processIdentifier": NSNumber(value: processIdentifier),
+            "focusedElement": focusedElement
+        ]
     }
 
     nonisolated static func shouldSuppressForFileDragPasteboard(typeIdentifiers: [String]) -> Bool {
@@ -454,7 +481,7 @@ final class TextSelectionMonitor {
     ) -> Bool {
         guard let currentSnapshot,
               currentSnapshot.canReadSelectedTextViaAccessibility,
-              currentSnapshot.normalizedText != nil else { return false }
+              currentSnapshot.usableText != nil else { return false }
         return AccessibilityManager.didSelectionChange(from: snapshotAtMouseDown, to: currentSnapshot)
     }
 
@@ -691,7 +718,7 @@ final class TextSelectionMonitor {
                 if Self.shouldHandleAccessibilityDragSelection(
                     snapshotAtMouseDown: snapshotAtMouseDown,
                     currentSnapshot: currentSnapshot
-                ), let text = currentSnapshot?.normalizedText {
+                ), let text = currentSnapshot?.usableText {
                     AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
                     self.handleSelectionFound(text: text, location: upLocation, taskID: taskID)
                 } else {
@@ -813,7 +840,7 @@ final class TextSelectionMonitor {
             if Self.shouldHandleAccessibilityDragSelection(
                 snapshotAtMouseDown: self.pendingSelectionBaselineSnapshot,
                 currentSnapshot: currentSnapshot
-            ), let text = currentSnapshot?.normalizedText {
+            ), let text = currentSnapshot?.usableText {
                 AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
                 self.handleSelectionFound(text: text, location: mouseLocation, taskID: taskID)
             } else if allowCopyFallback {
@@ -829,7 +856,8 @@ final class TextSelectionMonitor {
                     self.isCopyFallbackInFlight = true
                     self.stopSelectionObserver()
                     self.pendingCopyFallbackRequestID = AccessibilityManager.shared.getSelectedTextViaCopy(
-                        expectedProcessIdentifier: self.pendingSelectionProcessIdentifier
+                        expectedProcessIdentifier: self.pendingSelectionProcessIdentifier,
+                        expectedFocusedElement: self.pendingSelectionFocusedElement
                     ) { [weak self] copiedText in
                         guard let self = self, self.pendingSelectionTaskID == taskID else { return }
                         self.pendingCopyFallbackRequestID = nil
@@ -882,7 +910,7 @@ final class TextSelectionMonitor {
         if Self.shouldHandleAccessibilityDragSelection(
             snapshotAtMouseDown: pendingSelectionBaselineSnapshot,
             currentSnapshot: currentSnapshot
-        ), let text = currentSnapshot?.normalizedText {
+        ), let text = currentSnapshot?.usableText {
             let location = NSEvent.mouseLocation
             AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
             handleSelectionFound(text: text, location: location, taskID: taskID)
@@ -969,16 +997,18 @@ final class TextSelectionMonitor {
     private func postTextSelectedNotification(
         text: String,
         location: NSPoint,
-        processIdentifier: pid_t
+        processIdentifier: pid_t,
+        focusedElement: AXUIElement
     ) {
         NotificationCenter.default.post(
             name: TextSelectionMonitor.textSelectedNotification,
             object: self,
-            userInfo: [
-                "text": text,
-                "mouseLocation": NSValue(point: location),
-                "processIdentifier": NSNumber(value: processIdentifier)
-            ]
+            userInfo: Self.textSelectedNotificationUserInfo(
+                text: text,
+                location: location,
+                processIdentifier: processIdentifier,
+                focusedElement: focusedElement
+            )
         )
     }
 
@@ -1005,7 +1035,8 @@ final class TextSelectionMonitor {
             self.postTextSelectedNotification(
                 text: text,
                 location: location,
-                processIdentifier: processIdentifier
+                processIdentifier: processIdentifier,
+                focusedElement: focusedElement
             )
         }
 
@@ -1074,6 +1105,9 @@ final class TextSelectionMonitor {
         guard AccessibilityManager.isExpectedCopyFallbackProcess(
             expectedProcessIdentifier: expectedProcessIdentifier,
             currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier
+        ), AccessibilityManager.areSameAccessibilityElement(
+            focusedElement,
+            AccessibilityManager.shared.getFocusedElement()
         ), selectedText == nil, isTextInput,
               let expectedProcessIdentifier else {
             return
@@ -1082,10 +1116,11 @@ final class TextSelectionMonitor {
         NotificationCenter.default.post(
             name: TextSelectionMonitor.emptyTextInputClickedNotification,
             object: self,
-            userInfo: [
-                "mouseLocation": NSValue(point: mouseLocation),
-                "processIdentifier": NSNumber(value: expectedProcessIdentifier)
-            ]
+            userInfo: Self.emptyTextInputClickedNotificationUserInfo(
+                location: mouseLocation,
+                processIdentifier: expectedProcessIdentifier,
+                focusedElement: focusedElement
+            )
         )
     }
 }

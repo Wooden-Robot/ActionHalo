@@ -109,6 +109,137 @@ final class PluginEditorWindowTests: XCTestCase {
         XCTAssertNil(message)
     }
 
+    func testEditableScriptContentRejectsTraversalOutsidePluginPackage() throws {
+        let bundleURL = try makePluginPackage(
+            config: #"{"name":"Script","identifier":"com.test.script","action":{"type":"shell-script","script":"../outside.sh"}}"#
+        )
+        let outsideURL = bundleURL.deletingLastPathComponent().appendingPathComponent("outside.sh")
+        temporaryDirectories.append(outsideURL)
+        try "external secret".write(to: outsideURL, atomically: true, encoding: .utf8)
+        let action = try JSONDecoder().decode(
+            PluginConfig.self,
+            from: Data(
+                #"{"name":"Script","identifier":"com.test.script","action":{"type":"shell-script","script":"../outside.sh"}}"#.utf8
+            )
+        ).action
+
+        XCTAssertNil(
+            PluginEditorWindow.editableScriptContent(
+                for: action,
+                pluginDirectoryURL: bundleURL
+            )
+        )
+    }
+
+    func testEditableScriptContentRejectsSymbolicLinkEscape() throws {
+        let bundleURL = try makePluginPackage(
+            config: #"{"name":"Script","identifier":"com.test.script","action":{"type":"shell-script","script":"script.sh"}}"#
+        )
+        let outsideURL = bundleURL.deletingLastPathComponent().appendingPathComponent("outside.sh")
+        temporaryDirectories.append(outsideURL)
+        try "external secret".write(to: outsideURL, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            at: bundleURL.appendingPathComponent("script.sh"),
+            withDestinationURL: outsideURL
+        )
+        let action = try JSONDecoder().decode(
+            PluginConfig.self,
+            from: Data(
+                #"{"name":"Script","identifier":"com.test.script","action":{"type":"shell-script","script":"script.sh"}}"#.utf8
+            )
+        ).action
+
+        XCTAssertNil(
+            PluginEditorWindow.editableScriptContent(
+                for: action,
+                pluginDirectoryURL: bundleURL
+            )
+        )
+    }
+
+    func testEditableScriptContentRejectsFilesOverEditorLimit() throws {
+        let bundleURL = try makePluginPackage(
+            config: #"{"name":"Script","identifier":"com.test.script","action":{"type":"shell-script","script":"script.sh"}}"#
+        )
+        try "12345".write(
+            to: bundleURL.appendingPathComponent("script.sh"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let action = try JSONDecoder().decode(
+            PluginConfig.self,
+            from: Data(
+                #"{"name":"Script","identifier":"com.test.script","action":{"type":"shell-script","script":"script.sh"}}"#.utf8
+            )
+        ).action
+
+        XCTAssertNil(
+            PluginEditorWindow.editableScriptContent(
+                for: action,
+                pluginDirectoryURL: bundleURL,
+                maximumFileBytes: 4
+            )
+        )
+    }
+
+    func testEditableScriptContentRejectsInlineSourceOverEditorLimit() throws {
+        let bundleURL = try makePluginPackage(
+            config: #"{"name":"Inline","identifier":"com.test.inline","action":{"type":"shell-script","inline":"12345"}}"#
+        )
+        let action = try JSONDecoder().decode(
+            PluginConfig.self,
+            from: Data(
+                #"{"name":"Inline","identifier":"com.test.inline","action":{"type":"shell-script","inline":"12345"}}"#.utf8
+            )
+        ).action
+
+        XCTAssertNil(
+            PluginEditorWindow.editableScriptContent(
+                for: action,
+                pluginDirectoryURL: bundleURL,
+                maximumFileBytes: 4
+            )
+        )
+    }
+
+    func testEditableScriptContentLoadsPackageFileAndInlineFallback() throws {
+        let bundleURL = try makePluginPackage(
+            config: #"{"name":"Script","identifier":"com.test.script","action":{"type":"shell-script","script":"script.sh"}}"#
+        )
+        try "echo package".write(
+            to: bundleURL.appendingPathComponent("script.sh"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let fileAction = try JSONDecoder().decode(
+            PluginConfig.self,
+            from: Data(
+                #"{"name":"Script","identifier":"com.test.script","action":{"type":"shell-script","script":"script.sh"}}"#.utf8
+            )
+        ).action
+        let inlineAction = try JSONDecoder().decode(
+            PluginConfig.self,
+            from: Data(
+                #"{"name":"Inline","identifier":"com.test.inline","action":{"type":"shell-script","inline":"echo inline"}}"#.utf8
+            )
+        ).action
+
+        XCTAssertEqual(
+            PluginEditorWindow.editableScriptContent(
+                for: fileAction,
+                pluginDirectoryURL: bundleURL
+            ),
+            "echo package"
+        )
+        XCTAssertEqual(
+            PluginEditorWindow.editableScriptContent(
+                for: inlineAction,
+                pluginDirectoryURL: bundleURL
+            ),
+            "echo inline"
+        )
+    }
+
     func testValidationRejectsIdentifiersThatWouldCreateHiddenPluginPackages() {
         let message = PluginEditorWindow.validationMessage(
             name: "Book",

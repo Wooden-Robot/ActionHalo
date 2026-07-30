@@ -202,6 +202,8 @@ class ShortcutRecorderField: NSView {
 
 /// A visual editor window for creating and modifying OpenFire plugins
 final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegate {
+    static let maximumEditableScriptBytes = 1 * 1024 * 1024
+
     enum PluginPackageWriteError: LocalizedError, Sendable {
         case unsafeTemplate
         case invalidConfiguration
@@ -627,44 +629,16 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             contentTextView.string = p.config.action.url ?? ""
         case .shellScript:
             typePopUp.selectItem(at: 1)
-            var loaded = false
-            if let scriptName = p.config.action.script {
-                let scriptURL = p.directoryURL.appendingPathComponent(scriptName)
-                let accessed = scriptURL.startAccessingSecurityScopedResource()
-                var enc1: String.Encoding = .utf8
-                if let content = try? String(contentsOf: scriptURL, usedEncoding: &enc1) {
-                    contentTextView.string = content
-                    loaded = true
-                } else if p.config.action.inline == nil {
-                    // Fallback: if there strictly is no such file and no inline, treat the JSON string value itself as the inline script
-                    contentTextView.string = scriptName
-                    loaded = true
-                }
-                if accessed { scriptURL.stopAccessingSecurityScopedResource() }
-            }
-            if !loaded, let inline = p.config.action.inline {
-                contentTextView.string = inline
-            }
+            contentTextView.string = Self.editableScriptContent(
+                for: p.config.action,
+                pluginDirectoryURL: p.directoryURL
+            ) ?? ""
         case .applescript:
             typePopUp.selectItem(at: 2)
-            var loaded = false
-            if let scriptName = p.config.action.script {
-                let scriptURL = p.directoryURL.appendingPathComponent(scriptName)
-                let accessed = scriptURL.startAccessingSecurityScopedResource()
-                var enc2: String.Encoding = .utf8
-                if let content = try? String(contentsOf: scriptURL, usedEncoding: &enc2) {
-                    contentTextView.string = content
-                    loaded = true
-                } else if p.config.action.inline == nil {
-                    // Fallback: if there strictly is no such file and no inline, treat the JSON string value itself as the inline script
-                    contentTextView.string = scriptName
-                    loaded = true
-                }
-                if accessed { scriptURL.stopAccessingSecurityScopedResource() }
-            }
-            if !loaded, let inline = p.config.action.inline {
-                contentTextView.string = inline
-            }
+            contentTextView.string = Self.editableScriptContent(
+                for: p.config.action,
+                pluginDirectoryURL: p.directoryURL
+            ) ?? ""
         case .keyCombo:
             typePopUp.selectItem(at: 3)
             let key = p.config.action.key ?? ""
@@ -682,6 +656,26 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         }
         typeChanged()
         updateSaveAvailability()
+    }
+
+    static func editableScriptContent(
+        for action: PluginActionConfig,
+        pluginDirectoryURL: URL,
+        maximumFileBytes: Int = maximumEditableScriptBytes
+    ) -> String? {
+        if let scriptValue = action.script,
+           let content = PluginManager.resolvedPluginScriptContent(
+               scriptValue,
+               pluginDirectoryURL: pluginDirectoryURL,
+               maximumFileBytes: maximumFileBytes
+           ) {
+            return content
+        }
+        guard let inline = action.inline,
+              inline.utf8.count <= maximumFileBytes else {
+            return nil
+        }
+        return inline
     }
     
     @objc private func typeChanged() {
