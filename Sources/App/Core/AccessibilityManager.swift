@@ -353,12 +353,12 @@ final class AccessibilityManager {
         case accessibility
         case copyFallback
 
-        var localizationKey: String {
+        var localizedName: String {
             switch self {
             case .accessibility:
-                return "Accessibility API"
+                return "Accessibility API".localized
             case .copyFallback:
-                return "Cmd+C Fallback"
+                return "Cmd+C Fallback".localized
             }
         }
     }

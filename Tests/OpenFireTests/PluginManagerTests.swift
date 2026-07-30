@@ -464,6 +464,37 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertEqual(watchableNames, [pluginsURL.lastPathComponent, "Custom.openfireext"])
     }
 
+    func testKeyComboTargetRequiresSameProcessAndFocusedElement() {
+        let expectedElement = AXUIElementCreateApplication(42)
+        let sameElement = AXUIElementCreateApplication(42)
+        let otherElement = AXUIElementCreateApplication(43)
+
+        XCTAssertTrue(
+            PluginManager.isExpectedKeyComboTarget(
+                expectedProcessIdentifier: 42,
+                currentProcessIdentifier: 42,
+                expectedFocusedElement: expectedElement,
+                currentFocusedElement: sameElement
+            )
+        )
+        XCTAssertFalse(
+            PluginManager.isExpectedKeyComboTarget(
+                expectedProcessIdentifier: 42,
+                currentProcessIdentifier: 7,
+                expectedFocusedElement: expectedElement,
+                currentFocusedElement: sameElement
+            )
+        )
+        XCTAssertFalse(
+            PluginManager.isExpectedKeyComboTarget(
+                expectedProcessIdentifier: 42,
+                currentProcessIdentifier: 42,
+                expectedFocusedElement: expectedElement,
+                currentFocusedElement: otherElement
+            )
+        )
+    }
+
     @MainActor
     func testInPlaceConfigOverwriteTriggersPluginReload() async throws {
         let manager = PluginManager.shared
@@ -565,6 +596,128 @@ final class PluginManagerTests: GlobalStateTestCase {
             manager.plugins.first(where: { $0.id == identifier })
         )
         XCTAssertNotEqual(reloadedPlugin.packageFingerprint, initialFingerprint)
+    }
+
+    @MainActor
+    func testInPlaceIconOverwriteTriggersPluginReload() async throws {
+        let manager = PluginManager.shared
+        let identifier = "com.test.in-place-icon-reload"
+        let packageURL = manager.userPluginsURL.appendingPathComponent(
+            "\(identifier).openfireext"
+        )
+        try FileManager.default.createDirectory(
+            at: packageURL,
+            withIntermediateDirectories: true
+        )
+        try """
+        {
+            "name": "Icon",
+            "identifier": "\(identifier)",
+            "icon": "icon.png",
+            "action": { "type": "copy" }
+        }
+        """.write(
+            to: packageURL.appendingPathComponent("Config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let iconURL = packageURL.appendingPathComponent("icon.png")
+        try Data("before".utf8).write(to: iconURL)
+        let initialPlugin = try XCTUnwrap(PluginLoader.load(from: packageURL))
+        let initialFingerprint = try XCTUnwrap(initialPlugin.packageFingerprint)
+        manager.plugins = [initialPlugin]
+        manager.startWatchingPluginDirectories()
+        defer { manager.stopWatchingPluginDirectories() }
+
+        let reloaded = expectation(description: "In-place icon edit reloaded plugins")
+        reloaded.assertForOverFulfill = false
+        let observer = NotificationCenter.default.addObserver(
+            forName: PluginManager.pluginsReloadedNotification,
+            object: manager,
+            queue: .main
+        ) { _ in
+            if manager.plugins.first(where: { $0.id == identifier })?
+                .packageFingerprint != initialFingerprint {
+                reloaded.fulfill()
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let handle = try FileHandle(forWritingTo: iconURL)
+        try handle.truncate(atOffset: 0)
+        try handle.write(contentsOf: Data("after".utf8))
+        try handle.synchronize()
+        try handle.close()
+
+        await fulfillment(of: [reloaded], timeout: 3)
+        XCTAssertNotEqual(
+            manager.plugins.first(where: { $0.id == identifier })?.packageFingerprint,
+            initialFingerprint
+        )
+    }
+
+    @MainActor
+    func testReplacingConfigReattachesWatcherForNextInPlaceWrite() async throws {
+        let manager = PluginManager.shared
+        let identifier = "com.test.replaced-config-watcher"
+        let packageURL = manager.userPluginsURL.appendingPathComponent(
+            "\(identifier).openfireext"
+        )
+        try FileManager.default.createDirectory(
+            at: packageURL,
+            withIntermediateDirectories: true
+        )
+        let configURL = packageURL.appendingPathComponent("Config.json")
+        try pluginConfig(identifier: identifier, name: "Initial").write(
+            to: configURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        manager.plugins = [try XCTUnwrap(PluginLoader.load(from: packageURL))]
+        manager.startWatchingPluginDirectories()
+        defer { manager.stopWatchingPluginDirectories() }
+
+        let replacementLoaded = expectation(description: "Replacement Config loaded")
+        let firstObserver = NotificationCenter.default.addObserver(
+            forName: PluginManager.pluginsReloadedNotification,
+            object: manager,
+            queue: .main
+        ) { _ in
+            if manager.plugins.first(where: { $0.id == identifier })?.config.name == "Replacement" {
+                replacementLoaded.fulfill()
+            }
+        }
+        try pluginConfig(identifier: identifier, name: "Replacement").write(
+            to: configURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        await fulfillment(of: [replacementLoaded], timeout: 3)
+        NotificationCenter.default.removeObserver(firstObserver)
+
+        let finalLoaded = expectation(description: "Reattached Config watcher loaded in-place edit")
+        let secondObserver = NotificationCenter.default.addObserver(
+            forName: PluginManager.pluginsReloadedNotification,
+            object: manager,
+            queue: .main
+        ) { _ in
+            if manager.plugins.first(where: { $0.id == identifier })?.config.name == "Final" {
+                finalLoaded.fulfill()
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(secondObserver) }
+
+        let handle = try FileHandle(forWritingTo: configURL)
+        try handle.truncate(atOffset: 0)
+        try handle.write(contentsOf: Data(pluginConfig(identifier: identifier, name: "Final").utf8))
+        try handle.synchronize()
+        try handle.close()
+
+        await fulfillment(of: [finalLoaded], timeout: 3)
+        XCTAssertEqual(
+            manager.plugins.first(where: { $0.id == identifier })?.config.name,
+            "Final"
+        )
     }
 
     func testExecutionTrustTracksCurrentFingerprint() throws {

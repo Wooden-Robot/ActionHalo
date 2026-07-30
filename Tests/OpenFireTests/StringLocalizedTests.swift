@@ -33,6 +33,8 @@ final class StringLocalizedTests: XCTestCase {
 
         let sourceKeys = try Self.staticLocalizedKeys(in: sourceRoot)
         XCTAssertFalse(sourceKeys.isEmpty, "Expected to discover static .localized keys in Sources/App")
+        XCTAssertTrue(sourceKeys.contains("Accessibility API"))
+        XCTAssertTrue(sourceKeys.contains("Cmd+C Fallback"))
 
         for (language, resourceURL) in resourceURLs {
             let resourceKeys = try Self.localizationKeys(in: resourceURL)

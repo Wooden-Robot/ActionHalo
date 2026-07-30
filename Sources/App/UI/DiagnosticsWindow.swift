@@ -418,7 +418,7 @@ final class DiagnosticsWindow: NSWindowController {
         let relativeTime = formatter.localizedString(for: status.timestamp, relativeTo: Date())
         return String(
             format: "%@ · %@ · %d chars".localized,
-            status.source.localizationKey.localized,
+            status.source.localizedName,
             relativeTime,
             status.textLength
         )
