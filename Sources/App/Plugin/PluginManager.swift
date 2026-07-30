@@ -159,8 +159,13 @@ final class PluginManager: Sendable {
         var recoveredPluginDirectoryPaths: Set<String> = []
     }
 
+    private struct PluginPathWatcher {
+        let id: UUID
+        let source: DispatchSourceFileSystemObject
+    }
+
     private let state = OSAllocatedUnfairLock(initialState: State())
-    @MainActor private var directoryWatchers: [String: DispatchSourceFileSystemObject] = [:]
+    @MainActor private var pathWatchers: [String: PluginPathWatcher] = [:]
     @MainActor private var pendingReloadWorkItem: DispatchWorkItem?
 
     var plugins: [Plugin] {
@@ -351,6 +356,46 @@ final class PluginManager: Sendable {
         fileManager: FileManager = .default
     ) -> [URL] {
         [userPluginsURL] + pluginPackageDirectories(in: userPluginsURL, fileManager: fileManager)
+    }
+
+    static func watchablePluginPaths(
+        userPluginsURL: URL,
+        fileManager: FileManager = .default
+    ) -> [URL] {
+        let packageURLs = pluginPackageDirectories(
+            in: userPluginsURL,
+            fileManager: fileManager
+        )
+        var paths = [userPluginsURL]
+
+        for packageURL in packageURLs {
+            paths.append(packageURL)
+            for fileName in ["Config.json", "icon.png"] {
+                let fileURL = packageURL.appendingPathComponent(fileName)
+                if let values = try? fileURL.resourceValues(
+                    forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
+                ),
+                   values.isRegularFile == true,
+                   values.isSymbolicLink != true {
+                    paths.append(fileURL)
+                }
+            }
+
+            if let plugin = PluginLoader.load(from: packageURL),
+               let scriptValue = plugin.config.action.script,
+               case .bundledFile(let scriptURL) = resolvedPluginScriptSource(
+                   scriptValue,
+                   pluginDirectoryURL: packageURL,
+                   fileManager: fileManager
+               ) {
+                paths.append(scriptURL)
+            }
+        }
+
+        var seenPaths: Set<String> = []
+        return paths.filter {
+            seenPaths.insert(watchPath(for: $0)).inserted
+        }
     }
 
     static func sameFileURL(_ lhs: URL, _ rhs: URL) -> Bool {
@@ -599,6 +644,13 @@ final class PluginManager: Sendable {
                 
                 // Restore enabled/disabled state from UserDefaults
                 self.restorePluginStates()
+
+                // A Config.json write can briefly expose an incomplete file.
+                // Rebuild file watchers from the final applied configuration so
+                // a newly selected action script is never left unwatched.
+                if !self.pathWatchers.isEmpty {
+                    self.refreshUserPluginPackageWatchers()
+                }
                 
                 NSLog("[OpenFire] Loaded \(self.plugins.count) plugins total (\(builtIn.count) built-in, \(user.count) user)")
                 
@@ -1028,22 +1080,21 @@ final class PluginManager: Sendable {
     
     @MainActor
     func startWatchingPluginDirectories() {
-        for directoryURL in Self.watchablePluginDirectories(userPluginsURL: userPluginsURL) {
-            watchDirectory(
-                directoryURL,
-                refreshPackageWatchersOnEvent: Self.watchPath(for: directoryURL) == Self.watchPath(for: userPluginsURL)
-            )
-        }
+        try? FileManager.default.createDirectory(
+            at: userPluginsURL,
+            withIntermediateDirectories: true
+        )
+        refreshUserPluginPackageWatchers()
     }
     
     @MainActor
     func stopWatchingPluginDirectories() {
         pendingReloadWorkItem?.cancel()
         pendingReloadWorkItem = nil
-        for watcher in directoryWatchers.values {
-            watcher.cancel()
+        for watcher in pathWatchers.values {
+            watcher.source.cancel()
         }
-        directoryWatchers.removeAll()
+        pathWatchers.removeAll()
     }
     
     private static func watchPath(for url: URL) -> String {
@@ -1052,29 +1103,28 @@ final class PluginManager: Sendable {
 
     @MainActor
     private func refreshUserPluginPackageWatchers() {
-        let userPluginsPath = Self.watchPath(for: userPluginsURL)
-        let packageURLs = Self.pluginPackageDirectories(in: userPluginsURL)
-        let packagePaths = Set(packageURLs.map { Self.watchPath(for: $0) })
+        let watchableURLs = Self.watchablePluginPaths(
+            userPluginsURL: userPluginsURL
+        )
+        let watchablePaths = Set(watchableURLs.map { Self.watchPath(for: $0) })
 
-        let stalePackagePaths = directoryWatchers.keys.filter { path in
-            path != userPluginsPath && !packagePaths.contains(path)
+        let stalePaths = pathWatchers.keys.filter {
+            !watchablePaths.contains($0)
         }
-        for path in stalePackagePaths {
-            directoryWatchers[path]?.cancel()
-            directoryWatchers.removeValue(forKey: path)
+        for path in stalePaths {
+            pathWatchers[path]?.source.cancel()
+            pathWatchers.removeValue(forKey: path)
         }
 
-        for packageURL in packageURLs {
-            watchDirectory(packageURL, refreshPackageWatchersOnEvent: false)
+        for url in watchableURLs {
+            watchFileSystemObject(at: url)
         }
     }
 
     @MainActor
-    private func watchDirectory(_ url: URL, refreshPackageWatchersOnEvent: Bool) {
-        // Ensure directory exists
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    private func watchFileSystemObject(at url: URL) {
         let watchPath = Self.watchPath(for: url)
-        guard directoryWatchers[watchPath] == nil else { return }
+        guard pathWatchers[watchPath] == nil else { return }
         
         let fd = open(url.path, O_EVTONLY)
         guard fd >= 0 else {
@@ -1087,14 +1137,19 @@ final class PluginManager: Sendable {
             eventMask: [.write, .delete, .rename],
             queue: .main
         )
+        let watcherID = UUID()
         
         source.setEventHandler { [weak self] in
             Task { @MainActor in
-                NSLog("[OpenFire] Plugin directory changed, reloading...")
-                if refreshPackageWatchersOnEvent {
-                    self?.refreshUserPluginPackageWatchers()
+                guard let self,
+                      self.pathWatchers[watchPath]?.id == watcherID else {
+                    return
                 }
-                self?.scheduleReloadPlugins()
+                NSLog("[OpenFire] Plugin package changed, reloading...")
+                self.pathWatchers[watchPath]?.source.cancel()
+                self.pathWatchers.removeValue(forKey: watchPath)
+                self.refreshUserPluginPackageWatchers()
+                self.scheduleReloadPlugins()
             }
         }
         
@@ -1103,9 +1158,12 @@ final class PluginManager: Sendable {
         }
         
         source.resume()
-        directoryWatchers[watchPath] = source
+        pathWatchers[watchPath] = PluginPathWatcher(
+            id: watcherID,
+            source: source
+        )
         
-        NSLog("[OpenFire] Watching plugin directory: \(url.path)")
+        NSLog("[OpenFire] Watching plugin path: \(url.path)")
     }
     
     // MARK: - Plugin Execution
@@ -1576,6 +1634,63 @@ final class PluginManager: Sendable {
         return looksLikeMissingFile ? nil : .inline(scriptValue)
     }
 
+    static func resolvedPluginScriptContent(
+        _ scriptValue: String,
+        pluginDirectoryURL: URL,
+        maximumFileBytes: Int,
+        fileManager: FileManager = .default
+    ) -> String? {
+        guard maximumFileBytes >= 0, maximumFileBytes < Int.max else { return nil }
+
+        switch resolvedPluginScriptSource(
+            scriptValue,
+            pluginDirectoryURL: pluginDirectoryURL,
+            fileManager: fileManager
+        ) {
+        case .inline(let source):
+            return source.utf8.count <= maximumFileBytes ? source : nil
+        case .bundledFile(let scriptURL):
+            var pathStatus = stat()
+            guard lstat(scriptURL.path, &pathStatus) == 0,
+                  pathStatus.st_mode & S_IFMT == S_IFREG,
+                  isPluginDirectory(
+                    scriptURL.standardizedFileURL.resolvingSymlinksInPath(),
+                    inside: pluginDirectoryURL
+                  ) else {
+                return nil
+            }
+
+            guard let handle = try? FileHandle(forReadingFrom: scriptURL) else {
+                return nil
+            }
+            defer { try? handle.close() }
+
+            let descriptor = handle.fileDescriptor
+            var fileStatus = stat()
+            guard fstat(descriptor, &fileStatus) == 0,
+                  fileStatus.st_mode & S_IFMT == S_IFREG,
+                  fileStatus.st_dev == pathStatus.st_dev,
+                  fileStatus.st_ino == pathStatus.st_ino,
+                  fileStatus.st_size >= 0,
+                  fileStatus.st_size <= off_t(maximumFileBytes) else {
+                return nil
+            }
+
+            let data: Data
+            do {
+                data = try handle.read(
+                    upToCount: maximumFileBytes + 1
+                ) ?? Data()
+            } catch {
+                return nil
+            }
+            guard data.count <= maximumFileBytes else { return nil }
+            return String(data: data, encoding: .utf8)
+        case nil:
+            return nil
+        }
+    }
+
     private static func appleScriptStringLiteralContent(for text: String) -> String {
         text
             .replacingOccurrences(of: "\\", with: "\\\\")
@@ -1646,7 +1761,12 @@ final class PluginManager: Sendable {
     /// Create an immutable description of the exact package shown in an install
     /// confirmation. Pass its fingerprint back to `installPluginDetailed` after
     /// the user accepts the prompt.
-    func makeInstallPreview(from sourceURL: URL) -> PluginInstallPreview? {
+    func makeInstallPreview(
+        from sourceURL: URL,
+        snapshotCopy: (URL, URL) throws -> Void = {
+            try FileManager.default.copyItem(at: $0, to: $1)
+        }
+    ) -> PluginInstallPreview? {
         let accessGranted = sourceURL.startAccessingSecurityScopedResource()
         defer {
             if accessGranted {
@@ -1655,18 +1775,55 @@ final class PluginManager: Sendable {
         }
 
         guard Self.isInstallPackageWithinLimits(sourceURL),
-              let plugin = PluginLoader.load(from: sourceURL),
-              Self.pluginIdentifierValidationMessage(plugin.id) == nil,
-              let fingerprint = plugin.packageFingerprint else {
+              let sourcePluginBeforeCopy = PluginLoader.load(from: sourceURL),
+              Self.pluginIdentifierValidationMessage(sourcePluginBeforeCopy.id) == nil,
+              let sourceFingerprintBeforeCopy = sourcePluginBeforeCopy.packageFingerprint else {
+            return nil
+        }
+
+        let fileManager = FileManager.default
+        let snapshotContainerURL = fileManager.temporaryDirectory.appendingPathComponent(
+            "openfire-install-preview-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let snapshotPackageURL = snapshotContainerURL.appendingPathComponent(
+            "Package.openfireext",
+            isDirectory: true
+        )
+        defer {
+            try? fileManager.removeItem(at: snapshotContainerURL)
+        }
+
+        do {
+            try fileManager.createDirectory(
+                at: snapshotContainerURL,
+                withIntermediateDirectories: false
+            )
+            try snapshotCopy(sourceURL, snapshotPackageURL)
+        } catch {
+            NSLog("[OpenFire] Failed to prepare plugin install snapshot: \(error.localizedDescription)")
+            return nil
+        }
+
+        guard Self.isInstallPackageWithinLimits(snapshotPackageURL),
+              let snapshotPlugin = PluginLoader.load(from: snapshotPackageURL),
+              Self.pluginIdentifierValidationMessage(snapshotPlugin.id) == nil,
+              let snapshotFingerprint = snapshotPlugin.packageFingerprint,
+              Self.isInstallPackageWithinLimits(sourceURL),
+              let sourcePluginAfterCopy = PluginLoader.load(from: sourceURL),
+              let sourceFingerprintAfterCopy = sourcePluginAfterCopy.packageFingerprint,
+              sourceFingerprintBeforeCopy == snapshotFingerprint,
+              sourceFingerprintAfterCopy == snapshotFingerprint else {
+            NSLog("[OpenFire] Plugin changed while preparing the install confirmation: \(sourceURL.path)")
             return nil
         }
 
         return PluginInstallPreview(
-            name: plugin.config.name,
-            description: plugin.config.description,
-            actionType: plugin.config.action.type,
-            requiresExecutionTrust: plugin.requiresExecutionTrust,
-            fingerprint: fingerprint
+            name: snapshotPlugin.config.name,
+            description: snapshotPlugin.config.description,
+            actionType: snapshotPlugin.config.action.type,
+            requiresExecutionTrust: snapshotPlugin.requiresExecutionTrust,
+            fingerprint: snapshotFingerprint
         )
     }
 

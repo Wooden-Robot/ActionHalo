@@ -149,12 +149,12 @@ OpenFire 的强大之处在于插件自定义能力。插件以 `.openfireext` �
 | **搜索 / 翻译 / 词典** | 面向日常文本处理的常用动作，可直接搜索、翻译或调用 macOS 原生词典。 |
 | **打开链接 / 打开文件位置** | 这类内置动作会根据当前选中文本判断是否可执行，例如 URL 和文件路径。 |
 
-这些默认预装插件属于 OpenFire 内置能力本身，可以在菜单栏里启用、禁用、排序，也可以直接编辑；编辑内置插件时，OpenFire 会在系统默认版本之上创建你的用户覆盖版本。
+这些核心默认插件属于 OpenFire 内置能力本身，可以在菜单栏里启用、禁用和排序，但不能编辑或删除；不需要某个核心动作时可将其禁用。安装包自带的社区插件，以及你创建或安装的插件，可以在“插件管理”中编辑。
 只要插件处于启用状态，就会在圆环里保留自己的位置；如果当前上下文不匹配，它会以灰态显示，而不是在分页前被直接过滤掉。
 内置 `粘贴` 动作在当前焦点可编辑时可以进入主圆环；在空输入框场景下，它也会继续复用 `Paste / Clear` 胶囊入口。
 
 ### 社区生态插件
-内置于安装包中，可随时通过“插件管理”界面启用或删除：
+内置于安装包中，可随时通过“插件管理”界面启用、编辑或删除：
 - 🔍 [百度搜索](./Plugins/BaiduSearch.openfireext/Config.json) / [Google 搜索](./Plugins/GoogleSearch.openfireext/Config.json)：将选中文本直接送去网页搜索。
 - 🧑‍💻 [GitHub 搜索](./Plugins/GitHubSearch.openfireext/Config.json)：直接用选中文本去 GitHub 搜索。
 - 📚 [NeoDB 搜书](./Plugins/NeoDBBook.openfireext/Config.json) / [豆瓣搜书](./Plugins/DoubanBook.openfireext/Config.json)：按当前选中文本快速查书。
@@ -234,17 +234,17 @@ swift test --parallel    # 并行运行回归检查
 make package             # 本地验证用 .app 与 .dmg
 ```
 
-`make package` 只生成本地验证产物，并且绝不会执行公证。正式分发必须使用独立的 `make release` 门禁，同时提供 Developer ID Application 身份和已配置的 `notarytool` 钥匙串配置：
+`make package` 只生成本地验证产物，不执行发布版本校验或公证。正式分发必须使用独立的 `make release` 门禁：要么在准确的 `vX.Y.Z` tag 上执行，要么显式传入 `VERSION=X.Y.Z`；该版本必须与源码及打包后 App 的 `Info.plist` 两个版本字段一致。同时还需提供 Developer ID Application 身份和已配置的 `notarytool` 钥匙串配置：
 
 ```bash
-make release \
+make release VERSION=0.3.21 \
   CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
   NOTARYTOOL_PROFILE="openfire-notary"
 ```
 
-`make release` 会在缺少任一凭据时提前失败；凭据齐全后，它会签名 App 与 DMG、等待公证、装订票据，并验证两份签名和磁盘镜像。
+`make release` 会在版本或任一凭据不合法时提前失败，并在公证前再次核对打包后 App 的版本。检查通过后，它会签名 App 与 DMG、等待公证、装订票据，并验证两份签名和磁盘镜像。
 
-CI 固定使用 Xcode 16.4，执行串行与并行测试，将严格并发诊断视为错误，构建 SwiftPM Release 产物，并对 ad-hoc 签名的 universal App/DMG 做完整冒烟验证。
+CI 固定使用 Xcode 16.4，先执行常规测试，再启用 actor 数据竞争检查实际运行测试，并对应用构建强制执行严格并发诊断，随后构建 SwiftPM Release 产物，并对 ad-hoc 签名的 universal App/DMG 做完整冒烟验证。每周定时任务和手动触发任务会在 Thread Sanitizer 下运行完整测试。
 
 ---
 

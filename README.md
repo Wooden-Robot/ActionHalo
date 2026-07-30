@@ -149,12 +149,12 @@ OpenFire's true power lies in its plugin system. Plugins exist as `.openfireext`
 | **Search / Translate / Dict** | Everyday text actions for web search, translation, and the macOS Dictionary app. |
 | **Open Link / Reveal in Finder** | Context-aware built-ins for URLs and file paths. They stay visible and become executable only when the current selection matches. |
 
-These default built-ins are part of OpenFire itself. They can be enabled, disabled, reordered, and also edited from the menu bar. Editing a built-in plugin creates your own override on top of the bundled default.
+These core defaults are part of OpenFire itself. They can be enabled, disabled, and reordered, but they cannot be edited or deleted; disable any core action you do not want to use. Bundled community plugins and plugins you create or install can be edited from Plugin Management.
 Enabled plugins keep their slot in the wheel. If the current selection does not match a plugin's context, the action stays visible but disabled instead of disappearing before pagination.
 The built-in `Paste` action can appear in the text-selection wheel when the current focus is editable, and it is also reused by the empty-input `Paste / Clear` popup.
 
 ### Community Plugins
-Built into the package, they can be enabled or removed at any time via the "Plugin Management" interface:
+Built into the package, they can be enabled, edited, or removed at any time via the "Plugin Management" interface:
 - 🔍 [Baidu Search](./Plugins/BaiduSearch.openfireext/Config.json) / [Google Search](./Plugins/GoogleSearch.openfireext/Config.json): search the selected text on the web.
 - 🧑‍💻 [GitHub Search](./Plugins/GitHubSearch.openfireext/Config.json): search the selected text on GitHub.
 - 📚 [NeoDB Book Search](./Plugins/NeoDBBook.openfireext/Config.json) / [Douban Book Search](./Plugins/DoubanBook.openfireext/Config.json): look up books directly from the current selection.
@@ -234,17 +234,17 @@ swift test --parallel    # parallel runner regression check
 make package             # local verification .app and .dmg
 ```
 
-`make package` always produces a local verification artifact and never notarizes it. A distributable build must use the separate `make release` gate, which requires both a Developer ID Application identity and a configured `notarytool` keychain profile:
+`make package` always produces a local verification artifact and never applies release-version checks or notarization. A distributable build must use the separate `make release` gate. Run it from an exact `vX.Y.Z` tag, or pass `VERSION=X.Y.Z` explicitly; that version must match both version fields in the source and packaged app `Info.plist`. The release also requires a Developer ID Application identity and a configured `notarytool` keychain profile:
 
 ```bash
-make release \
+make release VERSION=0.3.21 \
   CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
   NOTARYTOOL_PROFILE="openfire-notary"
 ```
 
-`make release` fails before packaging if either credential is missing, then signs the app and DMG, waits for notarization, staples the ticket, and validates both signatures and the disk image.
+`make release` fails before packaging if the version or either credential is invalid. It checks the packaged app version again before notarization, then signs the app and DMG, waits for notarization, staples the ticket, and validates both signatures and the disk image.
 
-CI pins Xcode 16.4, runs serial and parallel tests, treats strict-concurrency diagnostics as errors, builds the SwiftPM release executable, and smoke-tests an ad-hoc universal app/DMG package.
+CI pins Xcode 16.4, runs the tests normally and again with actor data-race checks, enforces strict-concurrency diagnostics on the application build, builds the SwiftPM release executable, and smoke-tests an ad-hoc universal app/DMG package. A weekly or manually dispatched job runs the full suite under Thread Sanitizer.
 
 ---
 

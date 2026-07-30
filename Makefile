@@ -5,6 +5,7 @@ TARGET_ARM = arm64-apple-macosx13.0
 SWIFT_BUILD_FLAGS ?= -O -whole-module-optimization
 CODESIGN_IDENTITY ?= -
 NOTARYTOOL_PROFILE ?=
+VERSION ?=
 BUILD_DIR = .build
 OUTPUT = $(BUILD_DIR)/OpenFire
 
@@ -24,7 +25,7 @@ DMG_BACKGROUND = $(BUILD_DIR)/dmg-background.png
 
 .DEFAULT_GOAL := help
 
-.PHONY: help all clean force package release run test
+.PHONY: help all clean force package release verify-release-version run test
 
 help:
 	@echo "OpenFire 可用 make 命令："
@@ -32,7 +33,8 @@ help:
 	@echo "  make / make help  显示本说明，不执行构建。"
 	@echo "  make all          编译 universal OpenFire 二进制到 $(OUTPUT)。"
 	@echo "  make package      创建仅供本地验证的 $(APP_NAME).app 和 $(DMG_NAME)。"
-	@echo "  make release      Developer ID 签名、公证并验证正式发布镜像。"
+	@echo "  make release      校验版本后进行 Developer ID 签名、公证并验证正式发布镜像。"
+	@echo "                    需位于 vX.Y.Z tag，或显式传入 VERSION=X.Y.Z。"
 	@echo "  make run          打包、重置开发构建的 Accessibility 权限，然后启动 OpenFire。"
 	@echo "  make test         运行 Swift 测试。"
 	@echo "  make clean        删除 $(BUILD_DIR)。"
@@ -130,7 +132,14 @@ package: all
 	@echo "✅ Local verification package created at $(BUILD_DIR)/$(DMG_NAME)"
 	@echo "ℹ️  This target does not notarize. Use 'make release' for a distributable build."
 
-release:
+verify-release-version:
+	@release_tag="$$(git describe --tags --exact-match HEAD 2>/dev/null || true)"; \
+	bash Tools/verify_release_version.sh \
+		--version "$(VERSION)" \
+		--tag "$${release_tag}" \
+		--info-plist Sources/App/Resources/Info.plist
+
+release: verify-release-version
 	@if [ "$(CODESIGN_IDENTITY)" = "-" ] || [ -z "$(CODESIGN_IDENTITY)" ]; then \
 		echo "❌ release requires a Developer ID Application CODESIGN_IDENTITY."; \
 		exit 1; \
@@ -140,6 +149,12 @@ release:
 		exit 1; \
 	fi
 	@$(MAKE) package CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)"
+	@release_tag="$$(git describe --tags --exact-match HEAD 2>/dev/null || true)"; \
+	bash Tools/verify_release_version.sh \
+		--version "$(VERSION)" \
+		--tag "$${release_tag}" \
+		--info-plist Sources/App/Resources/Info.plist \
+		--artifact-plist $(APP_CONTENTS)/Info.plist
 	@echo "📨 Submitting $(DMG_NAME) for notarization..."
 	@xcrun notarytool submit $(BUILD_DIR)/$(DMG_NAME) --keychain-profile "$(NOTARYTOOL_PROFILE)" --wait
 	@xcrun stapler staple $(BUILD_DIR)/$(DMG_NAME)
@@ -154,4 +169,5 @@ clean:
 
 test:
 	@echo "🧪 Running Tests..."
+	bash Tests/verify_release_version_gate.sh
 	swift test

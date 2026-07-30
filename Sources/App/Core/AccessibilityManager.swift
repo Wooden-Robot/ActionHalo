@@ -347,6 +347,7 @@ final class AccessibilityManager {
     private let systemWideElement: AXUIElement
     private let copyFallbackQueue = DispatchQueue(label: "com.openfire.copy-fallback", qos: .userInitiated)
     private let copyFallbackCoordinator = CopyFallbackRequestCoordinator()
+    private var copyFallbackExpectedFocusedElements: [UUID: AXUIElement] = [:]
 
     enum SelectionAcquisitionSource {
         case accessibility
@@ -393,6 +394,11 @@ final class AccessibilityManager {
             guard let text else { return nil }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
+        }
+
+        var usableText: String? {
+            guard let text, normalizedText != nil else { return nil }
+            return text
         }
 
         var normalizedRange: (Int, Int)? {
@@ -547,9 +553,10 @@ final class AccessibilityManager {
         )
         guard textResult == .success, let text = selectedText as? String else { return nil }
         
-        // Return nil for empty strings
+        // Keep the exact selection payload while treating whitespace-only
+        // selections as empty.
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        return trimmed.isEmpty ? nil : text
     }
 
     func currentSelectionSnapshot() -> SelectionSnapshot? {
@@ -572,7 +579,7 @@ final class AccessibilityManager {
         if selectedTextResult == .success,
            let text = selectedTextRaw as? String {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            selectedText = trimmed.isEmpty ? nil : trimmed
+            selectedText = trimmed.isEmpty ? nil : text
         }
 
         var rangeLocation: Int?
@@ -607,8 +614,8 @@ final class AccessibilityManager {
         from previous: SelectionSnapshot?,
         to current: SelectionSnapshot?
     ) -> Bool {
-        let previousText = previous?.normalizedText
-        let currentText = current?.normalizedText
+        let previousText = previous?.usableText
+        let currentText = current?.usableText
         if previousText != currentText {
             return true
         }
@@ -659,13 +666,27 @@ final class AccessibilityManager {
         requestIsActive: Bool,
         expectedProcessIdentifier: pid_t?,
         currentProcessIdentifier: pid_t?,
-        isSelectionSuppressed: Bool
+        isSelectionSuppressed: Bool,
+        focusedElementMatches: Bool
     ) -> Bool {
-        guard requestIsActive, !isSelectionSuppressed else { return false }
+        guard requestIsActive,
+              !isSelectionSuppressed,
+              focusedElementMatches else {
+            return false
+        }
         return isExpectedCopyFallbackProcess(
             expectedProcessIdentifier: expectedProcessIdentifier,
             currentProcessIdentifier: currentProcessIdentifier
         )
+    }
+
+    nonisolated static func shouldPostCopyFallbackEvents(
+        contextIsValidAfterSnapshot: Bool,
+        initialPasteboardState: PasteboardState,
+        currentPasteboardState: PasteboardState?
+    ) -> Bool {
+        contextIsValidAfterSnapshot &&
+            currentPasteboardState == initialPasteboardState
     }
 
     nonisolated static func isExpectedCopyFallbackProcess(
@@ -681,10 +702,14 @@ final class AccessibilityManager {
     @discardableResult
     func getSelectedTextViaCopy(
         expectedProcessIdentifier: pid_t? = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+        expectedFocusedElement: AXUIElement? = nil,
         completion: @escaping @MainActor @Sendable (String?) -> Void
     ) -> UUID {
         let requestID = copyFallbackCoordinator.beginRequest()
         let coordinator = copyFallbackCoordinator
+        if let focusedElement = expectedFocusedElement ?? getFocusedElement() {
+            copyFallbackExpectedFocusedElements[requestID] = focusedElement
+        }
 
         guard !shouldSuppressSelectionPresentation() else {
             Self.finishCopyFallbackRequest(
@@ -739,7 +764,30 @@ final class AccessibilityManager {
             defer {
                 snapshot.discardTemporaryFiles()
             }
-            guard Self.stablePasteboardState(from: pasteboard) == initialState else {
+
+            // Simulate Cmd+C via CGEvent
+            let source = CGEventSource(stateID: .hidSystemState)
+            let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(8), keyDown: true)
+            let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(8), keyDown: false)
+
+            cmdDown?.flags = .maskCommand
+            cmdUp?.flags = .maskCommand
+
+            // Snapshotting may spill a large clipboard to disk. Revalidate both
+            // the pasteboard and original target immediately before sending
+            // synthetic input so a cancelled or stale request cannot type into
+            // the application that used to be frontmost.
+            let pasteboardStateAfterSnapshot = Self.stablePasteboardState(from: pasteboard)
+            let contextIsValidAfterSnapshot = Self.copyFallbackContextIsValid(
+                coordinator: coordinator,
+                requestID: requestID,
+                expectedProcessIdentifier: expectedProcessIdentifier
+            )
+            guard Self.shouldPostCopyFallbackEvents(
+                contextIsValidAfterSnapshot: contextIsValidAfterSnapshot,
+                initialPasteboardState: initialState,
+                currentPasteboardState: pasteboardStateAfterSnapshot
+            ) else {
                 Self.finishCopyFallbackRequest(
                     coordinator: coordinator,
                     requestID,
@@ -748,15 +796,7 @@ final class AccessibilityManager {
                 )
                 return
             }
-            
-            // Simulate Cmd+C via CGEvent
-            let source = CGEventSource(stateID: .hidSystemState)
-            let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(8), keyDown: true)
-            let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(8), keyDown: false)
-            
-            cmdDown?.flags = .maskCommand
-            cmdUp?.flags = .maskCommand
-            
+
             cmdDown?.postToPid(targetProcessIdentifier)
             usleep(useconds_t(Self.copyFallbackKeyGap * 1_000_000))
             cmdUp?.postToPid(targetProcessIdentifier)
@@ -778,10 +818,9 @@ final class AccessibilityManager {
                 )
             }
             
-            // Restore any mutation caused by Cmd+C, including an empty or non-text copy.
-            // Request validity controls result delivery, not rollback. The pasteboard
-            // state comparison is the ownership check that prevents overwriting a
-            // later user or third-party update.
+            // Restore only a single, still-current pasteboard generation. macOS
+            // exposes no writer identity, so multi-generation clipboard-manager
+            // rewrites are ambiguous and must be left untouched.
             if let currentState = Self.stablePasteboardState(from: pasteboard),
                Self.shouldRestorePasteboardSnapshot(
                 initialState: initialState,
@@ -797,14 +836,13 @@ final class AccessibilityManager {
                 }
             }
             
-            let trimmed = copyObservation.copiedText?.trimmingCharacters(in: .whitespacesAndNewlines)
             let contextIsStillValid = Self.copyFallbackContextIsValid(
                 coordinator: coordinator,
                 requestID: requestID,
                 expectedProcessIdentifier: expectedProcessIdentifier
             )
             let result = Self.copyFallbackResult(
-                copiedText: trimmed,
+                copiedText: copyObservation.copiedText,
                 hasFreshCopiedText: copyObservation.hasFreshCopiedText,
                 contextIsValid: contextIsStillValid
             )
@@ -822,10 +860,12 @@ final class AccessibilityManager {
 
     func cancelSelectedTextViaCopy(_ requestID: UUID) {
         copyFallbackCoordinator.cancelRequest(requestID)
+        copyFallbackExpectedFocusedElements.removeValue(forKey: requestID)
     }
 
     func cancelActiveSelectedTextViaCopy() {
         copyFallbackCoordinator.cancelActiveRequest()
+        copyFallbackExpectedFocusedElements.removeAll()
     }
 
     nonisolated private static func copyFallbackContextIsValid(
@@ -833,19 +873,33 @@ final class AccessibilityManager {
         requestID: UUID,
         expectedProcessIdentifier: pid_t?
     ) -> Bool {
-        let context: (processIdentifier: pid_t?, isSelectionSuppressed: Bool)
+        let context: (
+            processIdentifier: pid_t?,
+            isSelectionSuppressed: Bool,
+            focusedElementMatches: Bool
+        )
         if Thread.isMainThread {
             context = MainActor.assumeIsolated {
-                (
+                let manager = AccessibilityManager.shared
+                return (
                     NSWorkspace.shared.frontmostApplication?.processIdentifier,
-                    AccessibilityManager.shared.shouldSuppressSelectionPresentation()
+                    manager.shouldSuppressSelectionPresentation(),
+                    areSameAccessibilityElement(
+                        manager.copyFallbackExpectedFocusedElements[requestID],
+                        manager.getFocusedElement()
+                    )
                 )
             }
         } else {
             context = DispatchQueue.main.sync {
-                (
+                let manager = AccessibilityManager.shared
+                return (
                     NSWorkspace.shared.frontmostApplication?.processIdentifier,
-                    AccessibilityManager.shared.shouldSuppressSelectionPresentation()
+                    manager.shouldSuppressSelectionPresentation(),
+                    areSameAccessibilityElement(
+                        manager.copyFallbackExpectedFocusedElements[requestID],
+                        manager.getFocusedElement()
+                    )
                 )
             }
         }
@@ -854,7 +908,8 @@ final class AccessibilityManager {
             requestIsActive: coordinator.isRequestActive(requestID),
             expectedProcessIdentifier: expectedProcessIdentifier,
             currentProcessIdentifier: context.processIdentifier,
-            isSelectionSuppressed: context.isSelectionSuppressed
+            isSelectionSuppressed: context.isSelectionSuppressed,
+            focusedElementMatches: context.focusedElementMatches
         )
     }
 
@@ -865,6 +920,8 @@ final class AccessibilityManager {
         completion: @escaping @MainActor @Sendable (String?) -> Void
     ) {
         Task { @MainActor in
+            AccessibilityManager.shared.copyFallbackExpectedFocusedElements
+                .removeValue(forKey: requestID)
             let isLatestRequest = coordinator.completeRequestIfActive(requestID)
             completion(isLatestRequest ? result : nil)
         }
@@ -1164,7 +1221,14 @@ final class AccessibilityManager {
         observedState: PasteboardState,
         currentState: PasteboardState
     ) -> Bool {
-        guard observedState != initialState else { return false }
+        // A normal pasteboard ownership handoff advances changeCount once.
+        // Refuse multi-hop mutations even when their final value stayed stable.
+        let (expectedCopyGeneration, overflowed) =
+            initialState.changeCount.addingReportingOverflow(1)
+        guard !overflowed,
+              observedState.changeCount == expectedCopyGeneration else {
+            return false
+        }
         return currentState == observedState
     }
 
@@ -1175,7 +1239,7 @@ final class AccessibilityManager {
     ) -> String? {
         guard contextIsValid, hasFreshCopiedText,
               let copiedText,
-              !copiedText.isEmpty else {
+              !copiedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
         return copiedText

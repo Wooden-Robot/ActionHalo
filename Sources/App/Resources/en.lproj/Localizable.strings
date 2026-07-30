@@ -40,6 +40,7 @@
 "Invalid plugin package. Make sure the .openfireext folder contains a valid Config.json." = "Invalid plugin package. Make sure the .openfireext folder contains a valid Config.json.";
 "Plugin identifier is invalid: %@" = "Plugin identifier is invalid: %@";
 "Installing this plugin would replace a different plugin (%@). Rename one of the plugins and try again." = "Installing this plugin would replace a different plugin (%@). Rename one of the plugins and try again.";
+"The plugin changed after the install confirmation was shown. Review it and try again." = "The plugin changed after the install confirmation was shown. Review it and try again.";
 "Plugin validation failed after copying. The package may have changed during installation." = "Plugin validation failed after copying. The package may have changed during installation.";
 "Failed to copy plugin to installation directory. Check permissions.\n(%@)\n%@" = "Failed to copy plugin to installation directory. Check permissions.\n(%@)\n%@";
 "Accessibility Permission Lost" = "Accessibility Permission Lost";
@@ -73,6 +74,7 @@
 "DNS Lookup Failed" = "DNS Lookup Failed";
 "Retry" = "Retry";
 "Unexpected server response (%@)." = "Unexpected server response (%@).";
+"The update server returned an untrusted download address." = "The update server returned an untrusted download address.";
 "Auto Check Updates" = "Auto Check Updates";
 "✓ Auto Check Updates" = "✓ Auto Check Updates";
 
@@ -176,6 +178,7 @@
 "Identifier cannot be changed after the plugin is created." = "Identifier cannot be changed after the plugin is created.";
 "URL cannot be empty" = "URL cannot be empty";
 "URL must be a valid absolute URL." = "URL must be a valid absolute URL.";
+"URL must use http, https, mailto, or dict." = "URL must use http, https, mailto, or dict.";
 "Script cannot be empty" = "Script cannot be empty";
 "Code cannot be empty" = "Code cannot be empty";
 "Key combo cannot be empty" = "Key combo cannot be empty";
@@ -194,6 +197,9 @@
 "Delete Failed: %@" = "Delete Failed: %@";
 "Choose Icon" = "Choose Icon";
 "Error" = "Error";
+"The existing plugin package is unsafe or exceeds package limits." = "The existing plugin package is unsafe or exceeds package limits.";
+"The saved plugin configuration failed final validation." = "The saved plugin configuration failed final validation.";
+"The plugin destination is outside the managed plugin directory." = "The plugin destination is outside the managed plugin directory.";
 
 /* OpenFire UI / Other */
 "App Blacklist" = "App Blacklist";
@@ -211,8 +217,10 @@
 "Current OpenFire context and plugin visibility report." = "Current OpenFire context and plugin visibility report.";
 "Refresh" = "Refresh";
 "Copy Report" = "Copy Report";
+"Unable to capture diagnostics context." = "Unable to capture diagnostics context.";
 "Empty-input probe point" = "Empty-input probe point";
 "Visible plugins: %d / %d" = "Visible plugins: %d / %d";
+"Shown plugins: %d / %d" = "Shown plugins: %d / %d";
 "OpenFire Diagnostics" = "OpenFire Diagnostics";
 "Frontmost app" = "Frontmost app";
 "Bundle ID" = "Bundle ID";
@@ -225,6 +233,9 @@
 "Selected text length" = "Selected text length";
 "Selected text preview" = "Selected text preview";
 "Focused element" = "Focused element";
+"Clipboard" = "Clipboard";
+"Empty" = "Empty";
+"Has text" = "Has text";
 "Selection source" = "Selection source";
 "Last selection failure" = "Last selection failure";
 "Menu readiness" = "Menu readiness";
@@ -232,7 +243,10 @@
 "Blocked" = "Blocked";
 "Plugins" = "Plugins";
 "visible" = "visible";
+"shown" = "shown";
 "Visible" = "Visible";
+"Shown" = "Shown";
+"Shown, Disabled" = "Shown, Disabled";
 "Hidden" = "Hidden";
 "Type" = "Type";
 "Reason" = "Reason";
@@ -249,7 +263,12 @@
 "%@ · %@" = "%@ · %@";
 "Accessibility permission is missing" = "Accessibility permission is missing";
 "OpenFire is disabled in the current app" = "OpenFire is disabled in the current app";
+"OpenFire is intentionally suppressed for the current frontmost app" = "OpenFire is intentionally suppressed for the current frontmost app";
 "No selected text was detected via Accessibility" = "No selected text was detected via Accessibility";
+"No active selected text or empty-input shortcut is currently available" = "No active selected text or empty-input shortcut is currently available";
+"Empty-input Paste / Clear shortcut is currently available" = "Empty-input Paste / Clear shortcut is currently available";
+"Executable in current context" = "Executable in current context";
+"Requires an editable text context" = "Requires an editable text context";
 "Accessibility read returned no selected text" = "Accessibility read returned no selected text";
 "Cmd+C fallback returned no selected text" = "Cmd+C fallback returned no selected text";
 "AX observer could not be attached" = "AX observer could not be attached";

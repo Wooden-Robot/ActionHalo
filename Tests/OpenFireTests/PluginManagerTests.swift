@@ -464,6 +464,109 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertEqual(watchableNames, [pluginsURL.lastPathComponent, "Custom.openfireext"])
     }
 
+    @MainActor
+    func testInPlaceConfigOverwriteTriggersPluginReload() async throws {
+        let manager = PluginManager.shared
+        let identifier = "com.test.in-place-reload"
+        let packageURL = manager.userPluginsURL.appendingPathComponent(
+            "\(identifier).openfireext"
+        )
+        try FileManager.default.createDirectory(
+            at: packageURL,
+            withIntermediateDirectories: true
+        )
+        let configURL = packageURL.appendingPathComponent("Config.json")
+        try pluginConfig(identifier: identifier, name: "Before").write(
+            to: configURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        manager.plugins = [try XCTUnwrap(PluginLoader.load(from: packageURL))]
+        manager.startWatchingPluginDirectories()
+        defer { manager.stopWatchingPluginDirectories() }
+
+        let reloaded = expectation(description: "In-place Config.json edit reloaded plugins")
+        reloaded.assertForOverFulfill = false
+        let observer = NotificationCenter.default.addObserver(
+            forName: PluginManager.pluginsReloadedNotification,
+            object: manager,
+            queue: .main
+        ) { _ in
+            reloaded.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let replacement = Data(
+            pluginConfig(identifier: identifier, name: "After").utf8
+        )
+        let handle = try FileHandle(forWritingTo: configURL)
+        try handle.truncate(atOffset: 0)
+        try handle.write(contentsOf: replacement)
+        try handle.synchronize()
+        try handle.close()
+
+        await fulfillment(of: [reloaded], timeout: 3)
+        XCTAssertEqual(
+            manager.plugins.first(where: { $0.id == identifier })?.config.name,
+            "After"
+        )
+    }
+
+    @MainActor
+    func testInPlaceScriptOverwriteTriggersPluginReload() async throws {
+        let manager = PluginManager.shared
+        let identifier = "com.test.in-place-script-reload"
+        let packageURL = manager.userPluginsURL.appendingPathComponent(
+            "\(identifier).openfireext"
+        )
+        try FileManager.default.createDirectory(
+            at: packageURL,
+            withIntermediateDirectories: true
+        )
+        try """
+        {
+            "name": "Script",
+            "identifier": "\(identifier)",
+            "action": { "type": "shell-script", "script": "script.sh" }
+        }
+        """.write(
+            to: packageURL.appendingPathComponent("Config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let scriptURL = packageURL.appendingPathComponent("script.sh")
+        try "echo before".write(to: scriptURL, atomically: true, encoding: .utf8)
+        let initialPlugin = try XCTUnwrap(PluginLoader.load(from: packageURL))
+        let initialFingerprint = try XCTUnwrap(initialPlugin.packageFingerprint)
+        manager.plugins = [initialPlugin]
+        manager.startWatchingPluginDirectories()
+        defer { manager.stopWatchingPluginDirectories() }
+
+        let reloaded = expectation(description: "In-place script edit reloaded plugins")
+        reloaded.assertForOverFulfill = false
+        let observer = NotificationCenter.default.addObserver(
+            forName: PluginManager.pluginsReloadedNotification,
+            object: manager,
+            queue: .main
+        ) { _ in
+            reloaded.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let replacement = Data("echo after".utf8)
+        let handle = try FileHandle(forWritingTo: scriptURL)
+        try handle.truncate(atOffset: 0)
+        try handle.write(contentsOf: replacement)
+        try handle.synchronize()
+        try handle.close()
+
+        await fulfillment(of: [reloaded], timeout: 3)
+        let reloadedPlugin = try XCTUnwrap(
+            manager.plugins.first(where: { $0.id == identifier })
+        )
+        XCTAssertNotEqual(reloadedPlugin.packageFingerprint, initialFingerprint)
+    }
+
     func testExecutionTrustTracksCurrentFingerprint() throws {
         let manager = PluginManager.shared
         let bundleURL = try makeScriptPluginBundle(
@@ -756,6 +859,99 @@ final class PluginManagerTests: GlobalStateTestCase {
                 expectedPreviewFingerprint: preview.fingerprint
             ),
             .failed(.sourceChangedSinceConfirmation)
+        )
+    }
+
+    func testInstallPreviewFingerprintAllowsUnchangedConfirmedPackage() throws {
+        let manager = PluginManager.shared
+        let sourceURL = try makePluginBundle(
+            identifier: "com.test.preview-install",
+            name: "Confirmed"
+        )
+        let preview = try XCTUnwrap(manager.makeInstallPreview(from: sourceURL))
+
+        XCTAssertEqual(
+            manager.installPluginDetailed(
+                from: sourceURL,
+                expectedPreviewFingerprint: preview.fingerprint
+            ),
+            .installed
+        )
+    }
+
+    func testInstallPreparationRejectsSourceChangedDuringSnapshotCopy() throws {
+        let manager = PluginManager.shared
+        let sourceURL = try makePluginBundle(
+            identifier: "com.test.preview-snapshot",
+            name: "Before"
+        )
+        var copiedSnapshotURL: URL?
+
+        let preview = manager.makeInstallPreview(from: sourceURL) { source, snapshot in
+            try FileManager.default.copyItem(at: source, to: snapshot)
+            copiedSnapshotURL = snapshot
+            try self.pluginConfig(
+                identifier: "com.test.preview-snapshot",
+                name: "After"
+            ).write(
+                to: source.appendingPathComponent("Config.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+
+        XCTAssertNil(preview)
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: try XCTUnwrap(copiedSnapshotURL).path
+            ),
+            "A snapshot invalidated during preparation must be removed."
+        )
+    }
+
+    func testInstallPreparationCleansPartialSnapshotAfterCopyFailure() throws {
+        let manager = PluginManager.shared
+        let sourceURL = try makePluginBundle(
+            identifier: "com.test.preview-cleanup",
+            name: "Cleanup"
+        )
+        var partialSnapshotURL: URL?
+
+        let preview = manager.makeInstallPreview(from: sourceURL) { _, snapshot in
+            partialSnapshotURL = snapshot
+            try FileManager.default.createDirectory(
+                at: snapshot,
+                withIntermediateDirectories: true
+            )
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        XCTAssertNil(preview)
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: try XCTUnwrap(partialSnapshotURL).path
+            ),
+            "A failed preview copy must not leave package contents in the temporary directory."
+        )
+    }
+
+    func testInstallPreviewCleansSnapshotAfterSuccess() throws {
+        let manager = PluginManager.shared
+        let sourceURL = try makePluginBundle(
+            identifier: "com.test.preview-success-cleanup",
+            name: "Preview"
+        )
+        var snapshotURL: URL?
+        let preview = try XCTUnwrap(
+            manager.makeInstallPreview(from: sourceURL) { source, snapshot in
+                snapshotURL = snapshot
+                try FileManager.default.copyItem(at: source, to: snapshot)
+            }
+        )
+
+        XCTAssertEqual(preview.name, "Preview")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: try XCTUnwrap(snapshotURL).path)
         )
     }
 

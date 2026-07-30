@@ -97,6 +97,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         failure == .eventTapCreationFailed
     }
 
+    static func shouldExecuteMenuAction(
+        expectedProcessIdentifier: pid_t?,
+        currentProcessIdentifier: pid_t?,
+        requiresEditableTarget: Bool,
+        focusedElementMatches: Bool,
+        isFocusedSelectionEditable: Bool
+    ) -> Bool {
+        guard AccessibilityManager.isExpectedCopyFallbackProcess(
+            expectedProcessIdentifier: expectedProcessIdentifier,
+            currentProcessIdentifier: currentProcessIdentifier
+        ) else {
+            return false
+        }
+
+        guard requiresEditableTarget else { return true }
+        return focusedElementMatches && isFocusedSelectionEditable
+    }
+
+    static func accessibilityElement(from value: Any?) -> AXUIElement? {
+        guard let value else { return nil }
+        let object = value as AnyObject
+        guard CFGetTypeID(object) == AXUIElementGetTypeID() else { return nil }
+        return unsafeBitCast(object, to: AXUIElement.self)
+    }
+
+    nonisolated static func loadPluginInstallPreview<Result: Sendable>(
+        from url: URL,
+        on queue: DispatchQueue,
+        previewProvider: @escaping @Sendable (URL) -> Result,
+        completion: @escaping @MainActor @Sendable (Result) -> Void
+    ) {
+        queue.async {
+            let result = previewProvider(url)
+            Task { @MainActor in
+                completion(result)
+            }
+        }
+    }
+
     static func accessibilityResetArguments(bundleIdentifier: String = "com.openfire.app") -> [String] {
         ["reset", "Accessibility", bundleIdentifier]
     }
@@ -311,14 +350,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AccessibilityManager.shared.cancelActiveSelectedTextViaCopy()
 
         // Quick check via Accessibility API first
-        if let text = AccessibilityManager.shared.getSelectedText(), !text.isEmpty {
+        let expectedFocusedElement = AccessibilityManager.shared.getFocusedElement()
+        if let expectedFocusedElement,
+           let text = AccessibilityManager.shared.selectedText(from: expectedFocusedElement),
+           !text.isEmpty {
             let mouseLocation = NSEvent.mouseLocation
             AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
             self.currentSelectedText = text
             showRadialMenu(
                 at: mouseLocation,
                 text: text,
-                targetProcessIdentifier: expectedProcessIdentifier
+                targetProcessIdentifier: expectedProcessIdentifier,
+                targetFocusedElement: expectedFocusedElement
             )
             return
         }
@@ -326,7 +369,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         // If Accessibility fails, simulate Cmd+C (async to allow physical hotkeys to be released)
         AccessibilityManager.shared.getSelectedTextViaCopy(
-            expectedProcessIdentifier: expectedProcessIdentifier
+            expectedProcessIdentifier: expectedProcessIdentifier,
+            expectedFocusedElement: expectedFocusedElement
         ) { [weak self] copiedText in
             guard AccessibilityManager.isExpectedCopyFallbackProcess(
                 expectedProcessIdentifier: expectedProcessIdentifier,
@@ -339,17 +383,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             guard self.currentContextAllowsMenuPresentation(
-                expectedProcessIdentifier: expectedProcessIdentifier
+                expectedProcessIdentifier: expectedProcessIdentifier,
+                expectedFocusedElement: expectedFocusedElement
             ) else {
                 return
             }
+            guard let expectedFocusedElement else { return }
             let mouseLocation = NSEvent.mouseLocation
             AccessibilityManager.shared.recordSelectionAcquisition(source: .copyFallback, text: text)
             self.currentSelectedText = text
             self.showRadialMenu(
                 at: mouseLocation,
                 text: text,
-                targetProcessIdentifier: expectedProcessIdentifier
+                targetProcessIdentifier: expectedProcessIdentifier,
+                targetFocusedElement: expectedFocusedElement
             )
         }
     }
@@ -432,18 +479,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if pendingPluginInstallPaths.contains(installPath) {
             return true
         }
+        pendingPluginInstallPaths.insert(installPath)
 
-        guard let preview = PluginManager.shared.makeInstallPreview(from: url) else {
-            let alert = NSAlert()
-            alert.messageText = "Install Failed".localized
-            alert.informativeText = PluginManager.PluginInstallFailure.invalidPackage.localizedMessage(
-                sourcePath: url.path
-            )
-            alert.alertStyle = .critical
-            alert.runModal()
-            return false
-        }
+        Self.loadPluginInstallPreview(
+            from: url,
+            on: pluginInstallQueue,
+            previewProvider: { PluginManager.shared.makeInstallPreview(from: $0) },
+            completion: { [weak self] preview in
+                guard let self else { return }
+                guard let preview else {
+                    self.pendingPluginInstallPaths.remove(installPath)
+                    let alert = NSAlert()
+                    alert.messageText = "Install Failed".localized
+                    alert.informativeText = PluginManager.PluginInstallFailure.invalidPackage.localizedMessage(
+                        sourcePath: url.path
+                    )
+                    alert.alertStyle = .critical
+                    alert.runModal()
+                    return
+                }
 
+                self.presentPluginInstallConfirmation(
+                    preview,
+                    sourceURL: url,
+                    installPath: installPath
+                )
+            }
+        )
+        return true
+    }
+
+    private func presentPluginInstallConfirmation(
+        _ preview: PluginManager.PluginInstallPreview,
+        sourceURL url: URL,
+        installPath: String
+    ) {
         let pluginName = preview.name
         var pluginDescription = preview.description ??
             String(format: "Type: %@".localized, preview.actionType.rawValue)
@@ -468,47 +538,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         let installingPluginName = pluginName
 
-        if alert.runModal() == .alertFirstButtonReturn {
-            pendingPluginInstallPaths.insert(installPath)
-            statusBarController.showTemporaryStatusMessage(
-                String(format: "Installing %@".localized, installingPluginName)
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            pendingPluginInstallPaths.remove(installPath)
+            return
+        }
+
+        statusBarController.showTemporaryStatusMessage(
+            String(format: "Installing %@".localized, installingPluginName)
+        )
+
+        let handleInstallResult: @MainActor @Sendable (PluginManager.PluginInstallResult) -> Void = {
+            [weak self] installResult in
+            guard let self else { return }
+            self.pendingPluginInstallPaths.remove(installPath)
+
+            guard !installResult.isSuccess else {
+                NSLog("[OpenFire] Plugin '%@' installed successfully.", installingPluginName)
+                self.statusBarController.showTemporaryStatusMessage(
+                    String(format: "Installed %@".localized, installingPluginName)
+                )
+                return
+            }
+
+            let resultAlert = NSAlert()
+            resultAlert.messageText = "Install Failed".localized
+            if case .failed(let failure) = installResult {
+                resultAlert.informativeText = failure.localizedMessage(sourcePath: url.path)
+            }
+            resultAlert.alertStyle = .critical
+            resultAlert.runModal()
+        }
+
+        pluginInstallQueue.async {
+            let installResult = PluginManager.shared.installPluginDetailed(
+                from: url,
+                expectedPreviewFingerprint: preview.fingerprint
             )
 
-            let handleInstallResult: @MainActor @Sendable (PluginManager.PluginInstallResult) -> Void = {
-                [weak self] installResult in
-                guard let self else { return }
-                self.pendingPluginInstallPaths.remove(installPath)
-
-                guard !installResult.isSuccess else {
-                    NSLog("[OpenFire] Plugin '%@' installed successfully.", installingPluginName)
-                    self.statusBarController.showTemporaryStatusMessage(
-                        String(format: "Installed %@".localized, installingPluginName)
-                    )
-                    return
-                }
-
-                let resultAlert = NSAlert()
-                resultAlert.messageText = "Install Failed".localized
-                if case .failed(let failure) = installResult {
-                    resultAlert.informativeText = failure.localizedMessage(sourcePath: url.path)
-                }
-                resultAlert.alertStyle = .critical
-                resultAlert.runModal()
+            Task { @MainActor in
+                handleInstallResult(installResult)
             }
-
-            pluginInstallQueue.async {
-                let installResult = PluginManager.shared.installPluginDetailed(
-                    from: url,
-                    expectedPreviewFingerprint: preview.fingerprint
-                )
-
-                Task { @MainActor in
-                    handleInstallResult(installResult)
-                }
-            }
-            return true
         }
-        return false
     }
     
     // MARK: - Services
@@ -661,7 +731,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let userInfo = notification.userInfo,
               let text = userInfo["text"] as? String,
               let locationValue = userInfo["mouseLocation"] as? NSValue,
-              let processNumber = userInfo["processIdentifier"] as? NSNumber else {
+              let processNumber = userInfo["processIdentifier"] as? NSNumber,
+              let focusedElement = Self.accessibilityElement(from: userInfo["focusedElement"]) else {
             return
         }
         let processIdentifier = pid_t(processNumber.int32Value)
@@ -678,7 +749,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showRadialMenu(
             at: mouseLocation,
             text: text,
-            targetProcessIdentifier: processIdentifier
+            targetProcessIdentifier: processIdentifier,
+            targetFocusedElement: focusedElement
         )
     }
     
@@ -686,7 +758,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard isEnabled else { return }
         guard let userInfo = notification.userInfo,
               let locationValue = userInfo["mouseLocation"] as? NSValue,
-              let processNumber = userInfo["processIdentifier"] as? NSNumber else {
+              let processNumber = userInfo["processIdentifier"] as? NSNumber,
+              let focusedElement = Self.accessibilityElement(from: userInfo["focusedElement"]) else {
             return
         }
         let processIdentifier = pid_t(processNumber.int32Value)
@@ -724,7 +797,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showPastePopup(
             at: mouseLocation,
             plugin: pastePlugin,
-            targetProcessIdentifier: processIdentifier
+            targetProcessIdentifier: processIdentifier,
+            targetFocusedElement: focusedElement
         )
     }
     
@@ -733,10 +807,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showRadialMenu(
         at point: NSPoint,
         text: String,
-        targetProcessIdentifier: pid_t?
+        targetProcessIdentifier: pid_t?,
+        targetFocusedElement: AXUIElement
     ) {
         guard currentContextAllowsMenuPresentation(
-            expectedProcessIdentifier: targetProcessIdentifier
+            expectedProcessIdentifier: targetProcessIdentifier,
+            expectedFocusedElement: targetFocusedElement
         ) else {
             return
         }
@@ -747,12 +823,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             at: point,
             plugins: Self.radialMenuPlugins(from: presentationPlugins),
             selectedText: text,
-            targetProcessIdentifier: targetProcessIdentifier
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetFocusedElement: targetFocusedElement
         )
     }
 
     private func currentContextAllowsMenuPresentation(
-        expectedProcessIdentifier: pid_t? = nil
+        expectedProcessIdentifier: pid_t? = nil,
+        expectedFocusedElement: AXUIElement? = nil
     ) -> Bool {
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         if expectedProcessIdentifier != nil,
@@ -761,6 +839,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             currentProcessIdentifier: frontmostApp?.processIdentifier
            ) {
             return false
+        }
+        if let expectedFocusedElement {
+            guard AccessibilityManager.areSameAccessibilityElement(
+                expectedFocusedElement,
+                AccessibilityManager.shared.getFocusedElement()
+            ) else {
+                return false
+            }
         }
         return Self.shouldAllowMenuPresentation(
             isEnabled: isEnabled,
@@ -774,15 +860,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         plugins
     }
 
+    static func pluginRequiresEditableTarget(_ plugin: Plugin) -> Bool {
+        plugin.config.action.type == .paste ||
+            plugin.id == cutPluginID ||
+            plugin.id == deletePluginID ||
+            plugin.id == pastePluginID
+    }
+
     static func isPluginExecutable(_ plugin: Plugin, text: String, appBundleID: String?, isSelectionEditable: Bool) -> Bool {
         let matchesContext = plugin.shouldShow(text: text, appBundleID: appBundleID)
         guard matchesContext else { return false }
 
-        if plugin.id == cutPluginID || plugin.id == deletePluginID {
-            return isSelectionEditable
-        }
-
-        if plugin.id == pastePluginID {
+        if pluginRequiresEditableTarget(plugin) {
             return isSelectionEditable
         }
 
@@ -811,7 +900,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         at point: NSPoint,
         plugins: [Plugin],
         selectedText: String,
-        targetProcessIdentifier: pid_t?
+        targetProcessIdentifier: pid_t?,
+        targetFocusedElement: AXUIElement
     ) {
         var items: [RadialMenuItem] = []
         let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
@@ -838,7 +928,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scheduleMenuPresentation { [weak self] in
             guard let self else { return }
             guard self.currentContextAllowsMenuPresentation(
-                expectedProcessIdentifier: targetProcessIdentifier
+                expectedProcessIdentifier: targetProcessIdentifier,
+                expectedFocusedElement: targetFocusedElement
             ) else {
                 return
             }
@@ -852,7 +943,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.handleMenuAction(
                     item,
                     text: selectedText,
-                    targetProcessIdentifier: targetProcessIdentifier
+                    targetProcessIdentifier: targetProcessIdentifier,
+                    targetFocusedElement: targetFocusedElement
                 )
             }
             self.menuActionGate.reset()
@@ -866,12 +958,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showPastePopup(
         at point: NSPoint,
         plugin: Plugin,
-        targetProcessIdentifier: pid_t
+        targetProcessIdentifier: pid_t,
+        targetFocusedElement: AXUIElement
     ) {
         scheduleMenuPresentation { [weak self] in
             guard let self else { return }
             guard self.currentContextAllowsMenuPresentation(
-                expectedProcessIdentifier: targetProcessIdentifier
+                expectedProcessIdentifier: targetProcessIdentifier,
+                expectedFocusedElement: targetFocusedElement
             ) else {
                 return
             }
@@ -881,11 +975,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self, self.menuActionGate.consume() else { return }
                 self.dismissAllMenus {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        guard AccessibilityManager.isExpectedCopyFallbackProcess(
+                        let currentFocusedElement = AccessibilityManager.shared.getFocusedElement()
+                        guard Self.shouldExecuteMenuAction(
                             expectedProcessIdentifier: targetProcessIdentifier,
-                            currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier
+                            currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                            requiresEditableTarget: true,
+                            focusedElementMatches: AccessibilityManager.areSameAccessibilityElement(
+                                targetFocusedElement,
+                                currentFocusedElement
+                            ),
+                            isFocusedSelectionEditable: currentFocusedElement.map {
+                                AccessibilityManager.shared.isSelectionEditable($0)
+                            } ?? false
                         ) else {
-                            NSLog("[OpenFire] Paste cancelled because the target application changed.")
+                            NSLog("[OpenFire] Paste cancelled because the original editable target changed.")
                             return
                         }
                         PluginManager.shared.executePlugin(
@@ -963,27 +1066,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleMenuAction(
         _ item: RadialMenuItem,
         text: String,
-        targetProcessIdentifier: pid_t?
+        targetProcessIdentifier: pid_t?,
+        targetFocusedElement: AXUIElement
     ) {
-        if let targetProcessIdentifier,
-           NSWorkspace.shared.frontmostApplication?.processIdentifier != targetProcessIdentifier {
-            dismissAllMenus()
-            return
-        }
-
         let requiresEditableTarget: Bool
         switch item.action {
         case .builtIn(let action):
             requiresEditableTarget = action == .cut || action == .paste
         case .plugin(let plugin):
-            requiresEditableTarget =
-                plugin.id == Self.cutPluginID ||
-                plugin.id == Self.deletePluginID ||
-                plugin.id == Self.pastePluginID
+            requiresEditableTarget = Self.pluginRequiresEditableTarget(plugin)
         default:
             requiresEditableTarget = false
         }
-        if requiresEditableTarget && !AccessibilityManager.shared.isFocusedSelectionEditable() {
+        let currentFocusedElement = AccessibilityManager.shared.getFocusedElement()
+        guard Self.shouldExecuteMenuAction(
+            expectedProcessIdentifier: targetProcessIdentifier,
+            currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            requiresEditableTarget: requiresEditableTarget,
+            focusedElementMatches: AccessibilityManager.areSameAccessibilityElement(
+                targetFocusedElement,
+                currentFocusedElement
+            ),
+            isFocusedSelectionEditable: currentFocusedElement.map {
+                AccessibilityManager.shared.isSelectionEditable($0)
+            } ?? false
+        ) else {
             dismissAllMenus()
             return
         }
