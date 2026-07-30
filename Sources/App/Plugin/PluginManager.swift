@@ -167,6 +167,7 @@ final class PluginManager: Sendable {
     private let state = OSAllocatedUnfairLock(initialState: State())
     @MainActor private var pathWatchers: [String: PluginPathWatcher] = [:]
     @MainActor private var pendingReloadWorkItem: DispatchWorkItem?
+    @MainActor private var pendingKeyComboTargets: [UUID: AXUIElement] = [:]
 
     var plugins: [Plugin] {
         get { state.withLock { $0.plugins } }
@@ -1167,12 +1168,29 @@ final class PluginManager: Sendable {
     }
     
     // MARK: - Plugin Execution
+
+    nonisolated static func isExpectedKeyComboTarget(
+        expectedProcessIdentifier: pid_t?,
+        currentProcessIdentifier: pid_t?,
+        expectedFocusedElement: AXUIElement?,
+        currentFocusedElement: AXUIElement?
+    ) -> Bool {
+        AccessibilityManager.isExpectedCopyFallbackProcess(
+            expectedProcessIdentifier: expectedProcessIdentifier,
+            currentProcessIdentifier: currentProcessIdentifier
+        ) && AccessibilityManager.areSameAccessibilityElement(
+            expectedFocusedElement,
+            currentFocusedElement
+        )
+    }
     
     /// Execute a plugin action with the given text
+    @MainActor
     func executePlugin(
         _ plugin: Plugin,
         with text: String,
-        targetProcessIdentifier: pid_t? = nil
+        targetProcessIdentifier: pid_t?,
+        targetFocusedElement: AXUIElement?
     ) {
         let action = plugin.config.action
         let resolvedTargetProcessIdentifier =
@@ -1183,14 +1201,29 @@ final class PluginManager: Sendable {
 
         switch Self.executionPolicy(for: plugin) {
         case .protected:
+            let keyComboTargetID: UUID?
+            if action.type == .keyCombo, let targetFocusedElement {
+                let targetID = UUID()
+                pendingKeyComboTargets[targetID] = targetFocusedElement
+                keyComboTargetID = targetID
+            } else {
+                keyComboTargetID = nil
+            }
             executeProtectedPlugin(
                 plugin,
                 with: text,
-                targetProcessIdentifier: resolvedTargetProcessIdentifier
+                targetProcessIdentifier: resolvedTargetProcessIdentifier,
+                keyComboTargetID: keyComboTargetID
             )
         case .directKeyCombo:
-            guard let resolvedTargetProcessIdentifier else {
-                NSLog("[OpenFire] Refusing key combo '%@': target application is unavailable.", plugin.id)
+            guard let resolvedTargetProcessIdentifier,
+                  Self.isExpectedKeyComboTarget(
+                    expectedProcessIdentifier: resolvedTargetProcessIdentifier,
+                    currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                    expectedFocusedElement: targetFocusedElement,
+                    currentFocusedElement: AccessibilityManager.shared.getFocusedElement()
+                  ) else {
+                NSLog("[OpenFire] Refusing key combo '%@': the original focused target changed.", plugin.id)
                 return
             }
             executeKeyCombo(
@@ -1237,7 +1270,8 @@ final class PluginManager: Sendable {
     private func executeProtectedPlugin(
         _ plugin: Plugin,
         with text: String,
-        targetProcessIdentifier: pid_t?
+        targetProcessIdentifier: pid_t?,
+        keyComboTargetID: UUID?
     ) {
         let displayDirectoryURL = plugin.directoryURL
         let pluginID = plugin.id
@@ -1245,6 +1279,7 @@ final class PluginManager: Sendable {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             guard let snapshot = self.makeProtectedExecutionSnapshot(for: plugin) else {
+                self.discardPendingKeyComboTarget(keyComboTargetID)
                 NSLog("[OpenFire] Refusing to execute plugin '%@': could not create a verified snapshot.", pluginID)
                 return
             }
@@ -1258,6 +1293,7 @@ final class PluginManager: Sendable {
                 fingerprint: snapshot.fingerprint
             ) else {
                 self.removeTrustedExecutionSnapshot(snapshot)
+                self.discardPendingKeyComboTarget(keyComboTargetID)
                 return
             }
 
@@ -1281,21 +1317,35 @@ final class PluginManager: Sendable {
                 self.executeTrustedKeyCombo(
                     action,
                     targetProcessIdentifier: targetProcessIdentifier,
+                    keyComboTargetID: keyComboTargetID,
                     cleanupSnapshot: snapshot
                 )
             default:
                 self.removeTrustedExecutionSnapshot(snapshot)
+                self.discardPendingKeyComboTarget(keyComboTargetID)
             }
+        }
+    }
+
+    private func discardPendingKeyComboTarget(_ targetID: UUID?) {
+        guard let targetID else { return }
+        Task { @MainActor [weak self] in
+            _ = self?.pendingKeyComboTargets.removeValue(forKey: targetID)
         }
     }
 
     private func executeTrustedKeyCombo(
         _ action: PluginActionConfig,
         targetProcessIdentifier: pid_t?,
+        keyComboTargetID: UUID?,
         cleanupSnapshot: TrustedExecutionSnapshot
     ) {
         DispatchQueue.main.async {
-            guard let targetProcessIdentifier,
+            guard let keyComboTargetID,
+                  let targetFocusedElement = self.pendingKeyComboTargets.removeValue(
+                    forKey: keyComboTargetID
+                  ),
+                  let targetProcessIdentifier,
                   let targetApplication = NSRunningApplication(
                     processIdentifier: targetProcessIdentifier
                   ) else {
@@ -1305,8 +1355,12 @@ final class PluginManager: Sendable {
 
             let executeIfStillTargeted: @MainActor @Sendable () -> Void = {
                 defer { self.removeTrustedExecutionSnapshot(cleanupSnapshot) }
-                guard NSWorkspace.shared.frontmostApplication?.processIdentifier ==
-                        targetProcessIdentifier else {
+                guard Self.isExpectedKeyComboTarget(
+                    expectedProcessIdentifier: targetProcessIdentifier,
+                    currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                    expectedFocusedElement: targetFocusedElement,
+                    currentFocusedElement: AccessibilityManager.shared.getFocusedElement()
+                ) else {
                     return
                 }
                 self.executeKeyCombo(

@@ -100,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static func shouldExecuteMenuAction(
         expectedProcessIdentifier: pid_t?,
         currentProcessIdentifier: pid_t?,
+        requiresOriginalFocusedElement: Bool,
         requiresEditableTarget: Bool,
         focusedElementMatches: Bool,
         isFocusedSelectionEditable: Bool
@@ -111,8 +112,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return false
         }
 
-        guard requiresEditableTarget else { return true }
-        return focusedElementMatches && isFocusedSelectionEditable
+        if requiresOriginalFocusedElement || requiresEditableTarget {
+            guard focusedElementMatches else { return false }
+        }
+        return !requiresEditableTarget || isFocusedSelectionEditable
     }
 
     static func accessibilityElement(from value: Any?) -> AXUIElement? {
@@ -867,6 +870,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             plugin.id == pastePluginID
     }
 
+    static func pluginRequiresOriginalFocusedElement(_ plugin: Plugin) -> Bool {
+        pluginRequiresEditableTarget(plugin) ||
+            plugin.config.action.type == .keyCombo
+    }
+
     static func isPluginExecutable(_ plugin: Plugin, text: String, appBundleID: String?, isSelectionEditable: Bool) -> Bool {
         let matchesContext = plugin.shouldShow(text: text, appBundleID: appBundleID)
         guard matchesContext else { return false }
@@ -979,6 +987,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         guard Self.shouldExecuteMenuAction(
                             expectedProcessIdentifier: targetProcessIdentifier,
                             currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                            requiresOriginalFocusedElement: true,
                             requiresEditableTarget: true,
                             focusedElementMatches: AccessibilityManager.areSameAccessibilityElement(
                                 targetFocusedElement,
@@ -994,7 +1003,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         PluginManager.shared.executePlugin(
                             plugin,
                             with: "",
-                            targetProcessIdentifier: targetProcessIdentifier
+                            targetProcessIdentifier: targetProcessIdentifier,
+                            targetFocusedElement: targetFocusedElement
                         )
                     }
                 }
@@ -1069,19 +1079,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         targetProcessIdentifier: pid_t?,
         targetFocusedElement: AXUIElement
     ) {
+        let requiresOriginalFocusedElement: Bool
         let requiresEditableTarget: Bool
         switch item.action {
         case .builtIn(let action):
             requiresEditableTarget = action == .cut || action == .paste
+            requiresOriginalFocusedElement = requiresEditableTarget
         case .plugin(let plugin):
             requiresEditableTarget = Self.pluginRequiresEditableTarget(plugin)
+            requiresOriginalFocusedElement = Self.pluginRequiresOriginalFocusedElement(plugin)
         default:
             requiresEditableTarget = false
+            requiresOriginalFocusedElement = false
         }
         let currentFocusedElement = AccessibilityManager.shared.getFocusedElement()
         guard Self.shouldExecuteMenuAction(
             expectedProcessIdentifier: targetProcessIdentifier,
             currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            requiresOriginalFocusedElement: requiresOriginalFocusedElement,
             requiresEditableTarget: requiresEditableTarget,
             focusedElementMatches: AccessibilityManager.areSameAccessibilityElement(
                 targetFocusedElement,
@@ -1109,14 +1124,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     PluginManager.shared.executePlugin(
                         plugin,
                         with: text,
-                        targetProcessIdentifier: targetProcessIdentifier
+                        targetProcessIdentifier: targetProcessIdentifier,
+                        targetFocusedElement: targetFocusedElement
                     )
                 }
             } else {
                 PluginManager.shared.executePlugin(
                     plugin,
                     with: text,
-                    targetProcessIdentifier: targetProcessIdentifier
+                    targetProcessIdentifier: targetProcessIdentifier,
+                    targetFocusedElement: targetFocusedElement
                 )
                 dismissAllMenus()
             }

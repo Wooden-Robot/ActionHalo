@@ -94,4 +94,51 @@ expect_failure \
     --tag "0.3.21" \
     --info-plist "$source_plist"
 
+tagged_repo="$fixture_dir/tagged-repo"
+mkdir -p "$tagged_repo"
+git -C "$tagged_repo" init -q
+git -C "$tagged_repo" config user.name "OpenFire Tests"
+git -C "$tagged_repo" config user.email "openfire-tests@example.invalid"
+cp "$source_plist" "$tagged_repo/Info.plist"
+git -C "$tagged_repo" add Info.plist
+git -C "$tagged_repo" commit -q -m "fixture"
+git -C "$tagged_repo" tag nightly
+
+if ! (
+    cd "$tagged_repo"
+    bash "$gate_script" \
+        --version "0.3.21" \
+        --tags-at-head \
+        --info-plist "$source_plist"
+) >"$fixture_dir/output.log" 2>&1; then
+    echo "FAIL: an unrelated tag must not block an explicit release version"
+    cat "$fixture_dir/output.log"
+    exit 1
+fi
+
+git -C "$tagged_repo" tag v0.3.21
+if ! (
+    cd "$tagged_repo"
+    bash "$gate_script" \
+        --tags-at-head \
+        --info-plist "$source_plist"
+) >"$fixture_dir/output.log" 2>&1; then
+    echo "FAIL: one exact release tag at HEAD should succeed"
+    cat "$fixture_dir/output.log"
+    exit 1
+fi
+
+git -C "$tagged_repo" tag v0.3.22
+if (
+    cd "$tagged_repo"
+    bash "$gate_script" \
+        --version "0.3.21" \
+        --tags-at-head \
+        --info-plist "$source_plist"
+) >"$fixture_dir/output.log" 2>&1; then
+    echo "FAIL: multiple release tags at HEAD should fail"
+    cat "$fixture_dir/output.log"
+    exit 1
+fi
+
 echo "Release version gate tests passed."

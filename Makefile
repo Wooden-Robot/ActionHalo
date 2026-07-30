@@ -6,6 +6,7 @@ SWIFT_BUILD_FLAGS ?= -O -whole-module-optimization
 CODESIGN_IDENTITY ?= -
 NOTARYTOOL_PROFILE ?=
 VERSION ?=
+ARTIFACT_PLIST ?=
 BUILD_DIR = .build
 OUTPUT = $(BUILD_DIR)/OpenFire
 
@@ -133,11 +134,11 @@ package: all
 	@echo "ℹ️  This target does not notarize. Use 'make release' for a distributable build."
 
 verify-release-version:
-	@release_tag="$$(git describe --tags --exact-match HEAD 2>/dev/null || true)"; \
 	bash Tools/verify_release_version.sh \
 		--version "$(VERSION)" \
-		--tag "$${release_tag}" \
-		--info-plist Sources/App/Resources/Info.plist
+		--tags-at-head \
+		--info-plist Sources/App/Resources/Info.plist \
+		--artifact-plist "$(ARTIFACT_PLIST)"
 
 release: verify-release-version
 	@if [ "$(CODESIGN_IDENTITY)" = "-" ] || [ -z "$(CODESIGN_IDENTITY)" ]; then \
@@ -149,12 +150,9 @@ release: verify-release-version
 		exit 1; \
 	fi
 	@$(MAKE) package CODESIGN_IDENTITY="$(CODESIGN_IDENTITY)"
-	@release_tag="$$(git describe --tags --exact-match HEAD 2>/dev/null || true)"; \
-	bash Tools/verify_release_version.sh \
-		--version "$(VERSION)" \
-		--tag "$${release_tag}" \
-		--info-plist Sources/App/Resources/Info.plist \
-		--artifact-plist $(APP_CONTENTS)/Info.plist
+	@$(MAKE) verify-release-version \
+		VERSION="$(VERSION)" \
+		ARTIFACT_PLIST="$(APP_CONTENTS)/Info.plist"
 	@echo "📨 Submitting $(DMG_NAME) for notarization..."
 	@xcrun notarytool submit $(BUILD_DIR)/$(DMG_NAME) --keychain-profile "$(NOTARYTOOL_PROFILE)" --wait
 	@xcrun stapler staple $(BUILD_DIR)/$(DMG_NAME)

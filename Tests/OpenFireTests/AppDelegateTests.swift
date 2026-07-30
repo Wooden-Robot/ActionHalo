@@ -281,6 +281,7 @@ final class AppDelegateTests: XCTestCase {
             AppDelegate.shouldExecuteMenuAction(
                 expectedProcessIdentifier: 42,
                 currentProcessIdentifier: 42,
+                requiresOriginalFocusedElement: true,
                 requiresEditableTarget: true,
                 focusedElementMatches: false,
                 isFocusedSelectionEditable: true
@@ -290,6 +291,7 @@ final class AppDelegateTests: XCTestCase {
             AppDelegate.shouldExecuteMenuAction(
                 expectedProcessIdentifier: 42,
                 currentProcessIdentifier: 42,
+                requiresOriginalFocusedElement: true,
                 requiresEditableTarget: true,
                 focusedElementMatches: true,
                 isFocusedSelectionEditable: true
@@ -299,6 +301,7 @@ final class AppDelegateTests: XCTestCase {
             AppDelegate.shouldExecuteMenuAction(
                 expectedProcessIdentifier: 42,
                 currentProcessIdentifier: 42,
+                requiresOriginalFocusedElement: true,
                 requiresEditableTarget: true,
                 focusedElementMatches: true,
                 isFocusedSelectionEditable: false
@@ -311,6 +314,7 @@ final class AppDelegateTests: XCTestCase {
             AppDelegate.shouldExecuteMenuAction(
                 expectedProcessIdentifier: 42,
                 currentProcessIdentifier: 42,
+                requiresOriginalFocusedElement: false,
                 requiresEditableTarget: false,
                 focusedElementMatches: false,
                 isFocusedSelectionEditable: false
@@ -320,8 +324,41 @@ final class AppDelegateTests: XCTestCase {
             AppDelegate.shouldExecuteMenuAction(
                 expectedProcessIdentifier: 42,
                 currentProcessIdentifier: 7,
+                requiresOriginalFocusedElement: false,
                 requiresEditableTarget: false,
                 focusedElementMatches: true,
+                isFocusedSelectionEditable: true
+            )
+        )
+    }
+
+    func testCustomKeyComboRequiresOriginalFocusWithoutAssumingEditability() throws {
+        let keyCombo = try makePlugin(
+            name: "Command Palette",
+            identifier: "com.example.command-palette",
+            actionType: "key-combo",
+            actionContent: "\"key\":\"p\",\"modifiers\":[\"command\",\"shift\"]"
+        )
+
+        XCTAssertTrue(AppDelegate.pluginRequiresOriginalFocusedElement(keyCombo))
+        XCTAssertFalse(AppDelegate.pluginRequiresEditableTarget(keyCombo))
+        XCTAssertTrue(
+            AppDelegate.shouldExecuteMenuAction(
+                expectedProcessIdentifier: 42,
+                currentProcessIdentifier: 42,
+                requiresOriginalFocusedElement: true,
+                requiresEditableTarget: false,
+                focusedElementMatches: true,
+                isFocusedSelectionEditable: false
+            )
+        )
+        XCTAssertFalse(
+            AppDelegate.shouldExecuteMenuAction(
+                expectedProcessIdentifier: 42,
+                currentProcessIdentifier: 42,
+                requiresOriginalFocusedElement: true,
+                requiresEditableTarget: false,
+                focusedElementMatches: false,
                 isFocusedSelectionEditable: true
             )
         )

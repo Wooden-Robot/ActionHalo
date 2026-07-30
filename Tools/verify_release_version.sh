@@ -5,7 +5,7 @@ set -euo pipefail
 usage() {
     cat <<'USAGE'
 Usage:
-  verify_release_version.sh [--version X.Y.Z] [--tag vX.Y.Z] \
+  verify_release_version.sh [--version X.Y.Z] [--tag vX.Y.Z | --tags-at-head] \
     --info-plist PATH [--artifact-plist PATH]
 
 At least one of --version or --tag must be provided. When both are present,
@@ -22,6 +22,7 @@ fail() {
 
 explicit_version=""
 release_tag=""
+discover_tags_at_head=false
 info_plist=""
 artifact_plist=""
 
@@ -36,6 +37,10 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || fail "--tag requires a value."
             release_tag="$2"
             shift 2
+            ;;
+        --tags-at-head)
+            discover_tags_at_head=true
+            shift
             ;;
         --info-plist)
             [[ $# -ge 2 ]] || fail "--info-plist requires a path."
@@ -80,6 +85,27 @@ if [[ -n "$explicit_version" ]]; then
 fi
 if [[ -n "$release_tag" ]]; then
     normalized_tag="$(normalize_release_tag "$release_tag")"
+fi
+if [[ "$discover_tags_at_head" == true ]]; then
+    [[ -z "$release_tag" ]] || fail "--tag and --tags-at-head cannot be combined."
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+        || fail "--tags-at-head must be run inside a Git work tree."
+
+    discovered_release_tag=""
+    discovered_release_tag_count=0
+    while IFS= read -r candidate; do
+        if [[ "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            discovered_release_tag="$candidate"
+            discovered_release_tag_count=$((discovered_release_tag_count + 1))
+        fi
+    done < <(git tag --points-at HEAD)
+
+    [[ "$discovered_release_tag_count" -le 1 ]] \
+        || fail "HEAD has multiple release tags; keep exactly one vX.Y.Z tag."
+    if [[ "$discovered_release_tag_count" -eq 1 ]]; then
+        normalized_tag="$(normalize_release_tag "$discovered_release_tag")"
+        release_tag="$discovered_release_tag"
+    fi
 fi
 
 if [[ -z "$normalized_version" && -z "$normalized_tag" ]]; then
