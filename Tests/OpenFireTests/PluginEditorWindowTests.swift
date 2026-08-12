@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import OpenFire
 
@@ -10,6 +11,60 @@ final class PluginEditorWindowTests: XCTestCase {
         }
         temporaryDirectories.removeAll()
         super.tearDown()
+    }
+
+    @MainActor
+    func testShortcutRecorderWritesNewCombinationToRawValue() throws {
+        let recorder = ShortcutRecorderField(frame: .zero)
+        let event = try makeKeyDownEvent(
+            modifiers: [.command, .shift],
+            characters: "k",
+            keyCode: 0x28
+        )
+
+        XCTAssertTrue(recorder.becomeFirstResponder())
+        recorder.keyDown(with: event)
+
+        XCTAssertEqual(recorder.rawComboString, "Shift+Command+K")
+    }
+
+    @MainActor
+    func testShortcutRecorderReplacesExistingCombinationWhenRerecorded() throws {
+        let recorder = ShortcutRecorderField(frame: .zero)
+        recorder.stringValue = "Command+Q"
+        let event = try makeKeyDownEvent(
+            modifiers: [.option],
+            characters: "r",
+            keyCode: 0x0F
+        )
+
+        XCTAssertTrue(recorder.becomeFirstResponder())
+        recorder.keyDown(with: event)
+
+        XCTAssertEqual(recorder.rawComboString, "Option+R")
+    }
+
+    @MainActor
+    func testGlobalShortcutRecorderStillReportsCarbonValues() throws {
+        let recorder = ShortcutRecorderField(frame: .zero)
+        recorder.requiresGlobalHotkeyModifier = true
+        var recordedKeyCode: UInt32?
+        var recordedModifiers: UInt32?
+        recorder.onKeyComboRecorded = { keyCode, modifiers in
+            recordedKeyCode = keyCode
+            recordedModifiers = modifiers
+        }
+        let event = try makeKeyDownEvent(
+            modifiers: [.command, .control],
+            characters: "k",
+            keyCode: 0x28
+        )
+
+        XCTAssertTrue(recorder.becomeFirstResponder())
+        recorder.keyDown(with: event)
+
+        XCTAssertEqual(recordedKeyCode, 0x28)
+        XCTAssertEqual(recordedModifiers, 0x1100)
     }
 
     func testValidationRejectsReservedCorePluginIdentifiersForNewPlugins() {
@@ -418,5 +473,27 @@ final class PluginEditorWindowTests: XCTestCase {
         try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
         try config.write(to: bundleURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
         return bundleURL
+    }
+
+    @MainActor
+    private func makeKeyDownEvent(
+        modifiers: NSEvent.ModifierFlags,
+        characters: String,
+        keyCode: UInt16
+    ) throws -> NSEvent {
+        try XCTUnwrap(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: modifiers,
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: keyCode
+            )
+        )
     }
 }

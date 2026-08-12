@@ -11,9 +11,9 @@
     <key>CFBundleIdentifier</key>
     <string>com.openfire.app</string>
     <key>CFBundleVersion</key>
-    <string>0.3.21</string>
+    <string>0.3.22</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.3.21</string>
+    <string>0.3.22</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
@@ -22,6 +22,8 @@
     <true/>
     <key>NSAccessibilityUsageDescription</key>
     <string>OpenFire needs accessibility access to detect text selection across applications.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>OpenFire uses Apple Events so enabled plugins can perform requested actions in other applications.</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

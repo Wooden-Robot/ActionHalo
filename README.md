@@ -237,14 +237,14 @@ make package             # local verification .app and .dmg
 `make package` always produces a local verification artifact and never applies release-version checks or notarization. A distributable build must use the separate `make release` gate. Run it from an exact `vX.Y.Z` tag, or pass `VERSION=X.Y.Z` explicitly; that version must match both version fields in the source and packaged app `Info.plist`. The release also requires a Developer ID Application identity and a configured `notarytool` keychain profile:
 
 ```bash
-make release VERSION=0.3.21 \
+make release VERSION=0.3.22 \
   CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
   NOTARYTOOL_PROFILE="openfire-notary"
 ```
 
-`make release` fails before packaging if the version or either credential is invalid. It checks the packaged app version again before notarization, then signs the app and DMG, waits for notarization, staples the ticket, and validates both signatures and the disk image.
+`make release` fails before packaging if the version or either credential is invalid. It checks the packaged app version again before notarization, signs the app with its required Apple Events automation entitlement, verifies that the signed artifact retained that entitlement and its matching privacy description, then signs the DMG, waits for notarization, staples the ticket, and validates both signatures and the disk image. Local ad-hoc signing remains unchanged and does not embed the Hardened Runtime entitlement.
 
-CI pins Xcode 16.4, runs the tests normally and again with actor data-race checks, enforces strict-concurrency diagnostics on the application build, builds the SwiftPM release executable, and smoke-tests an ad-hoc universal app/DMG package. A weekly or manually dispatched job runs the full suite under Thread Sanitizer.
+CI pins Xcode 16.4, runs the tests normally and again with actor data-race checks, exercises the release entitlement gate against positive and negative signed fixtures, enforces strict-concurrency diagnostics on the application build, builds the SwiftPM release executable, and smoke-tests an ad-hoc universal app/DMG package. A weekly or manually dispatched job runs the full suite under Thread Sanitizer.
 
 ---
 

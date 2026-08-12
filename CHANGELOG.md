@@ -1,17 +1,23 @@
 # Changelog
 
-## Unreleased
+## v0.3.22
 - 加固文本选择手势的一致性，避免跨应用、跨窗口与受保护输入状态误触发，同时保留首次聚焦输入框和浏览器正文选区。
 - 将 Cmd+C 回退改为可回滚的剪贴板事务，稳定读取复制结果，完整恢复多类型与大体积内容，并在失败路径清理临时资源。
 - 收紧插件安装、删除、信任、URL、脚本环境和正则过滤边界，修复目录穿越、符号链接、安装时序与编辑配置丢失问题。
 - 修复圆环菜单、粘贴弹窗、状态栏、诊断窗口与更新检查中的重复执行、陈旧状态和异步生命周期竞态。
 - 增加严格并发检查、并行回归、发布构建与本地 DMG 冒烟验证；正式发布改为强制 Developer ID 签名、公证、装订及完整校验。
+- 修复自定义快捷键插件录制后未写回配置的问题，支持新建与重新录制，并保留全局快捷键回调行为。
+- 将插件监听路径发现移出主线程并增加独立防抖；原子替换配置后会立即重挂目标 watcher，避免连续编辑丢失更新。
+- 为 Developer ID 发布包补齐 Apple Events 权限及用途说明，并新增签名产物权限门禁。
 
 - Hardened text-selection gesture consistency across processes, windows, protected inputs, newly focused fields, and browser content.
 - Made Cmd+C fallback a rollback-safe clipboard transaction with stable reads, multi-type and large-payload restoration, and failure cleanup.
 - Tightened plugin install, delete, trust, URL, script-environment, and regex boundaries, including traversal, symlink, install-race, and editor-preservation fixes.
 - Fixed duplicate actions and stale async state across the radial menu, paste popup, status item, diagnostics, and update checks.
 - Added strict-concurrency checks, parallel regressions, release builds, and local DMG smoke tests; distributable releases now require signing, notarization, stapling, and full validation.
+- Fixed custom key-combo recording so new and replacement combinations are persisted without changing global-hotkey callbacks.
+- Moved plugin watcher discovery off the main thread, added separate debouncing, and immediately reattached atomically replaced paths so consecutive edits are not missed.
+- Added the Apple Events entitlement and purpose string to Developer ID releases, with a gate that verifies the signed artifact.
 
 ## v0.3.21
 - 提升文本选择触发的稳定性：将 Event Tap 回调收敛为轻量事件转发，增加前台进程与上下文复核，并阻止无障碍信息不可读时重复使用旧的 Cmd+C 文本，同时保留 Chrome、Telegram 与同类 WebView 应用的新选区回退能力。
