@@ -10,8 +10,6 @@ class ShortcutRecorderField: NSView {
     // For Carbon-based global hotkey registration
     var onKeyComboRecorded: ((UInt32, UInt32) -> Void)?
     var requiresGlobalHotkeyModifier = false
-    private var carbonKeyCode: UInt32?
-    private var carbonModifiers: UInt32?
     
     private var eventMonitor: Any?
     
@@ -188,10 +186,10 @@ class ShortcutRecorderField: NSView {
             label.textColor = .systemOrange
             return
         }
-        
-        self.carbonKeyCode = UInt32(event.keyCode)
-        self.carbonModifiers = carbonMods
-        self.onKeyComboRecorded?(self.carbonKeyCode!, self.carbonModifiers!)
+
+        recordedKeyCombo = (mods + [keyName]).joined(separator: "+")
+        updateLabelFromState()
+        onKeyComboRecorded?(UInt32(event.keyCode), carbonMods)
         
         // Unfocus after recording.
         DispatchQueue.main.async {

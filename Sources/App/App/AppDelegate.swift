@@ -306,9 +306,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             startServices()
         }
         
-        // Load plugins
-        PluginManager.shared.loadAllPlugins()
+        // Install the root watcher synchronously so package creation cannot be
+        // missed, then load plugins while fine-grained watcher discovery runs
+        // in the background.
         PluginManager.shared.startWatchingPluginDirectories()
+        PluginManager.shared.loadAllPlugins()
         
         // Setup global hotkeys
         HotkeyManager.shared.onHotkeyPressed = { [weak self] in

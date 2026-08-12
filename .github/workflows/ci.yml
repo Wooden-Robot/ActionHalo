@@ -42,6 +42,9 @@ jobs:
       - name: Test release version gate
         run: bash Tests/verify_release_version_gate.sh
 
+      - name: Test release entitlement gate
+        run: bash Tests/verify_release_entitlements_gate.sh
+
       - name: Build release executable
         run: swift build -c release
 

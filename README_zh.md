@@ -237,14 +237,14 @@ make package             # 本地验证用 .app 与 .dmg
 `make package` 只生成本地验证产物，不执行发布版本校验或公证。正式分发必须使用独立的 `make release` 门禁：要么在准确的 `vX.Y.Z` tag 上执行，要么显式传入 `VERSION=X.Y.Z`；该版本必须与源码及打包后 App 的 `Info.plist` 两个版本字段一致。同时还需提供 Developer ID Application 身份和已配置的 `notarytool` 钥匙串配置：
 
 ```bash
-make release VERSION=0.3.21 \
+make release VERSION=0.3.22 \
   CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
   NOTARYTOOL_PROFILE="openfire-notary"
 ```
 
-`make release` 会在版本或任一凭据不合法时提前失败，并在公证前再次核对打包后 App 的版本。检查通过后，它会签名 App 与 DMG、等待公证、装订票据，并验证两份签名和磁盘镜像。
+`make release` 会在版本或任一凭据不合法时提前失败，并在公证前再次核对打包后 App 的版本。检查通过后，它会使用所需的 Apple Events 自动化权限签名 App，确认签名产物保留了该权限及对应的隐私用途说明，再签名 DMG、等待公证、装订票据，并验证两份签名和磁盘镜像。本地 ad-hoc 签名流程保持不变，不会嵌入该 Hardened Runtime entitlement。
 
-CI 固定使用 Xcode 16.4，先执行常规测试，再启用 actor 数据竞争检查实际运行测试，并对应用构建强制执行严格并发诊断，随后构建 SwiftPM Release 产物，并对 ad-hoc 签名的 universal App/DMG 做完整冒烟验证。每周定时任务和手动触发任务会在 Thread Sanitizer 下运行完整测试。
+CI 固定使用 Xcode 16.4，先执行常规测试，再启用 actor 数据竞争检查实际运行测试，并用正反向签名样例验证发布权限门禁、对应用构建强制执行严格并发诊断，随后构建 SwiftPM Release 产物，并对 ad-hoc 签名的 universal App/DMG 做完整冒烟验证。每周定时任务和手动触发任务会在 Thread Sanitizer 下运行完整测试。
 
 ---
 

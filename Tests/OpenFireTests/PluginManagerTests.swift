@@ -2,6 +2,28 @@ import Darwin
 import XCTest
 @testable import OpenFire
 
+private final class ThreadRecordingFileManager: FileManager, @unchecked Sendable {
+    private let stateLock = NSLock()
+    private var recordedMainThreadState: Bool?
+
+    var discoveryRanOnMainThread: Bool? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return recordedMainThreadState
+    }
+
+    override func contentsOfDirectory(
+        at url: URL,
+        includingPropertiesForKeys keys: [URLResourceKey]?,
+        options mask: DirectoryEnumerationOptions = []
+    ) throws -> [URL] {
+        stateLock.lock()
+        recordedMainThreadState = Thread.isMainThread
+        stateLock.unlock()
+        return []
+    }
+}
+
 final class PluginManagerTests: GlobalStateTestCase {
     private var temporaryDirectories: [URL] = []
     private let defaultsKeys = [
@@ -464,6 +486,18 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertEqual(watchableNames, [pluginsURL.lastPathComponent, "Custom.openfireext"])
     }
 
+    @MainActor
+    func testWatchablePluginPathDiscoveryDoesNotRunOnMainThread() async {
+        let fileManager = ThreadRecordingFileManager()
+
+        _ = await PluginManager.discoverWatchablePluginPaths(
+            userPluginsURL: PluginManager.shared.userPluginsURL,
+            fileManager: fileManager
+        )
+
+        XCTAssertEqual(fileManager.discoveryRanOnMainThread, false)
+    }
+
     func testKeyComboTargetRequiresSameProcessAndFocusedElement() {
         let expectedElement = AXUIElementCreateApplication(42)
         let sameElement = AXUIElementCreateApplication(42)
@@ -513,7 +547,7 @@ final class PluginManagerTests: GlobalStateTestCase {
             encoding: .utf8
         )
         manager.plugins = [try XCTUnwrap(PluginLoader.load(from: packageURL))]
-        manager.startWatchingPluginDirectories()
+        await manager.startWatchingPluginDirectories().value
         defer { manager.stopWatchingPluginDirectories() }
 
         let reloaded = expectation(description: "In-place Config.json edit reloaded plugins")
@@ -570,7 +604,7 @@ final class PluginManagerTests: GlobalStateTestCase {
         let initialPlugin = try XCTUnwrap(PluginLoader.load(from: packageURL))
         let initialFingerprint = try XCTUnwrap(initialPlugin.packageFingerprint)
         manager.plugins = [initialPlugin]
-        manager.startWatchingPluginDirectories()
+        await manager.startWatchingPluginDirectories().value
         defer { manager.stopWatchingPluginDirectories() }
 
         let reloaded = expectation(description: "In-place script edit reloaded plugins")
@@ -626,7 +660,7 @@ final class PluginManagerTests: GlobalStateTestCase {
         let initialPlugin = try XCTUnwrap(PluginLoader.load(from: packageURL))
         let initialFingerprint = try XCTUnwrap(initialPlugin.packageFingerprint)
         manager.plugins = [initialPlugin]
-        manager.startWatchingPluginDirectories()
+        await manager.startWatchingPluginDirectories().value
         defer { manager.stopWatchingPluginDirectories() }
 
         let reloaded = expectation(description: "In-place icon edit reloaded plugins")
@@ -674,7 +708,7 @@ final class PluginManagerTests: GlobalStateTestCase {
             encoding: .utf8
         )
         manager.plugins = [try XCTUnwrap(PluginLoader.load(from: packageURL))]
-        manager.startWatchingPluginDirectories()
+        await manager.startWatchingPluginDirectories().value
         defer { manager.stopWatchingPluginDirectories() }
 
         let replacementLoaded = expectation(description: "Replacement Config loaded")

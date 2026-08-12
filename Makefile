@@ -7,6 +7,7 @@ CODESIGN_IDENTITY ?= -
 NOTARYTOOL_PROFILE ?=
 VERSION ?=
 ARTIFACT_PLIST ?=
+APP_ENTITLEMENTS = OpenFire.entitlements
 BUILD_DIR = .build
 OUTPUT = $(BUILD_DIR)/OpenFire
 
@@ -26,7 +27,7 @@ DMG_BACKGROUND = $(BUILD_DIR)/dmg-background.png
 
 .DEFAULT_GOAL := help
 
-.PHONY: help all clean force package release verify-release-version run test
+.PHONY: help all clean force package release verify-release-version verify-release-entitlements run test
 
 help:
 	@echo "OpenFire 可用 make 命令："
@@ -81,8 +82,10 @@ package: all
 		echo "⚠️  Ad-hoc signing $(APP_NAME).app. Set CODESIGN_IDENTITY to create a distributable Developer ID build."; \
 		codesign --force --deep --sign - $(APP_DIR); \
 	else \
+		bash Tools/verify_release_entitlements.sh --entitlements "$(APP_ENTITLEMENTS)" --info-plist Sources/App/Resources/Info.plist; \
 		echo "✍️ Signing $(APP_NAME).app with $(CODESIGN_IDENTITY)..."; \
-		codesign --force --deep --options runtime --timestamp --sign "$(CODESIGN_IDENTITY)" $(APP_DIR); \
+		codesign --force --deep --options runtime --timestamp --entitlements "$(APP_ENTITLEMENTS)" --sign "$(CODESIGN_IDENTITY)" $(APP_DIR); \
+		bash Tools/verify_release_entitlements.sh --entitlements "$(APP_ENTITLEMENTS)" --info-plist Sources/App/Resources/Info.plist --app "$(APP_DIR)"; \
 	fi
 	@codesign --verify --deep --strict --verbose=2 $(APP_DIR)
 	@echo "💿 Creating $(DMG_NAME)..."
@@ -140,7 +143,12 @@ verify-release-version:
 		--info-plist Sources/App/Resources/Info.plist \
 		--artifact-plist "$(ARTIFACT_PLIST)"
 
-release: verify-release-version
+verify-release-entitlements:
+	bash Tools/verify_release_entitlements.sh \
+		--entitlements "$(APP_ENTITLEMENTS)" \
+		--info-plist Sources/App/Resources/Info.plist
+
+release: verify-release-version verify-release-entitlements
 	@if [ "$(CODESIGN_IDENTITY)" = "-" ] || [ -z "$(CODESIGN_IDENTITY)" ]; then \
 		echo "❌ release requires a Developer ID Application CODESIGN_IDENTITY."; \
 		exit 1; \
@@ -168,4 +176,5 @@ clean:
 test:
 	@echo "🧪 Running Tests..."
 	bash Tests/verify_release_version_gate.sh
+	bash Tests/verify_release_entitlements_gate.sh
 	swift test

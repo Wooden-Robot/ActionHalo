@@ -3,6 +3,10 @@ import Darwin
 import JavaScriptCore
 import os
 
+private struct PluginWatcherFileManager: @unchecked Sendable {
+    let value: FileManager
+}
+
 /// Bounded stderr storage shared by `FileHandle`'s callback and the process
 /// waiter. The callback can run on an arbitrary queue, so both fields are
 /// guarded by one lock and are never captured as unsynchronized local vars.
@@ -166,7 +170,10 @@ final class PluginManager: Sendable {
 
     private let state = OSAllocatedUnfairLock(initialState: State())
     @MainActor private var pathWatchers: [String: PluginPathWatcher] = [:]
+    @MainActor private var isWatchingPluginDirectories = false
+    @MainActor private var latestWatcherRefreshID: UInt64 = 0
     @MainActor private var pendingReloadWorkItem: DispatchWorkItem?
+    @MainActor private var pendingWatcherRefreshWorkItem: DispatchWorkItem?
     @MainActor private var pendingKeyComboTargets: [UUID: AXUIElement] = [:]
 
     var plugins: [Plugin] {
@@ -397,6 +404,22 @@ final class PluginManager: Sendable {
         return paths.filter {
             seenPaths.insert(watchPath(for: $0)).inserted
         }
+    }
+
+    static func discoverWatchablePluginPaths(
+        userPluginsURL: URL,
+        fileManager: FileManager = .default
+    ) async -> [URL] {
+        // Foundation documents distinct FileManager operations as safe to use
+        // concurrently. Keep the unchecked boundary narrow so test doubles can
+        // still verify which thread performs discovery.
+        let transferableFileManager = PluginWatcherFileManager(value: fileManager)
+        return await Task.detached(priority: .utility) {
+            watchablePluginPaths(
+                userPluginsURL: userPluginsURL,
+                fileManager: transferableFileManager.value
+            )
+        }.value
     }
 
     static func sameFileURL(_ lhs: URL, _ rhs: URL) -> Bool {
@@ -649,8 +672,8 @@ final class PluginManager: Sendable {
                 // A Config.json write can briefly expose an incomplete file.
                 // Rebuild file watchers from the final applied configuration so
                 // a newly selected action script is never left unwatched.
-                if !self.pathWatchers.isEmpty {
-                    self.refreshUserPluginPackageWatchers()
+                if self.isWatchingPluginDirectories {
+                    self.scheduleUserPluginPackageWatcherRefresh()
                 }
                 
                 NSLog("[OpenFire] Loaded \(self.plugins.count) plugins total (\(builtIn.count) built-in, \(user.count) user)")
@@ -1080,18 +1103,29 @@ final class PluginManager: Sendable {
     // MARK: - Hot Reload (File System Watching)
     
     @MainActor
-    func startWatchingPluginDirectories() {
+    @discardableResult
+    func startWatchingPluginDirectories() -> Task<Void, Never> {
         try? FileManager.default.createDirectory(
             at: userPluginsURL,
             withIntermediateDirectories: true
         )
-        refreshUserPluginPackageWatchers()
+        isWatchingPluginDirectories = true
+        watchFileSystemObject(at: userPluginsURL)
+
+        return Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.refreshUserPluginPackageWatchers()
+        }
     }
     
     @MainActor
     func stopWatchingPluginDirectories() {
+        isWatchingPluginDirectories = false
+        latestWatcherRefreshID &+= 1
         pendingReloadWorkItem?.cancel()
         pendingReloadWorkItem = nil
+        pendingWatcherRefreshWorkItem?.cancel()
+        pendingWatcherRefreshWorkItem = nil
         for watcher in pathWatchers.values {
             watcher.source.cancel()
         }
@@ -1103,10 +1137,41 @@ final class PluginManager: Sendable {
     }
 
     @MainActor
-    private func refreshUserPluginPackageWatchers() {
-        let watchableURLs = Self.watchablePluginPaths(
-            userPluginsURL: userPluginsURL
+    private func scheduleUserPluginPackageWatcherRefresh(after delay: TimeInterval = 0.2) {
+        pendingWatcherRefreshWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                await self.refreshUserPluginPackageWatchers()
+            }
+        }
+        pendingWatcherRefreshWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    @MainActor
+    private func refreshUserPluginPackageWatchers() async {
+        guard isWatchingPluginDirectories else { return }
+
+        latestWatcherRefreshID &+= 1
+        let refreshID = latestWatcherRefreshID
+        let pluginsURL = userPluginsURL
+        let watchableURLs = await Self.discoverWatchablePluginPaths(
+            userPluginsURL: pluginsURL
         )
+
+        guard isWatchingPluginDirectories,
+              refreshID == latestWatcherRefreshID,
+              Self.sameFileURL(pluginsURL, userPluginsURL) else {
+            return
+        }
+
+        applyUserPluginPackageWatchers(watchableURLs)
+    }
+
+    @MainActor
+    private func applyUserPluginPackageWatchers(_ watchableURLs: [URL]) {
         let watchablePaths = Set(watchableURLs.map { Self.watchPath(for: $0) })
 
         let stalePaths = pathWatchers.keys.filter {
@@ -1140,17 +1205,24 @@ final class PluginManager: Sendable {
         )
         let watcherID = UUID()
         
-        source.setEventHandler { [weak self] in
+        source.setEventHandler { [weak self, weak source] in
+            let events = source?.data ?? []
             Task { @MainActor in
                 guard let self,
                       self.pathWatchers[watchPath]?.id == watcherID else {
                     return
                 }
                 NSLog("[OpenFire] Plugin package changed, reloading...")
-                self.pathWatchers[watchPath]?.source.cancel()
-                self.pathWatchers.removeValue(forKey: watchPath)
-                self.refreshUserPluginPackageWatchers()
+                if events.contains(.delete) || events.contains(.rename) {
+                    self.pathWatchers[watchPath]?.source.cancel()
+                    self.pathWatchers.removeValue(forKey: watchPath)
+                    // Atomic saves replace the watched inode. Reattach this
+                    // single path immediately so another edit cannot land in
+                    // the background discovery/reload window.
+                    self.watchFileSystemObject(at: url)
+                }
                 self.scheduleReloadPlugins()
+                self.scheduleUserPluginPackageWatcherRefresh()
             }
         }
         
