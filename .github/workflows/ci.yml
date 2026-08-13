@@ -45,6 +45,15 @@ jobs:
       - name: Test release entitlement gate
         run: bash Tests/verify_release_entitlements_gate.sh
 
+      - name: Test Sparkle update gate
+        run: bash Tests/verify_sparkle_update_gate.sh
+
+      - name: Test GitHub Release gate
+        run: bash Tests/verify_github_release_gate.sh
+
+      - name: Test community release contract
+        run: bash Tests/verify_community_release_contract.sh
+
       - name: Build release executable
         run: swift build -c release
 
@@ -57,6 +66,12 @@ jobs:
           test "$(lipo -archs .build/OpenFire)" = "x86_64 arm64"
           codesign --verify --deep --strict --verbose=2 .build/OpenFire.app
           hdiutil verify .build/OpenFire.dmg
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Sources/App/Resources/Info.plist)"
+          bash Tools/verify_release_dmg.sh \
+            --dmg .build/OpenFire.dmg \
+            --version "$VERSION" \
+            --info-plist Sources/App/Resources/Info.plist \
+            --package-resolved Package.resolved
 
   thread-sanitizer:
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}

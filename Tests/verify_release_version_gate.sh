@@ -4,6 +4,7 @@ set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 gate_script="$project_root/Tools/verify_release_version.sh"
+repository_gate_script="$project_root/Tools/verify_release_repository.sh"
 fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/openfire-version-gate.XXXXXX")"
 trap 'rm -rf "$fixture_dir"' EXIT
 
@@ -138,6 +139,39 @@ if (
 ) >"$fixture_dir/output.log" 2>&1; then
     echo "FAIL: multiple release tags at HEAD should fail"
     cat "$fixture_dir/output.log"
+    exit 1
+fi
+
+git -C "$tagged_repo" tag -d v0.3.22 >/dev/null
+if ! bash "$repository_gate_script" \
+    --version "0.3.21" \
+    --repository "$tagged_repo" >"$fixture_dir/output.log" 2>&1; then
+    echo "FAIL: a clean repository at the exact formal release tag should succeed"
+    cat "$fixture_dir/output.log"
+    exit 1
+fi
+
+printf 'dirty\n' >>"$tagged_repo/Info.plist"
+if bash "$repository_gate_script" \
+    --version "0.3.21" \
+    --repository "$tagged_repo" >"$fixture_dir/output.log" 2>&1; then
+    echo "FAIL: a formal release from a dirty repository should fail"
+    exit 1
+fi
+git -C "$tagged_repo" checkout -- Info.plist
+
+if bash "$repository_gate_script" \
+    --version "0.3.22" \
+    --repository "$tagged_repo" >"$fixture_dir/output.log" 2>&1; then
+    echo "FAIL: a formal release version that differs from the HEAD tag should fail"
+    exit 1
+fi
+
+git -C "$tagged_repo" tag -d v0.3.21 >/dev/null
+if bash "$repository_gate_script" \
+    --version "0.3.21" \
+    --repository "$tagged_repo" >"$fixture_dir/output.log" 2>&1; then
+    echo "FAIL: a formal release without an exact tag should fail"
     exit 1
 fi
 

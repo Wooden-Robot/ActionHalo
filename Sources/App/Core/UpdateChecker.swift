@@ -1,251 +1,94 @@
 import Cocoa
-import os
+import Sparkle
 
-final class UpdateChecker: Sendable {
+@MainActor
+protocol UpdateDriving: AnyObject {
+    var automaticallyChecksForUpdates: Bool { get set }
+    var canCheckForUpdates: Bool { get }
+
+    func startUpdater()
+    func checkForUpdates()
+}
+
+@MainActor
+private final class SparkleUpdateDriver: UpdateDriving {
+    private let controller: SPUStandardUpdaterController
+
+    init() {
+        controller = SPUStandardUpdaterController(
+            startingUpdater: false,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+    }
+
+    var automaticallyChecksForUpdates: Bool {
+        get { controller.updater.automaticallyChecksForUpdates }
+        set { controller.updater.automaticallyChecksForUpdates = newValue }
+    }
+
+    var canCheckForUpdates: Bool {
+        controller.updater.canCheckForUpdates
+    }
+
+    func checkForUpdates() {
+        controller.checkForUpdates(nil)
+    }
+
+    func startUpdater() {
+        controller.startUpdater()
+    }
+}
+
+/// Owns the application's update policy while Sparkle owns the update state
+/// machine, archive verification, atomic installation, and post-install relaunch.
+@MainActor
+final class UpdateChecker {
     static let shared = UpdateChecker()
-    static let autoCheckEnabledKey = "AutoCheckUpdates"
+    static let legacyAutoCheckEnabledKey = "AutoCheckUpdates"
 
-    private let owner = "Wooden-Robot"
-    private let repo = "OpenFire"
-    private let lastNotifiedVersionKey = "LastNotifiedVersion"
-    private let isCheckingUpdates = OSAllocatedUnfairLock(initialState: false)
+    private let driver: UpdateDriving
 
-    private init() {}
+    private convenience init() {
+        self.init(driver: SparkleUpdateDriver(), defaults: .standard)
+    }
 
-    func beginUpdateCheck() -> Bool {
-        isCheckingUpdates.withLock {
-            guard !$0 else { return false }
-            $0 = true
-            return true
+    init(driver: UpdateDriving, defaults: UserDefaults) {
+        self.driver = driver
+
+        // Versions before Sparkle stored this preference under an OpenFire key.
+        // Move an explicit user choice into Sparkle's own preference once, then
+        // let Sparkle remain the single source of truth from this point forward.
+        if let legacyPreference = defaults.object(
+            forKey: Self.legacyAutoCheckEnabledKey
+        ) as? Bool {
+            driver.automaticallyChecksForUpdates = legacyPreference
+            defaults.removeObject(forKey: Self.legacyAutoCheckEnabledKey)
         }
+
+        driver.startUpdater()
     }
 
-    func finishUpdateCheck() {
-        isCheckingUpdates.withLock { $0 = false }
-    }
-
-    func lastNotifiedVersion() -> String? {
-        UserDefaults.standard.string(forKey: lastNotifiedVersionKey)
-    }
-
-    func setLastNotifiedVersion(_ version: String?) {
-        if let version {
-            UserDefaults.standard.set(version, forKey: lastNotifiedVersionKey)
-        } else {
-            UserDefaults.standard.removeObject(forKey: lastNotifiedVersionKey)
-        }
+    var canCheckForUpdates: Bool {
+        driver.canCheckForUpdates
     }
 
     func isAutoCheckEnabled() -> Bool {
-        return UserDefaults.standard.object(forKey: Self.autoCheckEnabledKey) as? Bool ?? true
+        driver.automaticallyChecksForUpdates
     }
 
-    func checkForUpdates(showUpToDate: Bool = false, showErrors: Bool = false) {
-        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
-
-        guard let url = latestReleaseAPIURL() else {
-            return
-        }
-        guard beginUpdateCheck() else {
-            NSLog("[OpenFire] Skipping update check because another check is already in flight.")
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.setValue("OpenFire", forHTTPHeaderField: "User-Agent")
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self else { return }
-            defer { self.finishUpdateCheck() }
-            if let error = error {
-                if showErrors {
-                    let message = self.userFriendlyErrorMessage(for: error)
-                    DispatchQueue.main.async {
-                        self.presentUpdateErrorAlert(message: message)
-                    }
-                }
-                return
-            }
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
-                if showErrors {
-                    let message = String(
-                        format: "Unexpected server response (%@).".localized,
-                        "\(httpResponse.statusCode)"
-                    )
-                    DispatchQueue.main.async {
-                        self.presentUpdateErrorAlert(message: message)
-                    }
-                }
-                return
-            }
-            guard let data = data else {
-                if showErrors {
-                    DispatchQueue.main.async {
-                        self.presentUpdateErrorAlert(message: "No data received.".localized)
-                    }
-                }
-                return
-            }
-
-            let release: Release
-            do {
-                release = try JSONDecoder().decode(Release.self, from: data)
-            } catch {
-                if showErrors {
-                    DispatchQueue.main.async {
-                        self.presentUpdateErrorAlert(message: "Failed to parse update information.".localized)
-                    }
-                }
-                return
-            }
-
-            let latestRaw = release.tag_name ?? release.name ?? ""
-            let latestVersion = self.normalizeVersion(latestRaw)
-            let normalizedCurrent = self.normalizeVersion(currentVersion)
-            guard !latestVersion.isEmpty else { return }
-
-            if normalizedCurrent.compare(latestVersion, options: .numeric) != .orderedAscending {
-                self.setLastNotifiedVersion(nil)
-                if showUpToDate {
-                    DispatchQueue.main.async {
-                        self.presentUpToDateAlert(currentVersion: normalizedCurrent)
-                    }
-                }
-                return
-            }
-
-            if !showUpToDate,
-               self.lastNotifiedVersion() == latestVersion {
-                return
-            }
-
-            let downloadURL = release.assets.first(where: { $0.name.lowercased().hasSuffix(".dmg") })?.browser_download_url
-            let targetURL = downloadURL ?? release.html_url
-            guard let url = self.validatedDownloadURL(targetURL) else {
-                if showErrors {
-                    DispatchQueue.main.async {
-                        self.presentUpdateErrorAlert(
-                            message: "The update server returned an untrusted download address.".localized
-                        )
-                    }
-                }
-                return
-            }
-
-            DispatchQueue.main.async {
-                self.presentUpdateAlert(latestVersion: latestVersion, currentVersion: normalizedCurrent, url: url)
-                self.setLastNotifiedVersion(latestVersion)
-            }
-        }.resume()
+    func setAutoCheckEnabled(_ enabled: Bool) {
+        driver.automaticallyChecksForUpdates = enabled
     }
 
-    @MainActor
-    private func presentUpdateAlert(latestVersion: String, currentVersion: String, url: URL) {
-        let alert = NSAlert()
-        alert.messageText = "New Version Available".localized
-        alert.informativeText = String(
-            format: "A newer version (%@) is available. You are using %@.".localized,
-            latestVersion,
-            currentVersion
-        )
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Download Update".localized)
-        alert.addButton(withTitle: "Later".localized)
-
-        NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertFirstButtonReturn {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    @MainActor
-    private func presentUpToDateAlert(currentVersion: String) {
-        let alert = NSAlert()
-        alert.messageText = "Up to Date".localized
-        alert.informativeText = String(
-            format: "You're running the latest version (%@).".localized,
-            currentVersion
-        )
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK".localized)
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
-    }
-
-    @MainActor
-    private func presentUpdateErrorAlert(message: String) {
-        let alert = NSAlert()
-        alert.messageText = "Update Check Failed".localized
-        alert.informativeText = message
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Retry".localized)
-        alert.addButton(withTitle: "OK".localized)
-        NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertFirstButtonReturn {
-            checkForUpdates(showUpToDate: true, showErrors: true)
-        }
-    }
-
-    func userFriendlyErrorMessage(for error: Error) -> String {
-        let nsError = error as NSError
-        if nsError.domain == NSURLErrorDomain {
-            switch nsError.code {
-            case NSURLErrorNotConnectedToInternet:
-                return "No Internet Connection".localized
-            case NSURLErrorTimedOut:
-                return "Request Timed Out".localized
-            case NSURLErrorCannotFindHost:
-                return "Server Not Found".localized
-            case NSURLErrorCannotConnectToHost:
-                return "Unable to Connect to Server".localized
-            case NSURLErrorNetworkConnectionLost:
-                return "Network Connection Lost".localized
-            case NSURLErrorDNSLookupFailed:
-                return "DNS Lookup Failed".localized
-            default:
-                break
-            }
-        }
-        return error.localizedDescription
-    }
-
-    func normalizeVersion(_ version: String) -> String {
-        let trimmed = version.trimmingCharacters(in: .whitespacesAndNewlines)
-        let withoutPrefix = trimmed.hasPrefix("v") || trimmed.hasPrefix("V") ? String(trimmed.dropFirst()) : trimmed
-        return withoutPrefix.split(separator: "-").first.map(String.init) ?? ""
-    }
-
-    func latestReleaseAPIURL() -> URL? {
-        URL(string: "https://api.github.com/repos/\(owner)/\(repo)/releases/latest")
-    }
-
-    func validatedDownloadURL(_ urlString: String?) -> URL? {
-        guard
-            let urlString,
-            let url = URL(string: urlString),
-            url.scheme?.lowercased() == "https",
-            url.user == nil,
-            url.password == nil,
-            url.port == nil || url.port == 443,
-            let host = url.host?.lowercased(),
-            ["github.com", "objects.githubusercontent.com"].contains(host)
-        else {
-            return nil
+    @discardableResult
+    func checkForUpdates() -> Bool {
+        guard driver.canCheckForUpdates else {
+            NSLog("[OpenFire] Skipping update check because Sparkle already has a session in progress.")
+            return false
         }
 
-        return url
+        driver.checkForUpdates()
+        return true
     }
-}
-
-private struct Release: Decodable {
-    let tag_name: String?
-    let name: String?
-    let html_url: String?
-    let assets: [ReleaseAsset]
-}
-
-private struct ReleaseAsset: Decodable {
-    let name: String
-    let browser_download_url: String
 }

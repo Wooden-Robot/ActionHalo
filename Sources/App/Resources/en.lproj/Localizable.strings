@@ -53,6 +53,10 @@
 "Quit" = "Quit";
 "Permission Restored" = "Permission Restored";
 "OpenFire has resumed working." = "OpenFire has resumed working.";
+"Unsaved Plugin Changes" = "Unsaved Plugin Changes";
+"One or more plugin editors have unsaved changes. Save them before quitting or restarting OpenFire." = "One or more plugin editors have unsaved changes. Save them before quitting or restarting OpenFire.";
+"Cancel Quit" = "Cancel Quit";
+"Discard Changes and Quit" = "Discard Changes and Quit";
 "OK" = "OK";
 
 /* UpdateChecker */

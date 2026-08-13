@@ -62,6 +62,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "com.microsoft.Powerpoint",
         "com.kingsoft.wpsoffice.mac"
     ]
+
+    nonisolated static func shouldTerminate(
+        hasVisibleUnsavedPluginEditors: Bool,
+        discardConfirmed: Bool
+    ) -> Bool {
+        !hasVisibleUnsavedPluginEditors || discardConfirmed
+    }
     
     private let statusBarController = StatusBarController()
     private var radialMenuWindow: RadialMenuWindow?
@@ -278,13 +285,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.setEnabled(enabled)
         }
 
-        // Check for updates in the background after the UI is ready.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            if UpdateChecker.shared.isAutoCheckEnabled() {
-                UpdateChecker.shared.checkForUpdates()
-            }
-        }
-        
         // Check accessibility permission
         if !AccessibilityManager.shared.ensureAccessibilityPermission() {
             NSLog("[OpenFire] Waiting for accessibility permission...")
@@ -406,6 +406,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let unsavedEditors = sender.windows.compactMap { window -> PluginEditorWindow? in
+            guard let editor = window as? PluginEditorWindow,
+                  editor.isVisible || editor.isMiniaturized,
+                  editor.hasUnsavedChanges else {
+                return nil
+            }
+            return editor
+        }
+
+        guard !unsavedEditors.isEmpty else {
+            return .terminateNow
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Unsaved Plugin Changes".localized
+        alert.informativeText = "One or more plugin editors have unsaved changes. Save them before quitting or restarting OpenFire.".localized
+        alert.addButton(withTitle: "Cancel Quit".localized)
+        let discardButton = alert.addButton(withTitle: "Discard Changes and Quit".localized)
+        discardButton.hasDestructiveAction = true
+
+        sender.activate(ignoringOtherApps: true)
+        let discardConfirmed = alert.runModal() == .alertSecondButtonReturn
+        guard Self.shouldTerminate(
+            hasVisibleUnsavedPluginEditors: true,
+            discardConfirmed: discardConfirmed
+        ) else {
+            sender.activate(ignoringOtherApps: true)
+            if let editor = unsavedEditors.first {
+                if editor.isMiniaturized {
+                    editor.deminiaturize(nil)
+                }
+                editor.makeKeyAndOrderFront(nil)
+            }
+            return .terminateCancel
+        }
+
+        unsavedEditors.forEach { $0.discardUnsavedChanges() }
+        return .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         TextSelectionMonitor.shared.stopMonitoring()
         PluginManager.shared.stopWatchingPluginDirectories()

@@ -13,6 +13,95 @@ final class PluginEditorWindowTests: XCTestCase {
         super.tearDown()
     }
 
+    func testDirtyStateKeepsEditsMadeAfterAsyncSaveCheckpoint() {
+        var state = PluginEditorDirtyState()
+        XCTAssertFalse(state.hasUnsavedChanges)
+
+        state.recordUserEdit()
+        let saveCheckpoint = state.currentRevision
+        state.recordUserEdit()
+        state.recordPersistenceSuccess(through: saveCheckpoint)
+
+        XCTAssertTrue(state.hasUnsavedChanges)
+
+        state.recordPersistenceSuccess(through: state.currentRevision)
+        XCTAssertFalse(state.hasUnsavedChanges)
+    }
+
+    @MainActor
+    func testEditorStartsCleanAndProgrammaticPresentationRefreshDoesNotMarkDirty() {
+        let editor = PluginEditorWindow()
+
+        XCTAssertFalse(editor.hasUnsavedChanges)
+        XCTAssertFalse(editor.isDocumentEdited)
+
+        editor.refreshTypePresentation()
+
+        XCTAssertFalse(editor.hasUnsavedChanges)
+        XCTAssertFalse(editor.isDocumentEdited)
+        editor.close()
+    }
+
+    @MainActor
+    func testEditorTextChangeMarksDirtyAndExplicitDiscardClearsIt() {
+        let editor = PluginEditorWindow()
+
+        editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+
+        XCTAssertTrue(editor.hasUnsavedChanges)
+        XCTAssertTrue(editor.isDocumentEdited)
+
+        editor.discardUnsavedChanges()
+
+        XCTAssertFalse(editor.hasUnsavedChanges)
+        XCTAssertFalse(editor.isDocumentEdited)
+        editor.close()
+    }
+
+    @MainActor
+    func testTypeIconAndShortcutUserActionsMarkEditorDirty() throws {
+        let editor = PluginEditorWindow()
+        let contentView = try XCTUnwrap(editor.contentView)
+        let popUps = contentView.subviews.compactMap { $0 as? NSPopUpButton }
+        let typePopUp = try XCTUnwrap(
+            popUps.first { $0.itemTitles.contains("Simulate Key Combo".localized) }
+        )
+        let iconPopUp = try XCTUnwrap(
+            popUps.first { $0.itemTitles.contains("bolt.fill") }
+        )
+
+        typePopUp.selectItem(at: 1)
+        XCTAssertFalse(editor.hasUnsavedChanges)
+        XCTAssertTrue(typePopUp.sendAction(typePopUp.action, to: typePopUp.target))
+        XCTAssertTrue(editor.hasUnsavedChanges)
+
+        editor.discardUnsavedChanges()
+        iconPopUp.selectItem(at: max(0, iconPopUp.numberOfItems - 1))
+        XCTAssertFalse(editor.hasUnsavedChanges)
+        XCTAssertTrue(iconPopUp.sendAction(iconPopUp.action, to: iconPopUp.target))
+        XCTAssertTrue(editor.hasUnsavedChanges)
+
+        editor.discardUnsavedChanges()
+        typePopUp.selectItem(at: 3)
+        XCTAssertTrue(typePopUp.sendAction(typePopUp.action, to: typePopUp.target))
+        editor.discardUnsavedChanges()
+        let shortcutField = try XCTUnwrap(
+            contentView.subviews.compactMap { $0 as? ShortcutRecorderField }.first
+        )
+        let event = try makeKeyDownEvent(
+            modifiers: [.command, .shift],
+            characters: "k",
+            keyCode: 0x28
+        )
+
+        XCTAssertTrue(shortcutField.becomeFirstResponder())
+        shortcutField.keyDown(with: event)
+
+        XCTAssertTrue(editor.hasUnsavedChanges)
+        XCTAssertTrue(editor.isDocumentEdited)
+        editor.close()
+    }
+
     @MainActor
     func testShortcutRecorderWritesNewCombinationToRawValue() throws {
         let recorder = ShortcutRecorderField(frame: .zero)

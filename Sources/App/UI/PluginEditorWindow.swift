@@ -198,6 +198,31 @@ class ShortcutRecorderField: NSView {
     }
 }
 
+/// Tracks which editor revision has actually reached disk.
+///
+/// A revision checkpoint lets an asynchronous save finish without clearing a
+/// newer edit that the user made while that save was in flight.
+struct PluginEditorDirtyState: Equatable, Sendable {
+    private(set) var currentRevision: UInt64 = 0
+    private(set) var persistedRevision: UInt64 = 0
+
+    var hasUnsavedChanges: Bool {
+        currentRevision != persistedRevision
+    }
+
+    mutating func recordUserEdit() {
+        currentRevision &+= 1
+    }
+
+    mutating func recordPersistenceSuccess(through revision: UInt64) {
+        persistedRevision = revision
+    }
+
+    mutating func discardAllChanges() {
+        persistedRevision = currentRevision
+    }
+}
+
 /// A visual editor window for creating and modifying OpenFire plugins
 final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegate {
     static let maximumEditableScriptBytes = 1 * 1024 * 1024
@@ -243,6 +268,12 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
     private var customIconURL: URL?
     private var editingPluginTrustStatus: Bool?
     private var trustStatusGeneration: UInt64 = 0
+    private var dirtyState = PluginEditorDirtyState()
+    private var isSaving = false
+
+    var hasUnsavedChanges: Bool {
+        dirtyState.hasUnsavedChanges
+    }
 
     /// Initializes the editor. If `plugin` is nil, it starts in "New Plugin" mode.
     init(plugin: Plugin? = nil) {
@@ -264,6 +295,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         
         setupUI()
         populate(with: plugin)
+        discardUnsavedChanges()
         refreshEditingPluginTrustStatus()
     }
 
@@ -279,7 +311,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         let applyTrustStatus: @MainActor @Sendable (Bool) -> Void = { [weak self] isTrusted in
             guard let self, self.trustStatusGeneration == generation else { return }
             self.editingPluginTrustStatus = isTrusted
-            self.typeChanged()
+            self.refreshTypePresentation()
         }
         DispatchQueue.global(qos: .userInitiated).async {
             let isTrusted = PluginManager.shared.isExecutionTrusted(for: plugin)
@@ -366,6 +398,8 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         // Icon
         let iconLabel = makeLabel("Icon:".localized)
         iconPopUp.translatesAutoresizingMaskIntoConstraints = false
+        iconPopUp.target = self
+        iconPopUp.action = #selector(iconChanged)
         cv.addSubview(iconPopUp)
         
         let customIconButton = NSButton(title: "Custom...".localized, target: self, action: #selector(chooseCustomIcon))
@@ -458,6 +492,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         shortcutField.translatesAutoresizingMaskIntoConstraints = false
         shortcutField.isHidden = true
         shortcutField.onKeyComboRecorded = { [weak self] _, _ in
+            self?.recordUserEdit()
             self?.updateSaveAvailability()
         }
         cv.addSubview(shortcutField)
@@ -587,7 +622,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             ])
         }
         
-        typeChanged() // Init labels
+        refreshTypePresentation() // Init labels
     }
     
     private func populate(with plugin: Plugin?) {
@@ -652,7 +687,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             typePopUp.selectItem(at: 6)
             contentTextView.string = ""
         }
-        typeChanged()
+        refreshTypePresentation()
         updateSaveAvailability()
     }
 
@@ -677,6 +712,11 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
     }
     
     @objc private func typeChanged() {
+        recordUserEdit()
+        refreshTypePresentation()
+    }
+
+    func refreshTypePresentation() {
         let index = typePopUp.indexOfSelectedItem
         contentViewScroll.isHidden = false
         shortcutField.isHidden = true
@@ -767,11 +807,27 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
     }
 
     func controlTextDidChange(_ obj: Notification) {
+        recordUserEdit()
         updateSaveAvailability()
     }
 
     func textDidChange(_ notification: Notification) {
+        recordUserEdit()
         updateSaveAvailability()
+    }
+
+    @objc private func iconChanged() {
+        recordUserEdit()
+    }
+
+    private func recordUserEdit() {
+        dirtyState.recordUserEdit()
+        isDocumentEdited = dirtyState.hasUnsavedChanges
+    }
+
+    func discardUnsavedChanges() {
+        dirtyState.discardAllChanges()
+        isDocumentEdited = false
     }
 
     static func validationMessage(
@@ -858,7 +914,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
 
     private func updateSaveAvailability() {
         let validationMessage = currentValidationMessage()
-        saveButton.isEnabled = (validationMessage == nil)
+        saveButton.isEnabled = !isSaving && validationMessage == nil
         saveButton.toolTip = validationMessage
 
         let baseStatus = {
@@ -882,6 +938,8 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
     }
     
     @objc private func saveClicked() {
+        guard !isSaving else { return }
+
         let name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
         let enName = enNameField.stringValue.trimmingCharacters(in: .whitespaces)
         let desc = descField.stringValue.trimmingCharacters(in: .whitespaces)
@@ -983,13 +1041,36 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             return
         }
 
+        let persistenceRevision = dirtyState.currentRevision
+        let identifierWasEnabled = identifierField.isEnabled
+        isSaving = true
+        identifierField.isEnabled = false
+        updateSaveAvailability()
+
         let finishSave: @MainActor @Sendable (String?) -> Void = { [weak self] errorMessage in
             guard let self else { return }
+            self.isSaving = false
             if let errorMessage {
+                self.identifierField.isEnabled = identifierWasEnabled
+                self.updateSaveAvailability()
                 self.showError(String(format: "Failed to write plugin: %@".localized, errorMessage))
             } else {
                 PluginManager.shared.reloadPlugins()
-                self.close()
+                self.dirtyState.recordPersistenceSuccess(through: persistenceRevision)
+                self.isDocumentEdited = self.dirtyState.hasUnsavedChanges
+
+                if self.dirtyState.hasUnsavedChanges {
+                    if editingPluginWasNil {
+                        self.editingPlugin = PluginManager.shared.plugins.first { $0.id == id }
+                            ?? PluginLoader.load(from: bundleURL)
+                        self.title = "Edit Plugin".localized
+                    }
+                    self.identifierField.isEnabled = false
+                    self.refreshEditingPluginTrustStatus()
+                    self.updateSaveAvailability()
+                } else {
+                    self.close()
+                }
             }
         }
 
@@ -1255,6 +1336,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
                 if let errorMessage {
                     self.showError(String(format: "Delete Failed: %@".localized, errorMessage))
                 } else {
+                    self.discardUnsavedChanges()
                     self.close()
                 }
             }
@@ -1297,6 +1379,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             }
             iconPopUp.menu?.insertItem(item, at: 0)
             iconPopUp.selectItem(at: 0)
+            recordUserEdit()
         }
     }
 

@@ -56,8 +56,16 @@
 
 1. 在 [Releases](https://github.com/Wooden-Robot/OpenFire/releases) 页面下载最新的 `.dmg` 安装包。
 2. 双击打开，将 **OpenFire** 图标拖入 `Applications` 应用程序文件夹。
-3. 运行 OpenFire。
+3. 运行 OpenFire。社区版使用 ad-hoc 签名且未经 Apple 公证，首次启动可能被 macOS 拦截；请前往 **系统设置 → 隐私与安全**，为 OpenFire 选择**仍要打开**。
 4. 前往 **系统设置 → 隐私与安全 → 辅助功能**，为 OpenFire 授予必须的辅助功能权限（用于监听文本选中事件）。
+
+### 自动更新
+
+在菜单栏选择 **检查更新...**。发现已签名的新版本后，先点击 **安装更新**；下载并验证完成后，Sparkle 会按默认流程再次显示 **安装并重启** 确认，随后原子安装并重启到新版本。菜单中的自动检查开关仍可随时启用或关闭。如果插件编辑器中存在未保存内容，OpenFire 会阻止退出，直到你保存或明确丢弃这些修改。
+
+OpenFire 社区版目前不使用 Developer ID。更新真实性由 App 内置的 Ed25519 公钥保证：安装前会同时校验 appcast 和下载归档。由于 ad-hoc 签名无法提供稳定的 Apple 身份，版本更新后 macOS 可能要求重新授予辅助功能或自动化权限。
+
+`v0.3.22` 及更早版本尚未内置可信更新公钥，因此需要最后手动安装一次 DMG；之后的版本才能自动更新。
 
 ### 触发方式说明
 
@@ -234,17 +242,19 @@ swift test --parallel    # 并行运行回归检查
 make package             # 本地验证用 .app 与 .dmg
 ```
 
-`make package` 只生成本地验证产物，不执行发布版本校验或公证。正式分发必须使用独立的 `make release` 门禁：要么在准确的 `vX.Y.Z` tag 上执行，要么显式传入 `VERSION=X.Y.Z`；该版本必须与源码及打包后 App 的 `Info.plist` 两个版本字段一致。同时还需提供 Developer ID Application 身份和已配置的 `notarytool` 钥匙串配置：
+`make package` 生成 ad-hoc 签名的社区版 `.app` 与 `.dmg`，但不执行发布版本校验。可发布的社区版必须在干净提交及准确的 `vX.Y.Z` tag 上使用独立的 `make release` 门禁，并显式传入 `VERSION=X.Y.Z`；该版本必须同时匹配 tag、源码与打包后 App 的 `Info.plist` 两个版本字段：
 
 ```bash
-make release VERSION=0.3.22 \
-  CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
-  NOTARYTOOL_PROFILE="openfire-notary"
+make release VERSION=0.3.23 SPARKLE_ACCOUNT="OpenFire"
 ```
 
-`make release` 会在版本或任一凭据不合法时提前失败，并在公证前再次核对打包后 App 的版本。检查通过后，它会使用所需的 Apple Events 自动化权限签名 App，确认签名产物保留了该权限及对应的隐私用途说明，再签名 DMG、等待公证、装订票据，并验证两份签名和磁盘镜像。本地 ad-hoc 签名流程保持不变，不会嵌入该 Hardened Runtime entitlement。
+`make release` 会在仓库状态、版本、tag 或 Sparkle 配置不合法时提前失败，并再次核对打包后 App 的版本。检查通过后，它会对 Sparkle 嵌套 helper 和主 App 执行 ad-hoc 签名，验证 Apple Events 权限、通用架构以及最终 DMG 内的 App；随后使用钥匙串中 `OpenFire` 账户保存的 Ed25519 私钥生成 `.build/appcast.xml`。门禁会把 feed 与 enclosure 签名、归档长度、版本和 URL 全部与这份最终 DMG 逐项绑定。Ed25519 私钥是社区版发布的信任根，必须安全备份。
 
-CI 固定使用 Xcode 16.4，先执行常规测试，再启用 actor 数据竞争检查实际运行测试，并用正反向签名样例验证发布权限门禁、对应用构建强制执行严格并发诊断，随后构建 SwiftPM Release 产物，并对 ad-hoc 签名的 universal App/DMG 做完整冒烟验证。每周定时任务和手动触发任务会在 Thread Sanitizer 下运行完整测试。
+先创建一个**不含资产的草稿 GitHub Release**，再执行 `make publish-release-assets VERSION=X.Y.Z SPARKLE_ACCOUNT=OpenFire`。该目标拒绝覆盖已有资产，在 Release 仍不可见时上传 DMG 与 appcast，核对两个远端 SHA-256 摘要后才公开 Release，避免客户端看到只上传一半或互不匹配的更新资产。
+
+这套流程明确不使用 Developer ID 签名与 Apple 公证，因此无法消除首次启动警告，也无法保证 TCC 权限在更新后持续有效；Ed25519 负责的是更新真实性，而不是建立 Apple 信任的应用身份。
+
+CI 固定使用 Xcode 16.4，先执行常规测试，再启用 actor 数据竞争检查实际运行测试，并用正反向样例验证发布权限与 Sparkle 更新门禁、对应用构建强制执行严格并发诊断，随后构建 SwiftPM Release 产物，并对 ad-hoc 签名的 universal App/DMG 做完整冒烟验证。每周定时任务和手动触发任务会在 Thread Sanitizer 下运行完整测试。
 
 ---
 
@@ -253,6 +263,7 @@ CI 固定使用 Xcode 16.4，先执行常规测试，再启用 actor 数据竞�
 - **语言与框架**: Swift 5.9, AppKit, Objective-C Runtime 辅助
 - **渲染引擎**: Core Animation (`CAShapeLayer`, `CATextLayer`, `CATransaction` 无阻塞动画)
 - **底层监听**: CGEventTap, macOS Accessibility API (`AXUIElement`, `AXObserver`)
+- **自动更新**: Sparkle 2，使用 Ed25519 签名更新包与 appcast
 - **并发控制**: GCD (`DispatchQueue.global`) 与 Swift Concurrency 异步加载
 
 ---

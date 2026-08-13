@@ -15,6 +15,7 @@ final class StatusBarController: NSObject {
     private var excludeAppItem: NSMenuItem?
     private var currentAppPluginsItem: NSMenuItem?
     private var perAppOverridesItem: NSMenuItem?
+    private var checkUpdatesItem: NSMenuItem?
     private var blacklistWindow: BlacklistWindow?
     private var diagnosticsWindow: DiagnosticsWindow?
     private var currentAppPluginsWindow: CurrentAppPluginsWindow?
@@ -293,6 +294,8 @@ final class StatusBarController: NSObject {
         // Check for Updates
         let checkUpdatesItem = NSMenuItem(title: "Check for Updates...".localized, action: #selector(checkForUpdates), keyEquivalent: "")
         checkUpdatesItem.target = self
+        checkUpdatesItem.isEnabled = UpdateChecker.shared.canCheckForUpdates
+        self.checkUpdatesItem = checkUpdatesItem
         menu.addItem(checkUpdatesItem)
         
         menu.addItem(NSMenuItem.separator())
@@ -400,13 +403,12 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func checkForUpdates() {
-        UpdateChecker.shared.checkForUpdates(showUpToDate: true, showErrors: true)
+        UpdateChecker.shared.checkForUpdates()
     }
 
     @objc private func toggleAutoCheckUpdates() {
-        let defaults = UserDefaults.standard
         let enabled = UpdateChecker.shared.isAutoCheckEnabled()
-        defaults.set(!enabled, forKey: UpdateChecker.autoCheckEnabledKey)
+        UpdateChecker.shared.setAutoCheckEnabled(!enabled)
         rebuildMenu()
     }
     
@@ -581,6 +583,8 @@ final class StatusBarController: NSObject {
 
 extension StatusBarController: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
+        checkUpdatesItem?.isEnabled = UpdateChecker.shared.canCheckForUpdates
+
         let perAppOverrideCount = PluginManager.shared.allPerAppDisabledPluginOverrides().count
         perAppOverridesItem?.title = perAppOverrideCount > 0
             ? String(format: "Per-App Overrides... (%d)".localized, perAppOverrideCount)
