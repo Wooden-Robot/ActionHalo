@@ -6,7 +6,7 @@
 
 [English](./README.md) • [**简体中文**](./README_zh.md)
 
-[![macOS 13.0+](https://img.shields.io/badge/macOS-13.0+-000000?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com/macos)
+[![macOS 12.0+](https://img.shields.io/badge/macOS-12.0+-000000?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com/macos)
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white)](https://developer.apple.com/swift)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
@@ -51,6 +51,11 @@
 ---
 
 ## 🚀 安装指南
+
+### 系统要求
+
+- **macOS 12 Monterey 或更高版本**。不支持 macOS 11 Big Sur 及更早版本。
+- Universal 版本同时支持 Apple 芯片和 Intel 芯片 Mac。
 
 ### 安装步骤
 
@@ -245,7 +250,7 @@ make package             # 本地验证用 .app 与 .dmg
 `make package` 生成 ad-hoc 签名的社区版 `.app` 与 `.dmg`，但不执行发布版本校验。可发布的社区版必须在干净提交及准确的 `vX.Y.Z` tag 上使用独立的 `make release` 门禁，并显式传入 `VERSION=X.Y.Z`；该版本必须同时匹配 tag、源码与打包后 App 的 `Info.plist` 两个版本字段：
 
 ```bash
-make release VERSION=0.3.24 SPARKLE_ACCOUNT="OpenFire"
+make release VERSION=0.3.25 SPARKLE_ACCOUNT="OpenFire"
 ```
 
 `make release` 会在仓库状态、版本、tag 或 Sparkle 配置不合法时提前失败，并再次核对打包后 App 的版本。检查通过后，它会对 Sparkle 嵌套 helper 和主 App 执行 ad-hoc 签名，验证 Apple Events 权限、通用架构以及最终 DMG 内的 App；随后使用钥匙串中 `OpenFire` 账户保存的 Ed25519 私钥生成 `.build/appcast.xml`。门禁会把 feed 与 enclosure 签名、归档长度、版本和 URL 全部与这份最终 DMG 逐项绑定。Ed25519 私钥是社区版发布的信任根，必须安全备份。

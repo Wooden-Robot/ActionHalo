@@ -1,7 +1,7 @@
 XCODE_SDK ?= $(shell xcrun --sdk macosx --show-sdk-path)
 SWIFTC ?= $(shell xcrun --find swiftc)
-TARGET_X86 = x86_64-apple-macosx13.0
-TARGET_ARM = arm64-apple-macosx13.0
+TARGET_X86 = x86_64-apple-macosx12.0
+TARGET_ARM = arm64-apple-macosx12.0
 SWIFT_BUILD_FLAGS ?= -O -whole-module-optimization
 VERSION ?=
 ARTIFACT_PLIST ?=

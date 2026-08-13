@@ -5,7 +5,7 @@ let package = Package(
     name: "OpenFire",
     defaultLocalization: "en",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v12)
     ],
     products: [
         .executable(name: "OpenFire", targets: ["OpenFire"])

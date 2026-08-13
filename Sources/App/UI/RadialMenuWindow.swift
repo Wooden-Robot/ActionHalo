@@ -23,7 +23,7 @@ final class RadialMenuWindow: NSPanel {
     private var isDismissing = false
     private var dismissalRequested = false
     private let dismissDeadzoneRadius: CGFloat = 16
-    private let outsideDismissPadding: CGFloat = 90
+    private let outsideDismissPadding: CGFloat = 60
     private let compactWindowPadding: CGFloat = 28
     
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {

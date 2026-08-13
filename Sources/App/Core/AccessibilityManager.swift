@@ -1,12 +1,11 @@
 import Cocoa
 import ApplicationServices
 import Carbon
-import os
 
 /// Thread-safe request ownership shared by the main actor and the serialized
 /// pasteboard worker.
 final class CopyFallbackRequestCoordinator: Sendable {
-    private let activeRequestID = OSAllocatedUnfairLock<UUID?>(initialState: nil)
+    private let activeRequestID = LockedState<UUID?>(initialState: nil)
 
     func beginRequest() -> UUID {
         let requestID = UUID()
@@ -65,7 +64,7 @@ private final class PasteboardSnapshotFileStore: Sendable {
 
     let directoryURL: URL
 
-    private let cleanupState = OSAllocatedUnfairLock(initialState: CleanupState())
+    private let cleanupState = LockedState(initialState: CleanupState())
 
     init?(fileManager: FileManager = .default) {
         directoryURL = fileManager.temporaryDirectory.appendingPathComponent(
@@ -189,7 +188,7 @@ private final class PasteboardSnapshotDataProviderRegistry: Sendable {
     static let shared = PasteboardSnapshotDataProviderRegistry()
 
     private let retainedProviders =
-        OSAllocatedUnfairLock<[UUID: PasteboardSnapshotDataProvider]>(
+        LockedState<[UUID: PasteboardSnapshotDataProvider]>(
             initialState: [:]
         )
 

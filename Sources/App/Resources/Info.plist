@@ -11,13 +11,13 @@
     <key>CFBundleIdentifier</key>
     <string>com.openfire.app</string>
     <key>CFBundleVersion</key>
-    <string>0.3.24</string>
+    <string>0.3.25</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.3.24</string>
+    <string>0.3.25</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
+    <string>12.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSAccessibilityUsageDescription</key>
