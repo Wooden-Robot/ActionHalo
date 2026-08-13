@@ -245,7 +245,7 @@ make package             # local verification .app and .dmg
 `make package` produces an ad-hoc-signed community `.app` and `.dmg` without applying release-version checks. A publishable community build must use the separate `make release` gate from a clean commit carrying the exact `vX.Y.Z` tag. Pass `VERSION=X.Y.Z` explicitly; it must match the tag and both version fields in the source and packaged app `Info.plist`:
 
 ```bash
-make release VERSION=0.3.23 SPARKLE_ACCOUNT="OpenFire"
+make release VERSION=0.3.24 SPARKLE_ACCOUNT="OpenFire"
 ```
 
 `make release` fails before packaging if the repository, version, tag, or Sparkle configuration is invalid. It ad-hoc signs Sparkle's nested helpers and the app, verifies the Apple Events entitlement and universal binaries, mounts the final DMG read-only, and verifies the contained app. It then uses the private Ed25519 key stored under the `OpenFire` Keychain account to create `.build/appcast.xml`. The feed and enclosure signatures, exact archive length, version, and URL are all verified against that final DMG. The Ed25519 private key is the community release trust root and must be backed up securely.

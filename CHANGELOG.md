@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.24
+- 发布自动更新验证版本，用于完整测试从 v0.3.23 检测更新、下载、Ed25519 签名校验、安装并重启的流程。
+- 除版本升级与发布说明外，不包含新的功能行为变更。
+
+- Released an automatic-update validation build for end-to-end testing from v0.3.23 through update detection, download, Ed25519 verification, installation, and relaunch.
+- Contains no new functional behavior changes beyond the version bump and release notes.
+
 ## v0.3.23
 - 接入 Sparkle 2 安全自动更新：检测到新版本后可在应用内下载、验证，经标准“安装并重启”确认后原子安装并重启；保留原有自动检查开关并迁移已有偏好，同时防止更新重启丢失插件编辑器的未保存内容。
 - 固定 Sparkle 版本与 revision，启用 Ed25519 更新包签名、签名 appcast、解包前校验，并为框架嵌入、嵌套签名和发布资产增加门禁。
