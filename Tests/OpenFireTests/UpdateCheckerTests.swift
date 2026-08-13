@@ -1,119 +1,104 @@
 import XCTest
 @testable import OpenFire
 
-final class UpdateCheckerTests: GlobalStateTestCase {
+final class UpdateCheckerTests: XCTestCase {
+    @MainActor
+    private final class FakeUpdateDriver: UpdateDriving {
+        var automaticallyChecksForUpdates: Bool
+        var canCheckForUpdates: Bool
+        private(set) var checkCount = 0
+        private(set) var startCount = 0
+        private(set) var automaticChecksWhenStarted: Bool?
+
+        init(automaticallyChecksForUpdates: Bool, canCheckForUpdates: Bool = true) {
+            self.automaticallyChecksForUpdates = automaticallyChecksForUpdates
+            self.canCheckForUpdates = canCheckForUpdates
+        }
+
+        func checkForUpdates() {
+            checkCount += 1
+        }
+
+        func startUpdater() {
+            startCount += 1
+            automaticChecksWhenStarted = automaticallyChecksForUpdates
+        }
+    }
+
+    private var defaults: UserDefaults!
+    private var suiteName: String!
+
     override func setUp() {
         super.setUp()
-        isolateStandardUserDefaults(
-            keys: [UpdateChecker.autoCheckEnabledKey, "LastNotifiedVersion"]
-        )
+        suiteName = "OpenFire.UpdateCheckerTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+        defaults.removePersistentDomain(forName: suiteName)
     }
 
     override func tearDown() {
-        UpdateChecker.shared.finishUpdateCheck()
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults = nil
+        suiteName = nil
         super.tearDown()
     }
 
-    func testNormalizeVersionStripsPrefixAndSuffix() {
-        let checker = UpdateChecker.shared
+    @MainActor
+    func testLegacyAutomaticCheckPreferenceMigratesIntoSparkleOnce() {
+        defaults.set(false, forKey: UpdateChecker.legacyAutoCheckEnabledKey)
+        let driver = FakeUpdateDriver(automaticallyChecksForUpdates: true)
 
-        XCTAssertEqual(checker.normalizeVersion("v1.2.3"), "1.2.3")
-        XCTAssertEqual(checker.normalizeVersion("V2.0.0-beta"), "2.0.0")
-        XCTAssertEqual(checker.normalizeVersion("3.4.5-rc.1"), "3.4.5")
+        let checker = UpdateChecker(driver: driver, defaults: defaults)
+
+        XCTAssertFalse(checker.isAutoCheckEnabled())
+        XCTAssertFalse(driver.automaticallyChecksForUpdates)
+        XCTAssertEqual(driver.automaticChecksWhenStarted, false)
+        XCTAssertEqual(driver.startCount, 1)
+        XCTAssertNil(defaults.object(forKey: UpdateChecker.legacyAutoCheckEnabledKey))
     }
 
-    func testNormalizeVersionHandlesWhitespace() {
-        let checker = UpdateChecker.shared
+    @MainActor
+    func testSparkleDefaultIsPreservedWithoutLegacyPreference() {
+        let driver = FakeUpdateDriver(automaticallyChecksForUpdates: true)
 
-        XCTAssertEqual(checker.normalizeVersion("  v0.9.0  "), "0.9.0")
-        XCTAssertEqual(checker.normalizeVersion(" 1.0.1 "), "1.0.1")
-    }
+        let checker = UpdateChecker(driver: driver, defaults: defaults)
 
-    func testUserFriendlyErrorMessageMapsNetworkErrors() {
-        let checker = UpdateChecker.shared
-
-        let noInternet = NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet, userInfo: nil)
-        XCTAssertEqual(checker.userFriendlyErrorMessage(for: noInternet), "No Internet Connection".localized)
-
-        let timeout = NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut, userInfo: nil)
-        XCTAssertEqual(checker.userFriendlyErrorMessage(for: timeout), "Request Timed Out".localized)
-    }
-
-    func testUserFriendlyErrorMessageFallsBackToLocalizedDescription() {
-        let checker = UpdateChecker.shared
-
-        let error = NSError(domain: "TestDomain", code: 1, userInfo: [NSLocalizedDescriptionKey: "Boom"])
-        XCTAssertEqual(checker.userFriendlyErrorMessage(for: error), "Boom")
-    }
-
-    func testAutoCheckEnabledDefaultsToTrueAndPersists() {
-        let checker = UpdateChecker.shared
-        let defaults = UserDefaults.standard
-        let key = UpdateChecker.autoCheckEnabledKey
-        let existingValue = defaults.object(forKey: key)
-        defer {
-            if let existingValue = existingValue {
-                defaults.set(existingValue, forKey: key)
-            } else {
-                defaults.removeObject(forKey: key)
-            }
-        }
-
-        defaults.removeObject(forKey: key)
         XCTAssertTrue(checker.isAutoCheckEnabled())
+        XCTAssertTrue(driver.automaticallyChecksForUpdates)
+        XCTAssertEqual(driver.automaticChecksWhenStarted, true)
+        XCTAssertEqual(driver.startCount, 1)
+    }
 
-        defaults.set(false, forKey: key)
+    @MainActor
+    func testSettingAutomaticChecksUpdatesSparkleOwnedPreference() {
+        let driver = FakeUpdateDriver(automaticallyChecksForUpdates: true)
+        let checker = UpdateChecker(driver: driver, defaults: defaults)
+
+        checker.setAutoCheckEnabled(false)
         XCTAssertFalse(checker.isAutoCheckEnabled())
 
-        defaults.set(true, forKey: key)
+        checker.setAutoCheckEnabled(true)
         XCTAssertTrue(checker.isAutoCheckEnabled())
     }
 
-    func testLatestReleaseAPIURLMatchesPublishedRepository() {
-        let checker = UpdateChecker.shared
+    @MainActor
+    func testManualCheckStartsSparkleSessionWhenAvailable() {
+        let driver = FakeUpdateDriver(automaticallyChecksForUpdates: true)
+        let checker = UpdateChecker(driver: driver, defaults: defaults)
 
-        XCTAssertEqual(
-            checker.latestReleaseAPIURL()?.absoluteString,
-            "https://api.github.com/repos/Wooden-Robot/OpenFire/releases/latest"
+        XCTAssertTrue(checker.checkForUpdates())
+        XCTAssertEqual(driver.checkCount, 1)
+    }
+
+    @MainActor
+    func testManualCheckIsRejectedWhileSparkleCannotStartAnotherSession() {
+        let driver = FakeUpdateDriver(
+            automaticallyChecksForUpdates: true,
+            canCheckForUpdates: false
         )
+        let checker = UpdateChecker(driver: driver, defaults: defaults)
+
+        XCTAssertFalse(checker.checkForUpdates())
+        XCTAssertEqual(driver.checkCount, 0)
     }
 
-    func testBeginUpdateCheckRejectsConcurrentChecksUntilFinished() {
-        let checker = UpdateChecker.shared
-
-        XCTAssertTrue(checker.beginUpdateCheck())
-        XCTAssertFalse(checker.beginUpdateCheck())
-
-        checker.finishUpdateCheck()
-
-        XCTAssertTrue(checker.beginUpdateCheck())
-    }
-
-    func testSetLastNotifiedVersionCanStoreAndClearValue() {
-        let checker = UpdateChecker.shared
-
-        checker.setLastNotifiedVersion("1.2.3")
-        XCTAssertEqual(checker.lastNotifiedVersion(), "1.2.3")
-
-        checker.setLastNotifiedVersion(nil)
-        XCTAssertNil(checker.lastNotifiedVersion())
-    }
-
-    func testValidatedDownloadURLAllowsOnlyHTTPSGitHubHosts() {
-        let checker = UpdateChecker.shared
-
-        XCTAssertEqual(
-            checker.validatedDownloadURL("https://github.com/Wooden-Robot/OpenFire/releases/tag/v1.0.0")?.host,
-            "github.com"
-        )
-        XCTAssertEqual(
-            checker.validatedDownloadURL("https://objects.githubusercontent.com/github-production-release-asset/example")?.host,
-            "objects.githubusercontent.com"
-        )
-        XCTAssertNil(checker.validatedDownloadURL("http://github.com/Wooden-Robot/OpenFire/releases/tag/v1.0.0"))
-        XCTAssertNil(checker.validatedDownloadURL("https://github.com.evil.example/OpenFire.dmg"))
-        XCTAssertNil(checker.validatedDownloadURL("https://example.com/OpenFire.dmg"))
-        XCTAssertNil(checker.validatedDownloadURL("https://user:password@github.com/OpenFire.dmg"))
-        XCTAssertNil(checker.validatedDownloadURL("https://github.com:8443/OpenFire.dmg"))
-    }
 }

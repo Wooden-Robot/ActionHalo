@@ -56,8 +56,16 @@ Built-in automatic blacklist management UI. Supports dragging and dropping apps,
 
 1. Download the latest `.dmg` from the [Releases](https://github.com/Wooden-Robot/OpenFire/releases) page.
 2. Open the downloaded file and drag the **OpenFire** app into your `Applications` folder.
-3. Launch OpenFire.
+3. Launch OpenFire. Community builds are ad-hoc signed rather than Apple-notarized, so on first launch macOS may block them. Open **System Settings → Privacy & Security** and choose **Open Anyway** for OpenFire.
 4. Open **System Settings → Privacy & Security → Accessibility** and grant permissions to OpenFire (required for text selection detection).
+
+### Updates
+
+Use **Check for Updates...** from the menu bar. Choose **Install Update** when a signed update is offered; after the download is verified and ready, Sparkle asks for the standard **Install and Relaunch** confirmation, installs the app atomically, then relaunches the updated version. Automatic checks can still be enabled or disabled from the menu. If a plugin editor has unsaved changes, OpenFire blocks the quit until you save them or explicitly discard them.
+
+OpenFire community builds do not use a Developer ID. Update authenticity comes from the Ed25519 public key embedded in the app, which verifies both the appcast and the downloaded archive before installation. Because ad-hoc signatures do not provide a stable Apple identity, macOS may ask you to grant Accessibility or Automation access again after an update.
+
+`v0.3.22` and earlier do not contain the trusted updater key, so they require one final manual DMG installation before later releases can update themselves.
 
 ### How Triggering Works
 
@@ -234,17 +242,19 @@ swift test --parallel    # parallel runner regression check
 make package             # local verification .app and .dmg
 ```
 
-`make package` always produces a local verification artifact and never applies release-version checks or notarization. A distributable build must use the separate `make release` gate. Run it from an exact `vX.Y.Z` tag, or pass `VERSION=X.Y.Z` explicitly; that version must match both version fields in the source and packaged app `Info.plist`. The release also requires a Developer ID Application identity and a configured `notarytool` keychain profile:
+`make package` produces an ad-hoc-signed community `.app` and `.dmg` without applying release-version checks. A publishable community build must use the separate `make release` gate from a clean commit carrying the exact `vX.Y.Z` tag. Pass `VERSION=X.Y.Z` explicitly; it must match the tag and both version fields in the source and packaged app `Info.plist`:
 
 ```bash
-make release VERSION=0.3.22 \
-  CODESIGN_IDENTITY="Developer ID Application: Example (TEAMID)" \
-  NOTARYTOOL_PROFILE="openfire-notary"
+make release VERSION=0.3.23 SPARKLE_ACCOUNT="OpenFire"
 ```
 
-`make release` fails before packaging if the version or either credential is invalid. It checks the packaged app version again before notarization, signs the app with its required Apple Events automation entitlement, verifies that the signed artifact retained that entitlement and its matching privacy description, then signs the DMG, waits for notarization, staples the ticket, and validates both signatures and the disk image. Local ad-hoc signing remains unchanged and does not embed the Hardened Runtime entitlement.
+`make release` fails before packaging if the repository, version, tag, or Sparkle configuration is invalid. It ad-hoc signs Sparkle's nested helpers and the app, verifies the Apple Events entitlement and universal binaries, mounts the final DMG read-only, and verifies the contained app. It then uses the private Ed25519 key stored under the `OpenFire` Keychain account to create `.build/appcast.xml`. The feed and enclosure signatures, exact archive length, version, and URL are all verified against that final DMG. The Ed25519 private key is the community release trust root and must be backed up securely.
 
-CI pins Xcode 16.4, runs the tests normally and again with actor data-race checks, exercises the release entitlement gate against positive and negative signed fixtures, enforces strict-concurrency diagnostics on the application build, builds the SwiftPM release executable, and smoke-tests an ad-hoc universal app/DMG package. A weekly or manually dispatched job runs the full suite under Thread Sanitizer.
+Create the matching GitHub Release as a **draft with no assets**, then run `make publish-release-assets VERSION=X.Y.Z SPARKLE_ACCOUNT=OpenFire`. It refuses replacement, uploads the DMG and appcast while the Release remains hidden, checks both remote SHA-256 digests, and only then publishes the Release. This prevents update clients from observing a half-published or mixed asset pair.
+
+This workflow intentionally does not use Developer ID signing or Apple notarization. Consequently, it cannot remove macOS's first-launch warning or guarantee that TCC permissions survive an update; Ed25519 protects update authenticity but does not create an Apple-trusted application identity.
+
+CI pins Xcode 16.4, runs the tests normally and again with actor data-race checks, exercises the release entitlement and Sparkle update gates against positive and negative fixtures, enforces strict-concurrency diagnostics on the application build, builds the SwiftPM release executable, and smoke-tests an ad-hoc universal app/DMG package. A weekly or manually dispatched job runs the full suite under Thread Sanitizer.
 
 ---
 
@@ -253,6 +263,7 @@ CI pins Xcode 16.4, runs the tests normally and again with actor data-race check
 - **Language:** Swift 5.9, AppKit, Objective-C Runtime
 - **Rendering:** Core Animation (`CAShapeLayer`, `CATextLayer`, `CATransaction`)
 - **Event Monitoring:** CGEventTap, macOS Accessibility API (`AXUIElement`, `AXObserver`)
+- **Updates:** Sparkle 2 with Ed25519-signed archives and appcasts
 - **Concurrency:** GCD (`DispatchQueue.global`) and Swift Concurrency
 
 ---

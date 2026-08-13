@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+[[ "${1:-}" == "api" ]] || {
+    echo "fake gh only supports the api command" >&2
+    exit 64
+}
+shift
+
+hostname=""
+endpoint=""
+jq_filter=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --hostname)
+            hostname="${2:-}"
+            shift 2
+            ;;
+        --jq)
+            jq_filter="${2:-}"
+            shift 2
+            ;;
+        *)
+            [[ -z "$endpoint" ]] || {
+                echo "unexpected fake-gh argument: $1" >&2
+                exit 64
+            }
+            endpoint="$1"
+            shift
+            ;;
+    esac
+done
+
+[[ "$hostname" == "github.com" ]] || {
+    echo "the GitHub host was not pinned" >&2
+    exit 65
+}
+[[ -n "$jq_filter" ]] || {
+    echo "a jq projection is required" >&2
+    exit 65
+}
+
+expected_tag="${FAKE_GH_EXPECTED_TAG:-v1.2.3}"
+case "$endpoint" in
+    "repos/Wooden-Robot/OpenFire/git/ref/tags/$expected_tag")
+        printf '%s\t%s\n' \
+            "${FAKE_GH_REF_TYPE:-commit}" \
+            "${FAKE_GH_REF_SHA:?FAKE_GH_REF_SHA is required}"
+        ;;
+    "repos/Wooden-Robot/OpenFire/git/tags/${FAKE_GH_REF_SHA:-missing}")
+        printf '%s\t%s\n' \
+            "${FAKE_GH_TAG_TARGET_TYPE:-commit}" \
+            "${FAKE_GH_TAG_TARGET_SHA:?FAKE_GH_TAG_TARGET_SHA is required for annotated tags}"
+        ;;
+    "repos/Wooden-Robot/OpenFire/releases/tags/$expected_tag")
+        printf '%s\t%s\t%s\n' \
+            "${FAKE_GH_RELEASE_TAG_NAME:-$expected_tag}" \
+            "${FAKE_GH_RELEASE_DRAFT:-true}" \
+            "${FAKE_GH_RELEASE_PRERELEASE:-false}"
+        ;;
+    *)
+        echo "unexpected or unpinned GitHub API endpoint: $endpoint" >&2
+        exit 66
+        ;;
+esac

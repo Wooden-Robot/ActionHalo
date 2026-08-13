@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.23
+- 接入 Sparkle 2 安全自动更新：检测到新版本后可在应用内下载、验证，经标准“安装并重启”确认后原子安装并重启；保留原有自动检查开关并迁移已有偏好，同时防止更新重启丢失插件编辑器的未保存内容。
+- 固定 Sparkle 版本与 revision，启用 Ed25519 更新包签名、签名 appcast、解包前校验，并为框架嵌入、嵌套签名和发布资产增加门禁。
+- 将发布流程收敛为无需 Developer ID 的社区模式：App 与 Sparkle helper 使用 ad-hoc 签名，更新包以 Ed25519 作为发布信任根，同时保留版本、tag、最终 DMG 与 GitHub 资产一致性校验。
+
+- Added secure Sparkle 2 updates with the standard install-and-relaunch confirmation, atomic installation, preference migration, and protection against losing unsaved plugin edits during an update restart.
+- Pinned Sparkle by version and revision, enabled Ed25519 archive signatures, signed appcasts, pre-extraction verification, and added gates for framework embedding, nested signing, and release assets.
+- Switched releases to a no-Developer-ID community workflow: the app and Sparkle helpers are ad-hoc signed, Ed25519 is the update trust root, and version, tag, final-DMG, and GitHub-asset consistency gates remain enforced.
+
 ## v0.3.22
 - 加固文本选择手势的一致性，避免跨应用、跨窗口与受保护输入状态误触发，同时保留首次聚焦输入框和浏览器正文选区。
 - 将 Cmd+C 回退改为可回滚的剪贴板事务，稳定读取复制结果，完整恢复多类型与大体积内容，并在失败路径清理临时资源。

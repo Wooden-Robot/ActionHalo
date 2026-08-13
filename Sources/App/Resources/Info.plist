@@ -11,9 +11,9 @@
     <key>CFBundleIdentifier</key>
     <string>com.openfire.app</string>
     <key>CFBundleVersion</key>
-    <string>0.3.22</string>
+    <string>0.3.23</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.3.22</string>
+    <string>0.3.23</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
@@ -24,6 +24,20 @@
     <string>OpenFire needs accessibility access to detect text selection across applications.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>OpenFire uses Apple Events so enabled plugins can perform requested actions in other applications.</string>
+    <key>SUFeedURL</key>
+    <string>https://github.com/Wooden-Robot/OpenFire/releases/latest/download/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>YpDJbUKWW/mYy47N4BULh0vfKr4PGvV5dv5OAGyJrAo=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUAutomaticallyUpdate</key>
+    <false/>
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
+    <key>SURequireSignedFeed</key>
+    <true/>
+    <key>SUSignedFeedFailureExpirationInterval</key>
+    <integer>0</integer>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

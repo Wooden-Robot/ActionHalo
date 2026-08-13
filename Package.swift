@@ -10,10 +10,18 @@ let package = Package(
     products: [
         .executable(name: "OpenFire", targets: ["OpenFire"])
     ],
-    dependencies: [],
+    dependencies: [
+        .package(
+            url: "https://github.com/sparkle-project/Sparkle",
+            exact: "2.9.4"
+        )
+    ],
     targets: [
         .executableTarget(
             name: "OpenFire",
+            dependencies: [
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
             path: "Sources/App",
             exclude: ["Resources/Info.plist"],
             resources: [

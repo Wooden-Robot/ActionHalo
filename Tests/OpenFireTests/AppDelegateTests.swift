@@ -3,6 +3,27 @@ import XCTest
 
 @MainActor
 final class AppDelegateTests: XCTestCase {
+    func testTerminationRequiresExplicitDiscardWhenPluginEditorsAreDirty() {
+        XCTAssertTrue(
+            AppDelegate.shouldTerminate(
+                hasVisibleUnsavedPluginEditors: false,
+                discardConfirmed: false
+            )
+        )
+        XCTAssertFalse(
+            AppDelegate.shouldTerminate(
+                hasVisibleUnsavedPluginEditors: true,
+                discardConfirmed: false
+            )
+        )
+        XCTAssertTrue(
+            AppDelegate.shouldTerminate(
+                hasVisibleUnsavedPluginEditors: true,
+                discardConfirmed: true
+            )
+        )
+    }
+
     func testMonitoringStartFailureMessagesExplainNextStep() {
         XCTAssertEqual(
             AppDelegate.monitoringStartFailureMessage(.accessibilityPermissionMissing),

@@ -1,0 +1,212 @@
+#!/bin/bash
+
+set -euo pipefail
+
+fail() {
+    echo "❌ $*" >&2
+    exit 1
+}
+
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+project_root="$(cd "$script_dir/.." && pwd)"
+info_plist=""
+artifact_app=""
+require_ad_hoc=false
+package_resolved="$project_root/Package.resolved"
+expected_feed_url="https://github.com/Wooden-Robot/OpenFire/releases/latest/download/appcast.xml"
+expected_public_key="YpDJbUKWW/mYy47N4BULh0vfKr4PGvV5dv5OAGyJrAo="
+expected_sparkle_version="2.9.4"
+expected_sparkle_revision="b6496a74a087257ef5e6da1c5b29a447a60f5bd7"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --info-plist)
+            [[ $# -ge 2 ]] || fail "--info-plist requires a path."
+            info_plist="$2"
+            shift 2
+            ;;
+        --app)
+            [[ $# -ge 2 ]] || fail "--app requires a path."
+            artifact_app="$2"
+            shift 2
+            ;;
+        --require-ad-hoc)
+            require_ad_hoc=true
+            shift
+            ;;
+        --package-resolved)
+            [[ $# -ge 2 ]] || fail "--package-resolved requires a path."
+            package_resolved="$2"
+            shift 2
+            ;;
+        *)
+            fail "Unknown argument: $1"
+            ;;
+    esac
+done
+
+[[ -n "$info_plist" ]] || fail "--info-plist is required."
+[[ -f "$info_plist" ]] || fail "Info.plist does not exist: $info_plist"
+[[ -f "$package_resolved" ]] || fail "Package.resolved does not exist: $package_resolved"
+
+plist_value() {
+    /usr/libexec/PlistBuddy -c "Print :$2" "$1" 2>/dev/null \
+        || fail "$1 is missing $2."
+}
+
+verify_plist() {
+    local plist_path="$1"
+    local description="$2"
+    local feed_url
+    local public_key
+    local automatic_checks
+    local automatic_install
+    local verify_before_extraction
+    local require_signed_feed
+    local failure_expiration
+
+    feed_url="$(plist_value "$plist_path" SUFeedURL)"
+    public_key="$(plist_value "$plist_path" SUPublicEDKey)"
+    automatic_checks="$(plist_value "$plist_path" SUEnableAutomaticChecks)"
+    automatic_install="$(plist_value "$plist_path" SUAutomaticallyUpdate)"
+    verify_before_extraction="$(plist_value "$plist_path" SUVerifyUpdateBeforeExtraction)"
+    require_signed_feed="$(plist_value "$plist_path" SURequireSignedFeed)"
+    failure_expiration="$(plist_value "$plist_path" SUSignedFeedFailureExpirationInterval)"
+
+    [[ "$feed_url" == "$expected_feed_url" ]] \
+        || fail "$description has an unexpected Sparkle feed URL: $feed_url"
+    [[ "$public_key" == "$expected_public_key" ]] \
+        || fail "$description does not contain the pinned OpenFire update key."
+    [[ "$automatic_checks" == "true" ]] \
+        || fail "$description must enable automatic update checks by default."
+    [[ "$automatic_install" == "false" ]] \
+        || fail "$description must require an explicit user install action."
+    [[ "$verify_before_extraction" == "true" ]] \
+        || fail "$description must verify updates before extraction."
+    [[ "$require_signed_feed" == "true" ]] \
+        || fail "$description must require signed appcasts."
+    [[ "$failure_expiration" == "0" ]] \
+        || fail "$description must not expire signed-feed verification failures."
+}
+
+sparkle_pin_index=""
+pin_index=0
+while resolved_identity="$(plutil -extract "pins.$pin_index.identity" raw "$package_resolved" 2>/dev/null)"; do
+    if [[ "$resolved_identity" == "sparkle" ]]; then
+        [[ -z "$sparkle_pin_index" ]] || fail "Package.resolved contains multiple Sparkle pins."
+        sparkle_pin_index="$pin_index"
+    fi
+    pin_index=$((pin_index + 1))
+done
+[[ -n "$sparkle_pin_index" ]] || fail "Package.resolved has no Sparkle dependency pin."
+resolved_version="$(plutil -extract "pins.$sparkle_pin_index.state.version" raw "$package_resolved" 2>/dev/null)" \
+    || fail "Could not read the Sparkle dependency version from $package_resolved."
+resolved_revision="$(plutil -extract "pins.$sparkle_pin_index.state.revision" raw "$package_resolved" 2>/dev/null)" \
+    || fail "Could not read the Sparkle dependency revision from $package_resolved."
+[[ "$resolved_version" == "$expected_sparkle_version" ]] \
+    || fail "Sparkle is $resolved_version; expected $expected_sparkle_version."
+[[ "$resolved_revision" == "$expected_sparkle_revision" ]] \
+    || fail "Sparkle revision is $resolved_revision; expected $expected_sparkle_revision."
+
+verify_plist "$info_plist" "Source Info.plist"
+
+if [[ -n "$artifact_app" ]]; then
+    [[ -d "$artifact_app" ]] || fail "Packaged app does not exist: $artifact_app"
+    artifact_plist="$artifact_app/Contents/Info.plist"
+    executable="$artifact_app/Contents/MacOS/OpenFire"
+    framework="$artifact_app/Contents/Frameworks/Sparkle.framework"
+    sparkle_license="$artifact_app/Contents/Resources/ThirdPartyLicenses/Sparkle.txt"
+
+    [[ -f "$artifact_plist" ]] || fail "Packaged Info.plist is missing."
+    [[ -x "$executable" ]] || fail "Packaged OpenFire executable is missing."
+    [[ -d "$framework" ]] || fail "Packaged Sparkle.framework is missing."
+    [[ -f "$sparkle_license" ]] || fail "Packaged Sparkle license notice is missing."
+    grep -Fq 'Copyright (c) 2006-2013 Andy Matuschak.' "$sparkle_license" \
+        || fail "Packaged Sparkle license notice is invalid."
+    [[ -L "$framework/Versions/Current" ]] \
+        || fail "Sparkle.framework version symlinks were not preserved."
+
+    verify_plist "$artifact_plist" "Packaged Info.plist"
+    [[ "$(plist_value "$framework/Versions/B/Resources/Info.plist" CFBundleShortVersionString)" == "$expected_sparkle_version" ]] \
+        || fail "Packaged Sparkle.framework has an unexpected version."
+
+    codesign --verify --deep --strict "$artifact_app" >/dev/null 2>&1 \
+        || fail "Packaged app signature is invalid."
+    otool -L "$executable" | grep -Fq "@rpath/Sparkle.framework/Versions/B/Sparkle" \
+        || fail "OpenFire is not linked to the embedded Sparkle framework through @rpath."
+    otool -l "$executable" | grep -A2 LC_RPATH | grep -Fq "@executable_path/../Frameworks" \
+        || fail "OpenFire does not contain the embedded-framework runtime search path."
+
+    executable_arches="$(lipo -archs "$executable")"
+    [[ " $executable_arches " == *" x86_64 "* && " $executable_arches " == *" arm64 "* ]] \
+        || fail "Packaged OpenFire executable is not universal: $executable_arches"
+
+    framework_arches="$(lipo -archs "$framework/Versions/B/Sparkle")"
+    [[ " $framework_arches " == *" x86_64 "* && " $framework_arches " == *" arm64 "* ]] \
+        || fail "Packaged Sparkle.framework is not universal: $framework_arches"
+
+    if [[ "$require_ad_hoc" == true ]]; then
+        signing_metadata="$(codesign -dv --verbose=4 "$artifact_app" 2>&1)" \
+            || fail "Could not inspect packaged app signing metadata."
+        grep -Eq '^Signature=adhoc$' <<<"$signing_metadata" \
+            || fail "Community release app must use an ad-hoc code signature."
+        grep -Eq '^TeamIdentifier=not set$' <<<"$signing_metadata" \
+            || fail "Community release app must not carry an Apple Team identity."
+        [[ "$(plist_value "$artifact_plist" CFBundleIdentifier)" == "com.openfire.app" ]] \
+            || fail "Release app has an unexpected bundle identifier."
+        ! grep -Eq '^CodeDirectory .*flags=.*runtime' <<<"$signing_metadata" \
+            || fail "Ad-hoc OpenFire must not enable Hardened Runtime because Library Validation blocks its separately ad-hoc-signed Sparkle framework."
+
+        signed_items=(
+            "$framework/Versions/B/XPCServices/Installer.xpc"
+            "$framework/Versions/B/XPCServices/Downloader.xpc"
+            "$framework/Versions/B/Autoupdate"
+            "$framework/Versions/B/Updater.app"
+            "$framework"
+        )
+        expected_identifiers=(
+            "org.sparkle-project.InstallerLauncher"
+            "org.sparkle-project.DownloaderService"
+            "Autoupdate-"
+            "org.sparkle-project.Sparkle.Updater"
+            "org.sparkle-project.Sparkle"
+        )
+        signed_executables=(
+            "$framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer"
+            "$framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader"
+            "$framework/Versions/B/Autoupdate"
+            "$framework/Versions/B/Updater.app/Contents/MacOS/Updater"
+            "$framework/Versions/B/Sparkle"
+        )
+        signed_index=0
+        for signed_item in "${signed_items[@]}"; do
+            nested_metadata="$(codesign -dv --verbose=4 "$signed_item" 2>&1)" \
+                || fail "Could not inspect Sparkle component signing metadata: $signed_item"
+            codesign --verify --strict --all-architectures "$signed_item" >/dev/null 2>&1 \
+                || fail "Sparkle component code signature is invalid: $signed_item"
+            grep -Eq '^Signature=adhoc$' <<<"$nested_metadata" \
+                || fail "Sparkle component must use an ad-hoc code signature: $signed_item"
+            grep -Eq '^TeamIdentifier=not set$' <<<"$nested_metadata" \
+                || fail "Sparkle component must not carry an Apple Team identity: $signed_item"
+            grep -Eq '^CodeDirectory .*flags=.*runtime' <<<"$nested_metadata" \
+                || fail "Sparkle component is not signed with Hardened Runtime: $signed_item"
+
+            nested_identifier="$(sed -n 's/^Identifier=//p' <<<"$nested_metadata")"
+            expected_identifier="${expected_identifiers[$signed_index]}"
+            if [[ "$expected_identifier" == "Autoupdate-" ]]; then
+                [[ "$nested_identifier" == Autoupdate-* ]] \
+                    || fail "Sparkle Autoupdate has an unexpected signing identifier: $nested_identifier"
+            else
+                [[ "$nested_identifier" == "$expected_identifier" ]] \
+                    || fail "Sparkle component has an unexpected signing identifier: $nested_identifier"
+            fi
+
+            nested_arches="$(lipo -archs "${signed_executables[$signed_index]}")"
+            [[ " $nested_arches " == *" x86_64 "* && " $nested_arches " == *" arm64 "* ]] \
+                || fail "Sparkle component is not universal: ${signed_executables[$signed_index]} ($nested_arches)"
+            signed_index=$((signed_index + 1))
+        done
+    fi
+fi
+
+echo "✅ Sparkle update configuration verified."

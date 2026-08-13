@@ -38,6 +38,20 @@ private final class MenuDismissalBarrier {
     }
 }
 
+/// Keeps the non-Sendable Accessibility target confined to the main actor while
+/// a menu window retains its action callback. Capturing the raw AXUIElement in
+/// that callback makes Swift 6.1 treat the value as being sent to the window.
+@MainActor
+private final class MenuTargetContext {
+    let processIdentifier: pid_t?
+    let focusedElement: AXUIElement
+
+    init(processIdentifier: pid_t?, focusedElement: AXUIElement) {
+        self.processIdentifier = processIdentifier
+        self.focusedElement = focusedElement
+    }
+}
+
 /// Main application delegate — orchestrates all components
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -62,6 +76,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         "com.microsoft.Powerpoint",
         "com.kingsoft.wpsoffice.mac"
     ]
+
+    nonisolated static func shouldTerminate(
+        hasVisibleUnsavedPluginEditors: Bool,
+        discardConfirmed: Bool
+    ) -> Bool {
+        !hasVisibleUnsavedPluginEditors || discardConfirmed
+    }
     
     private let statusBarController = StatusBarController()
     private var radialMenuWindow: RadialMenuWindow?
@@ -278,13 +299,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.setEnabled(enabled)
         }
 
-        // Check for updates in the background after the UI is ready.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            if UpdateChecker.shared.isAutoCheckEnabled() {
-                UpdateChecker.shared.checkForUpdates()
-            }
-        }
-        
         // Check accessibility permission
         if !AccessibilityManager.shared.ensureAccessibilityPermission() {
             NSLog("[OpenFire] Waiting for accessibility permission...")
@@ -406,6 +420,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let unsavedEditors = sender.windows.compactMap { window -> PluginEditorWindow? in
+            guard let editor = window as? PluginEditorWindow,
+                  editor.isVisible || editor.isMiniaturized,
+                  editor.hasUnsavedChanges else {
+                return nil
+            }
+            return editor
+        }
+
+        guard !unsavedEditors.isEmpty else {
+            return .terminateNow
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Unsaved Plugin Changes".localized
+        alert.informativeText = "One or more plugin editors have unsaved changes. Save them before quitting or restarting OpenFire.".localized
+        alert.addButton(withTitle: "Cancel Quit".localized)
+        let discardButton = alert.addButton(withTitle: "Discard Changes and Quit".localized)
+        discardButton.hasDestructiveAction = true
+
+        sender.activate(ignoringOtherApps: true)
+        let discardConfirmed = alert.runModal() == .alertSecondButtonReturn
+        guard Self.shouldTerminate(
+            hasVisibleUnsavedPluginEditors: true,
+            discardConfirmed: discardConfirmed
+        ) else {
+            sender.activate(ignoringOtherApps: true)
+            if let editor = unsavedEditors.first {
+                if editor.isMiniaturized {
+                    editor.deminiaturize(nil)
+                }
+                editor.makeKeyAndOrderFront(nil)
+            }
+            return .terminateCancel
+        }
+
+        unsavedEditors.forEach { $0.discardUnsavedChanges() }
+        return .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         TextSelectionMonitor.shared.stopMonitoring()
         PluginManager.shared.stopWatchingPluginDirectories()
@@ -935,11 +991,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Don't show if no items available
         guard !items.isEmpty else { return }
 
+        let targetContext = MenuTargetContext(
+            processIdentifier: targetProcessIdentifier,
+            focusedElement: targetFocusedElement
+        )
+
         scheduleMenuPresentation { [weak self] in
             guard let self else { return }
             guard self.currentContextAllowsMenuPresentation(
-                expectedProcessIdentifier: targetProcessIdentifier,
-                expectedFocusedElement: targetFocusedElement
+                expectedProcessIdentifier: targetContext.processIdentifier,
+                expectedFocusedElement: targetContext.focusedElement
             ) else {
                 return
             }
@@ -953,8 +1014,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.handleMenuAction(
                     item,
                     text: selectedText,
-                    targetProcessIdentifier: targetProcessIdentifier,
-                    targetFocusedElement: targetFocusedElement
+                    targetProcessIdentifier: targetContext.processIdentifier,
+                    targetFocusedElement: targetContext.focusedElement
                 )
             }
             self.menuActionGate.reset()
@@ -971,11 +1032,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         targetProcessIdentifier: pid_t,
         targetFocusedElement: AXUIElement
     ) {
+        let targetContext = MenuTargetContext(
+            processIdentifier: targetProcessIdentifier,
+            focusedElement: targetFocusedElement
+        )
+
         scheduleMenuPresentation { [weak self] in
             guard let self else { return }
             guard self.currentContextAllowsMenuPresentation(
-                expectedProcessIdentifier: targetProcessIdentifier,
-                expectedFocusedElement: targetFocusedElement
+                expectedProcessIdentifier: targetContext.processIdentifier,
+                expectedFocusedElement: targetContext.focusedElement
             ) else {
                 return
             }
@@ -987,12 +1053,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         let currentFocusedElement = AccessibilityManager.shared.getFocusedElement()
                         guard Self.shouldExecuteMenuAction(
-                            expectedProcessIdentifier: targetProcessIdentifier,
+                            expectedProcessIdentifier: targetContext.processIdentifier,
                             currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
                             requiresOriginalFocusedElement: true,
                             requiresEditableTarget: true,
                             focusedElementMatches: AccessibilityManager.areSameAccessibilityElement(
-                                targetFocusedElement,
+                                targetContext.focusedElement,
                                 currentFocusedElement
                             ),
                             isFocusedSelectionEditable: currentFocusedElement.map {
@@ -1005,8 +1071,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         PluginManager.shared.executePlugin(
                             plugin,
                             with: "",
-                            targetProcessIdentifier: targetProcessIdentifier,
-                            targetFocusedElement: targetFocusedElement
+                            targetProcessIdentifier: targetContext.processIdentifier,
+                            targetFocusedElement: targetContext.focusedElement
                         )
                     }
                 }

@@ -53,6 +53,10 @@
 "Quit" = "退出应用";
 "Permission Restored" = "权限已恢复";
 "OpenFire has resumed working." = "OpenFire 已重新开始工作。";
+"Unsaved Plugin Changes" = "插件修改尚未保存";
+"One or more plugin editors have unsaved changes. Save them before quitting or restarting OpenFire." = "一个或多个插件编辑器中有尚未保存的修改。请先保存，再退出或重启 OpenFire。";
+"Cancel Quit" = "取消退出";
+"Discard Changes and Quit" = "丢弃修改并退出";
 "OK" = "确定";
 
 /* UpdateChecker */
