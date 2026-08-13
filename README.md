@@ -6,7 +6,7 @@
 
 [**English**](./README.md) • [简体中文](./README_zh.md)
 
-[![macOS 13.0+](https://img.shields.io/badge/macOS-13.0+-000000?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com/macos)
+[![macOS 12.0+](https://img.shields.io/badge/macOS-12.0+-000000?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com/macos)
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white)](https://developer.apple.com/swift)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
@@ -51,6 +51,11 @@ Built-in automatic blacklist management UI. Supports dragging and dropping apps,
 ---
 
 ## 🚀 Getting Started
+
+### System Requirements
+
+- **macOS 12 Monterey or later**. macOS 11 Big Sur and earlier are not supported.
+- Both Apple silicon and Intel Macs are supported by the universal build.
 
 ### Installation
 
@@ -245,7 +250,7 @@ make package             # local verification .app and .dmg
 `make package` produces an ad-hoc-signed community `.app` and `.dmg` without applying release-version checks. A publishable community build must use the separate `make release` gate from a clean commit carrying the exact `vX.Y.Z` tag. Pass `VERSION=X.Y.Z` explicitly; it must match the tag and both version fields in the source and packaged app `Info.plist`:
 
 ```bash
-make release VERSION=0.3.24 SPARKLE_ACCOUNT="OpenFire"
+make release VERSION=0.3.25 SPARKLE_ACCOUNT="OpenFire"
 ```
 
 `make release` fails before packaging if the repository, version, tag, or Sparkle configuration is invalid. It ad-hoc signs Sparkle's nested helpers and the app, verifies the Apple Events entitlement and universal binaries, mounts the final DMG read-only, and verifies the contained app. It then uses the private Ed25519 key stored under the `OpenFire` Keychain account to create `.build/appcast.xml`. The feed and enclosure signatures, exact archive length, version, and URL are all verified against that final DMG. The Ed25519 private key is the community release trust root and must be backed up securely.

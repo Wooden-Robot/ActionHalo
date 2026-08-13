@@ -1,6 +1,5 @@
 import Cocoa
 import CryptoKit
-import os
 
 /// Represents a single plugin action type and its execution parameters
 enum PluginActionType: String, Codable, Sendable {
@@ -673,7 +672,7 @@ final class Plugin: Identifiable, Sendable {
     let config: PluginConfig
     let directoryURL: URL
     private let filterRegex: FilterRegex
-    private let enabledState = OSAllocatedUnfairLock(initialState: true)
+    private let enabledState = LockedState(initialState: true)
 
     var isEnabled: Bool {
         get { enabledState.withLock { $0 } }

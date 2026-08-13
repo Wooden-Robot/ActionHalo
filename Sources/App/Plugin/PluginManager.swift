@@ -1,7 +1,6 @@
 import Cocoa
 import Darwin
 import JavaScriptCore
-import os
 
 private struct PluginWatcherFileManager: @unchecked Sendable {
     let value: FileManager
@@ -16,7 +15,7 @@ private final class PluginProcessStderrAccumulator: Sendable {
         var isTruncated = false
     }
 
-    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let state = LockedState(initialState: State())
 
     func append(_ chunk: Data) {
         state.withLock {
@@ -168,7 +167,7 @@ final class PluginManager: Sendable {
         let source: DispatchSourceFileSystemObject
     }
 
-    private let state = OSAllocatedUnfairLock(initialState: State())
+    private let state = LockedState(initialState: State())
     @MainActor private var pathWatchers: [String: PluginPathWatcher] = [:]
     @MainActor private var isWatchingPluginDirectories = false
     @MainActor private var latestWatcherRefreshID: UInt64 = 0

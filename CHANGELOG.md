@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.25
+- 将最低系统要求从 macOS 13 下调至 macOS 12 Monterey，并同步 SwiftPM、Universal 构建目标、App 启动要求与中英文文档。
+- 用基于 `NSLock` 的状态锁替换仅 macOS 13 及以上可用的 `OSAllocatedUnfairLock`，保持剪贴板回退与插件状态的并发安全。
+- 统一圆环视图与窗口的外侧交互半径，修复鼠标在外侧方向选择区域松开时事件被其他视图截获、动作未执行的问题。
+- 新增状态锁并发回归测试，并验证 Intel 与 Apple 芯片发布二进制的最低系统版本均为 macOS 12.0。
+
+- Lowered the minimum system requirement from macOS 13 to macOS 12 Monterey across SwiftPM, universal build targets, the app launch requirement, and the English and Chinese documentation.
+- Replaced the macOS 13-only `OSAllocatedUnfairLock` with an `NSLock`-backed state lock while preserving concurrency safety for clipboard fallback and plugin state.
+- Unified the radial view and window outer interaction radius, fixing actions not firing when the mouse was released in the outer directional selection area because a sibling view intercepted the event.
+- Added concurrent lock regression coverage and verified that both Intel and Apple silicon release binaries declare macOS 12.0 as their minimum system version.
+
 ## v0.3.24
 - 发布自动更新验证版本，用于完整测试从 v0.3.23 检测更新、下载、Ed25519 签名校验、安装并重启的流程。
 - 除版本升级与发布说明外，不包含新的功能行为变更。

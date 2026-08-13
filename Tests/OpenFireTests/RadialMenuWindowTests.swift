@@ -135,6 +135,51 @@ final class RadialMenuWindowTests: GlobalStateTestCase {
         window.hideMenu()
     }
 
+    func testClickInOuterDirectionalAreaDispatchesAction() throws {
+        UserDefaults.standard.set(false, forKey: "WheelBackdropEnabled")
+        let window = RadialMenuWindow()
+        window.showMenu(
+            at: NSPoint(x: 400, y: 300),
+            items: makeItems(count: 4),
+            selectedText: "hello"
+        )
+        let radialMenuView = try XCTUnwrap(renderedMenuView(in: window))
+        let contentView = try XCTUnwrap(window.contentView)
+        var selectionCount = 0
+        window.onItemSelected = { _ in
+            selectionCount += 1
+        }
+
+        let radius = radialMenuView.outerRadius + 60
+        let point = NSPoint(
+            x: radialMenuView.trackingCenter.x + radius * cos(.pi / 4),
+            y: radialMenuView.trackingCenter.y + radius * sin(.pi / 4)
+        )
+        let hitView = contentView.hitTest(point)
+        XCTAssertTrue(
+            hitView === radialMenuView,
+            "Expected RadialMenuView, got \(String(describing: hitView.map { type(of: $0) }))"
+        )
+
+        let event = try XCTUnwrap(
+            NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: point,
+                modifierFlags: [],
+                timestamp: 1,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 1,
+                pressure: 0
+            )
+        )
+        hitView?.mouseUp(with: event)
+
+        XCTAssertEqual(selectionCount, 1)
+        window.hideMenu()
+    }
+
     func testInvalidStoredPageSizeFallsBackToDefault() {
         XCTAssertEqual(RadialMenuWindow.validatedPageSize(0), 12)
         XCTAssertEqual(RadialMenuWindow.validatedPageSize(1), 12)

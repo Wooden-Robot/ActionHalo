@@ -17,7 +17,7 @@ final class RadialMenuView: NSView {
     private let baseIconSize: CGFloat = 32
     private let selectionDeadzoneRadius: CGFloat = 16
     private let centerCoreInset: CGFloat = 10
-    private let outsideDismissPadding: CGFloat = 90
+    private let outsideDismissPadding: CGFloat = 60
     
     private var gapAngle: CGFloat {
         let count = max(1, menuItems.count)
@@ -937,8 +937,9 @@ final class RadialMenuView: NSView {
         let dy = point.y - center.y
         let distance = sqrt(dx * dx + dy * dy)
         
-        // Only claim the click if it's within our interactive radius + a small margin
-        if distance <= outerRadius + 30 {
+        // Claim the full directional selection area handled by mouseUp. Keeping this
+        // smaller lets the visual-effect sibling swallow clicks in the outer ring.
+        if distance <= outerRadius + outsideDismissPadding {
             return self
         }
         
