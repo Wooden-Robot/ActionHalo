@@ -38,6 +38,20 @@ private final class MenuDismissalBarrier {
     }
 }
 
+/// Keeps the non-Sendable Accessibility target confined to the main actor while
+/// a menu window retains its action callback. Capturing the raw AXUIElement in
+/// that callback makes Swift 6.1 treat the value as being sent to the window.
+@MainActor
+private final class MenuTargetContext {
+    let processIdentifier: pid_t?
+    let focusedElement: AXUIElement
+
+    init(processIdentifier: pid_t?, focusedElement: AXUIElement) {
+        self.processIdentifier = processIdentifier
+        self.focusedElement = focusedElement
+    }
+}
+
 /// Main application delegate — orchestrates all components
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -977,11 +991,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Don't show if no items available
         guard !items.isEmpty else { return }
 
+        let targetContext = MenuTargetContext(
+            processIdentifier: targetProcessIdentifier,
+            focusedElement: targetFocusedElement
+        )
+
         scheduleMenuPresentation { [weak self] in
             guard let self else { return }
             guard self.currentContextAllowsMenuPresentation(
-                expectedProcessIdentifier: targetProcessIdentifier,
-                expectedFocusedElement: targetFocusedElement
+                expectedProcessIdentifier: targetContext.processIdentifier,
+                expectedFocusedElement: targetContext.focusedElement
             ) else {
                 return
             }
@@ -995,8 +1014,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.handleMenuAction(
                     item,
                     text: selectedText,
-                    targetProcessIdentifier: targetProcessIdentifier,
-                    targetFocusedElement: targetFocusedElement
+                    targetProcessIdentifier: targetContext.processIdentifier,
+                    targetFocusedElement: targetContext.focusedElement
                 )
             }
             self.menuActionGate.reset()
@@ -1013,11 +1032,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         targetProcessIdentifier: pid_t,
         targetFocusedElement: AXUIElement
     ) {
+        let targetContext = MenuTargetContext(
+            processIdentifier: targetProcessIdentifier,
+            focusedElement: targetFocusedElement
+        )
+
         scheduleMenuPresentation { [weak self] in
             guard let self else { return }
             guard self.currentContextAllowsMenuPresentation(
-                expectedProcessIdentifier: targetProcessIdentifier,
-                expectedFocusedElement: targetFocusedElement
+                expectedProcessIdentifier: targetContext.processIdentifier,
+                expectedFocusedElement: targetContext.focusedElement
             ) else {
                 return
             }
@@ -1029,12 +1053,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         let currentFocusedElement = AccessibilityManager.shared.getFocusedElement()
                         guard Self.shouldExecuteMenuAction(
-                            expectedProcessIdentifier: targetProcessIdentifier,
+                            expectedProcessIdentifier: targetContext.processIdentifier,
                             currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
                             requiresOriginalFocusedElement: true,
                             requiresEditableTarget: true,
                             focusedElementMatches: AccessibilityManager.areSameAccessibilityElement(
-                                targetFocusedElement,
+                                targetContext.focusedElement,
                                 currentFocusedElement
                             ),
                             isFocusedSelectionEditable: currentFocusedElement.map {
@@ -1047,8 +1071,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         PluginManager.shared.executePlugin(
                             plugin,
                             with: "",
-                            targetProcessIdentifier: targetProcessIdentifier,
-                            targetFocusedElement: targetFocusedElement
+                            targetProcessIdentifier: targetContext.processIdentifier,
+                            targetFocusedElement: targetContext.focusedElement
                         )
                     }
                 }
