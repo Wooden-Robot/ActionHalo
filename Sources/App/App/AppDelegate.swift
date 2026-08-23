@@ -44,9 +44,9 @@ private final class MenuDismissalBarrier {
 @MainActor
 private final class MenuTargetContext {
     let processIdentifier: pid_t?
-    let focusedElement: AXUIElement
+    let focusedElement: AXUIElement?
 
-    init(processIdentifier: pid_t?, focusedElement: AXUIElement) {
+    init(processIdentifier: pid_t?, focusedElement: AXUIElement?) {
         self.processIdentifier = processIdentifier
         self.focusedElement = focusedElement
     }
@@ -360,7 +360,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     /// Called when the global hotkey is pressed
     private func handleHotkeyTriggered() {
-        let expectedProcessIdentifier = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let frontmostApplication = NSWorkspace.shared.frontmostApplication
+        let expectedProcessIdentifier = frontmostApplication?.processIdentifier
+        let expectedBundleID = frontmostApplication?.bundleIdentifier
         guard currentContextAllowsMenuPresentation(
             expectedProcessIdentifier: expectedProcessIdentifier
         ) else {
@@ -389,7 +391,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // If Accessibility fails, simulate Cmd+C (async to allow physical hotkeys to be released)
         AccessibilityManager.shared.getSelectedTextViaCopy(
             expectedProcessIdentifier: expectedProcessIdentifier,
-            expectedFocusedElement: expectedFocusedElement
+            expectedFocusedElement: expectedFocusedElement,
+            allowMissingFocusedElement:
+                AccessibilityManager.shouldAllowContextlessBlindCopyFallback(
+                    bundleID: expectedBundleID
+                )
         ) { [weak self] copiedText in
             guard AccessibilityManager.isExpectedCopyFallbackProcess(
                 expectedProcessIdentifier: expectedProcessIdentifier,
@@ -407,7 +413,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ) else {
                 return
             }
-            guard let expectedFocusedElement else { return }
             let mouseLocation = NSEvent.mouseLocation
             AccessibilityManager.shared.recordSelectionAcquisition(source: .copyFallback, text: text)
             self.currentSelectedText = text
@@ -792,10 +797,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let userInfo = notification.userInfo,
               let text = userInfo["text"] as? String,
               let locationValue = userInfo["mouseLocation"] as? NSValue,
-              let processNumber = userInfo["processIdentifier"] as? NSNumber,
-              let focusedElement = Self.accessibilityElement(from: userInfo["focusedElement"]) else {
+              let processNumber = userInfo["processIdentifier"] as? NSNumber else {
             return
         }
+        let focusedElement = Self.accessibilityElement(from: userInfo["focusedElement"])
         let processIdentifier = pid_t(processNumber.int32Value)
         guard AccessibilityManager.isExpectedCopyFallbackProcess(
             expectedProcessIdentifier: processIdentifier,
@@ -869,7 +874,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         at point: NSPoint,
         text: String,
         targetProcessIdentifier: pid_t?,
-        targetFocusedElement: AXUIElement
+        targetFocusedElement: AXUIElement?
     ) {
         guard currentContextAllowsMenuPresentation(
             expectedProcessIdentifier: targetProcessIdentifier,
@@ -967,7 +972,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         plugins: [Plugin],
         selectedText: String,
         targetProcessIdentifier: pid_t?,
-        targetFocusedElement: AXUIElement
+        targetFocusedElement: AXUIElement?
     ) {
         var items: [RadialMenuItem] = []
         let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
@@ -1145,7 +1150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ item: RadialMenuItem,
         text: String,
         targetProcessIdentifier: pid_t?,
-        targetFocusedElement: AXUIElement
+        targetFocusedElement: AXUIElement?
     ) {
         let requiresOriginalFocusedElement: Bool
         let requiresEditableTarget: Bool

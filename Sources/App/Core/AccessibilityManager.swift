@@ -347,6 +347,7 @@ final class AccessibilityManager {
     private let copyFallbackQueue = DispatchQueue(label: "com.openfire.copy-fallback", qos: .userInitiated)
     private let copyFallbackCoordinator = CopyFallbackRequestCoordinator()
     private var copyFallbackExpectedFocusedElements: [UUID: AXUIElement] = [:]
+    private var copyFallbackAllowsMissingFocusedElement: Set<UUID> = []
 
     enum SelectionAcquisitionSource {
         case accessibility
@@ -679,6 +680,17 @@ final class AccessibilityManager {
         )
     }
 
+    nonisolated static func copyFallbackFocusedElementMatches(
+        expectedFocusedElementAvailable: Bool,
+        focusedElementMatches: Bool,
+        allowMissingFocusedElement: Bool
+    ) -> Bool {
+        if expectedFocusedElementAvailable {
+            return focusedElementMatches
+        }
+        return allowMissingFocusedElement
+    }
+
     nonisolated static func shouldPostCopyFallbackEvents(
         contextIsValidAfterSnapshot: Bool,
         initialPasteboardState: PasteboardState,
@@ -702,15 +714,24 @@ final class AccessibilityManager {
     func getSelectedTextViaCopy(
         expectedProcessIdentifier: pid_t? = NSWorkspace.shared.frontmostApplication?.processIdentifier,
         expectedFocusedElement: AXUIElement? = nil,
+        allowMissingFocusedElement: Bool = false,
         completion: @escaping @MainActor @Sendable (String?) -> Void
     ) -> UUID {
         let requestID = copyFallbackCoordinator.beginRequest()
         let coordinator = copyFallbackCoordinator
-        if let focusedElement = expectedFocusedElement ?? getFocusedElement() {
+        if let focusedElement = expectedFocusedElement {
+            copyFallbackExpectedFocusedElements[requestID] = focusedElement
+        } else if allowMissingFocusedElement {
+            copyFallbackAllowsMissingFocusedElement.insert(requestID)
+        } else if let focusedElement = getFocusedElement() {
             copyFallbackExpectedFocusedElements[requestID] = focusedElement
         }
 
-        guard !shouldSuppressSelectionPresentation() else {
+        let requestAllowsMissingFocusedElement =
+            copyFallbackAllowsMissingFocusedElement.contains(requestID)
+        guard !shouldSuppressCopyFallback(
+            allowMissingFocusedElement: requestAllowsMissingFocusedElement
+        ) else {
             Self.finishCopyFallbackRequest(
                 coordinator: coordinator,
                 requestID,
@@ -860,11 +881,13 @@ final class AccessibilityManager {
     func cancelSelectedTextViaCopy(_ requestID: UUID) {
         copyFallbackCoordinator.cancelRequest(requestID)
         copyFallbackExpectedFocusedElements.removeValue(forKey: requestID)
+        copyFallbackAllowsMissingFocusedElement.remove(requestID)
     }
 
     func cancelActiveSelectedTextViaCopy() {
         copyFallbackCoordinator.cancelActiveRequest()
         copyFallbackExpectedFocusedElements.removeAll()
+        copyFallbackAllowsMissingFocusedElement.removeAll()
     }
 
     nonisolated private static func copyFallbackContextIsValid(
@@ -880,24 +903,42 @@ final class AccessibilityManager {
         if Thread.isMainThread {
             context = MainActor.assumeIsolated {
                 let manager = AccessibilityManager.shared
+                let expectedFocusedElement = manager.copyFallbackExpectedFocusedElements[requestID]
+                let allowMissingFocusedElement =
+                    manager.copyFallbackAllowsMissingFocusedElement.contains(requestID)
                 return (
                     NSWorkspace.shared.frontmostApplication?.processIdentifier,
-                    manager.shouldSuppressSelectionPresentation(),
-                    areSameAccessibilityElement(
-                        manager.copyFallbackExpectedFocusedElements[requestID],
-                        manager.getFocusedElement()
+                    manager.shouldSuppressCopyFallback(
+                        allowMissingFocusedElement: allowMissingFocusedElement
+                    ),
+                    copyFallbackFocusedElementMatches(
+                        expectedFocusedElementAvailable: expectedFocusedElement != nil,
+                        focusedElementMatches: areSameAccessibilityElement(
+                            expectedFocusedElement,
+                            manager.getFocusedElement()
+                        ),
+                        allowMissingFocusedElement: allowMissingFocusedElement
                     )
                 )
             }
         } else {
             context = DispatchQueue.main.sync {
                 let manager = AccessibilityManager.shared
+                let expectedFocusedElement = manager.copyFallbackExpectedFocusedElements[requestID]
+                let allowMissingFocusedElement =
+                    manager.copyFallbackAllowsMissingFocusedElement.contains(requestID)
                 return (
                     NSWorkspace.shared.frontmostApplication?.processIdentifier,
-                    manager.shouldSuppressSelectionPresentation(),
-                    areSameAccessibilityElement(
-                        manager.copyFallbackExpectedFocusedElements[requestID],
-                        manager.getFocusedElement()
+                    manager.shouldSuppressCopyFallback(
+                        allowMissingFocusedElement: allowMissingFocusedElement
+                    ),
+                    copyFallbackFocusedElementMatches(
+                        expectedFocusedElementAvailable: expectedFocusedElement != nil,
+                        focusedElementMatches: areSameAccessibilityElement(
+                            expectedFocusedElement,
+                            manager.getFocusedElement()
+                        ),
+                        allowMissingFocusedElement: allowMissingFocusedElement
                     )
                 )
             }
@@ -921,6 +962,8 @@ final class AccessibilityManager {
         Task { @MainActor in
             AccessibilityManager.shared.copyFallbackExpectedFocusedElements
                 .removeValue(forKey: requestID)
+            AccessibilityManager.shared.copyFallbackAllowsMissingFocusedElement
+                .remove(requestID)
             let isLatestRequest = coordinator.completeRequestIfActive(requestID)
             completion(isLatestRequest ? result : nil)
         }
@@ -953,15 +996,26 @@ final class AccessibilityManager {
         IsSecureEventInputEnabled()
     }
 
-    func shouldSuppressSelectionPresentation() -> Bool {
-        let secureEventInputEnabled = isSecureEventInputEnabled()
-        guard isAccessibilityEnabled, let focusedElement = getFocusedElement() else {
-            return true
-        }
-        return Self.shouldSuppressSelectionPresentation(
-            elementAssessment: Self.protectionAssessment(for: focusedElement),
-            ancestorAssessments: [],
-            secureEventInputEnabled: secureEventInputEnabled
+    func shouldSuppressSelectionPresentation(
+        allowMissingFocusedElement: Bool = false
+    ) -> Bool {
+        let accessibilityEnabled = isAccessibilityEnabled
+        let focusedElementAssessment = accessibilityEnabled
+            ? getFocusedElement().map { Self.protectionAssessment(for: $0) }
+            : nil
+        return Self.shouldSuppressCopyFallback(
+            focusedElementAssessment: focusedElementAssessment,
+            secureEventInputEnabled: isSecureEventInputEnabled(),
+            accessibilityEnabled: accessibilityEnabled,
+            allowMissingFocusedElement: allowMissingFocusedElement
+        )
+    }
+
+    private func shouldSuppressCopyFallback(
+        allowMissingFocusedElement: Bool
+    ) -> Bool {
+        shouldSuppressSelectionPresentation(
+            allowMissingFocusedElement: allowMissingFocusedElement
         )
     }
 
@@ -1683,6 +1737,19 @@ final class AccessibilityManager {
         return ([elementAssessment] + ancestorAssessments).contains {
             $0 != .unprotected
         }
+    }
+
+    nonisolated static func shouldSuppressCopyFallback(
+        focusedElementAssessment: ProtectedTextAssessment?,
+        secureEventInputEnabled: Bool,
+        accessibilityEnabled: Bool,
+        allowMissingFocusedElement: Bool
+    ) -> Bool {
+        guard accessibilityEnabled, !secureEventInputEnabled else { return true }
+        guard let focusedElementAssessment else {
+            return !allowMissingFocusedElement
+        }
+        return focusedElementAssessment != .unprotected
     }
 
     func focusedElementRoleDescription() -> String? {

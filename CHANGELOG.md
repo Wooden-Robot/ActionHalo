@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.26
+- 修复 Telegram、Codex 等应用无法提供辅助功能焦点元素时，选中文字后圆环无法自动出现、全局快捷键也无响应的问题。
+- 对精确匹配的兼容应用启用受 PID 绑定的 `Cmd+C` 回退，并将缺失焦点支持贯通选区检测、延迟展示和菜单目标上下文。
+- 保持安全输入、受保护文本和非白名单应用的失败关闭策略，同时将重复复制抑制限制在短时间窗口内，避免旧选区长期阻止相同文本再次触发。
+- 增加缺失焦点、应用切换、安全输入和重复选区的回归测试。
+
+- Fixed automatic radial-menu presentation and global hotkeys in Telegram, Codex, and other applications that do not expose an Accessibility focused element.
+- Added PID-bound `Cmd+C` fallback for exact compatibility matches and carried missing-focus support through selection detection, delayed presentation, and menu target context.
+- Preserved fail-closed behavior for secure input, protected text, and non-allowlisted applications while bounding duplicate-copy suppression to a short window so stale selections do not block identical text indefinitely.
+- Added regression coverage for missing focus, application changes, secure input, and repeated selections.
+
 ## v0.3.25
 - 将最低系统要求从 macOS 13 下调至 macOS 12 Monterey，并同步 SwiftPM、Universal 构建目标、App 启动要求与中英文文档。
 - 用基于 `NSLock` 的状态锁替换仅 macOS 13 及以上可用的 `OSAllocatedUnfairLock`，保持剪贴板回退与插件状态的并发安全。
