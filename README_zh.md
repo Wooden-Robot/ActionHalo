@@ -250,7 +250,7 @@ make package             # 本地验证用 .app 与 .dmg
 `make package` 生成 ad-hoc 签名的社区版 `.app` 与 `.dmg`，但不执行发布版本校验。可发布的社区版必须在干净提交及准确的 `vX.Y.Z` tag 上使用独立的 `make release` 门禁，并显式传入 `VERSION=X.Y.Z`；该版本必须同时匹配 tag、源码与打包后 App 的 `Info.plist` 两个版本字段：
 
 ```bash
-make release VERSION=0.3.25 SPARKLE_ACCOUNT="OpenFire"
+make release VERSION=0.3.26 SPARKLE_ACCOUNT="OpenFire"
 ```
 
 `make release` 会在仓库状态、版本、tag 或 Sparkle 配置不合法时提前失败，并再次核对打包后 App 的版本。检查通过后，它会对 Sparkle 嵌套 helper 和主 App 执行 ad-hoc 签名，验证 Apple Events 权限、通用架构以及最终 DMG 内的 App；随后使用钥匙串中 `OpenFire` 账户保存的 Ed25519 私钥生成 `.build/appcast.xml`。门禁会把 feed 与 enclosure 签名、归档长度、版本和 URL 全部与这份最终 DMG 逐项绑定。Ed25519 私钥是社区版发布的信任根，必须安全备份。

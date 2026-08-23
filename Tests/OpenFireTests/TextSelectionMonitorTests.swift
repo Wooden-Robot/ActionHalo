@@ -439,6 +439,54 @@ final class TextSelectionMonitorTests: XCTestCase {
         ))
     }
 
+    func testTelegramCopyFallbackAllowsSameTextAfterDuplicateSuppressionWindowExpires() {
+        let unreadableSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: nil,
+            rangeLocation: nil,
+            rangeLength: nil
+        )
+
+        XCTAssertTrue(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+            copiedText: "selected",
+            snapshotAtMouseDown: unreadableSnapshot,
+            currentSnapshot: nil,
+            frontmostBundleID: "ru.keepcoder.Telegram",
+            startedInTextContext: false,
+            endedInTextContext: false,
+            startedInsideFocusedElementBounds: false,
+            endedInsideFocusedElementBounds: false,
+            previouslyAcquiredText: "selected",
+            previousAcquisitionAge: 46 * 60
+        ))
+    }
+
+    func testSelectionContextAllowsTelegramFallbackWithoutFocusedElement() {
+        XCTAssertTrue(TextSelectionMonitor.shouldContinueSelectionContext(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: false,
+            currentFocusedElementAvailable: false,
+            focusedElementMatches: false
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueSelectionContext(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "com.example.app",
+            expectedFocusedElementAvailable: false,
+            currentFocusedElementAvailable: false,
+            focusedElementMatches: false
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueSelectionContext(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 99,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: false,
+            currentFocusedElementAvailable: false,
+            focusedElementMatches: false
+        ))
+    }
+
     func testShouldSuppressForFrontmostAppSuppressesOpenFireItself() {
         XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
             bundleID: "com.openfire.app",

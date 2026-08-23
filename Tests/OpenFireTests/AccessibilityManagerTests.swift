@@ -568,6 +568,24 @@ final class AccessibilityManagerTests: XCTestCase {
         ))
     }
 
+    func testCopyFallbackAllowsMissingFocusOnlyWhenCallerExplicitlyOptsIn() {
+        XCTAssertTrue(AccessibilityManager.copyFallbackFocusedElementMatches(
+            expectedFocusedElementAvailable: false,
+            focusedElementMatches: false,
+            allowMissingFocusedElement: true
+        ))
+        XCTAssertFalse(AccessibilityManager.copyFallbackFocusedElementMatches(
+            expectedFocusedElementAvailable: false,
+            focusedElementMatches: false,
+            allowMissingFocusedElement: false
+        ))
+        XCTAssertFalse(AccessibilityManager.copyFallbackFocusedElementMatches(
+            expectedFocusedElementAvailable: true,
+            focusedElementMatches: false,
+            allowMissingFocusedElement: true
+        ))
+    }
+
     func testCopyFallbackRevalidatesContextAndPasteboardAfterSnapshot() {
         let initialState = AccessibilityManager.PasteboardState(
             changeCount: 10,
@@ -606,6 +624,45 @@ final class AccessibilityManagerTests: XCTestCase {
             elementAssessment: .unprotected,
             ancestorAssessments: [.unprotected],
             secureEventInputEnabled: false
+        ))
+    }
+
+    func testCopyFallbackAllowsMissingFocusWithoutWeakeningProtectedTextChecks() {
+        XCTAssertFalse(AccessibilityManager.shouldSuppressCopyFallback(
+            focusedElementAssessment: nil,
+            secureEventInputEnabled: false,
+            accessibilityEnabled: true,
+            allowMissingFocusedElement: true
+        ))
+        XCTAssertTrue(AccessibilityManager.shouldSuppressCopyFallback(
+            focusedElementAssessment: nil,
+            secureEventInputEnabled: false,
+            accessibilityEnabled: true,
+            allowMissingFocusedElement: false
+        ))
+        XCTAssertTrue(AccessibilityManager.shouldSuppressCopyFallback(
+            focusedElementAssessment: nil,
+            secureEventInputEnabled: true,
+            accessibilityEnabled: true,
+            allowMissingFocusedElement: true
+        ))
+        XCTAssertTrue(AccessibilityManager.shouldSuppressCopyFallback(
+            focusedElementAssessment: .protectedContent,
+            secureEventInputEnabled: false,
+            accessibilityEnabled: true,
+            allowMissingFocusedElement: true
+        ))
+        XCTAssertTrue(AccessibilityManager.shouldSuppressCopyFallback(
+            focusedElementAssessment: .indeterminate,
+            secureEventInputEnabled: false,
+            accessibilityEnabled: true,
+            allowMissingFocusedElement: true
+        ))
+        XCTAssertTrue(AccessibilityManager.shouldSuppressCopyFallback(
+            focusedElementAssessment: nil,
+            secureEventInputEnabled: false,
+            accessibilityEnabled: false,
+            allowMissingFocusedElement: true
         ))
     }
 
