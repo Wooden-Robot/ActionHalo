@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.3.27
+
 - 项目对外品牌、应用/可执行文件、SwiftPM 模块、构建产物、插件格式、界面、文档和 GitHub 发布地址统一更名为 ActionHalo。
 - 新插件规范改为 `.actionhaloext`、`com.actionhalo.*` 与 `ACTIONHALO_TEXT(_FILE)`；兼容期内仍可打开、迁移和执行旧 `.openfireext`、`com.openfire.*` 与 `OPENFIRE_TEXT(_FILE)` 插件。
 - 保留现有 Bundle ID、Sparkle 公钥、签名密钥账户和插件指纹版本，延续老用户的设置、权限身份、脚本信任与自动更新链。

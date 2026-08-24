@@ -14,9 +14,9 @@
     <!-- Kept stable so existing installations can update to ActionHalo via Sparkle. -->
     <string>com.openfire.app</string>
     <key>CFBundleVersion</key>
-    <string>0.3.26</string>
+    <string>0.3.27</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.3.26</string>
+    <string>0.3.27</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
