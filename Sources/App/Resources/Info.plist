@@ -3,12 +3,15 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>OpenFire</string>
+    <string>ActionHalo</string>
     <key>CFBundleDisplayName</key>
-    <string>OpenFire</string>
+    <string>ActionHalo</string>
+    <key>CFBundleExecutable</key>
+    <string>ActionHalo</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
+    <!-- Kept stable so existing installations can update to ActionHalo via Sparkle. -->
     <string>com.openfire.app</string>
     <key>CFBundleVersion</key>
     <string>0.3.26</string>
@@ -21,11 +24,11 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSAccessibilityUsageDescription</key>
-    <string>OpenFire needs accessibility access to detect text selection across applications.</string>
+    <string>ActionHalo needs accessibility access to detect text selection across applications.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>OpenFire uses Apple Events so enabled plugins can perform requested actions in other applications.</string>
+    <string>ActionHalo uses Apple Events so enabled plugins can perform requested actions in other applications.</string>
     <key>SUFeedURL</key>
-    <string>https://github.com/Wooden-Robot/OpenFire/releases/latest/download/appcast.xml</string>
+    <string>https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/appcast.xml</string>
     <key>SUPublicEDKey</key>
     <string>YpDJbUKWW/mYy47N4BULh0vfKr4PGvV5dv5OAGyJrAo=</string>
     <key>SUEnableAutomaticChecks</key>
@@ -43,10 +46,28 @@
         <dict>
             <key>CFBundleTypeExtensions</key>
             <array>
+                <string>actionhaloext</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>ActionHalo Extension</string>
+            <key>CFBundleTypeRole</key>
+            <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSTypeIsPackage</key>
+            <true/>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.actionhalo.extension</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
                 <string>openfireext</string>
             </array>
             <key>CFBundleTypeName</key>
-            <string>OpenFire Extension</string>
+            <string>ActionHalo Legacy Extension</string>
             <key>CFBundleTypeRole</key>
             <string>Editor</string>
             <key>LSHandlerRank</key>
@@ -63,9 +84,28 @@
     <array>
         <dict>
             <key>UTTypeIdentifier</key>
+            <string>com.actionhalo.extension</string>
+            <key>UTTypeDescription</key>
+            <string>ActionHalo Extension Package</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>com.apple.package</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>actionhaloext</string>
+                </array>
+            </dict>
+            <key>UTTypeIconFile</key>
+            <string>AppIcon</string>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
             <string>com.openfire.extension</string>
             <key>UTTypeDescription</key>
-            <string>OpenFire Extension Package</string>
+            <string>ActionHalo Legacy Extension Package</string>
             <key>UTTypeConformsTo</key>
             <array>
                 <string>com.apple.package</string>

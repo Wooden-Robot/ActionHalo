@@ -13,10 +13,12 @@ info_plist=""
 artifact_app=""
 require_ad_hoc=false
 package_resolved="$project_root/Package.resolved"
-expected_feed_url="https://github.com/Wooden-Robot/OpenFire/releases/latest/download/appcast.xml"
+expected_feed_url="https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/appcast.xml"
 expected_public_key="YpDJbUKWW/mYy47N4BULh0vfKr4PGvV5dv5OAGyJrAo="
 expected_sparkle_version="2.9.4"
 expected_sparkle_revision="b6496a74a087257ef5e6da1c5b29a447a60f5bd7"
+expected_app_name="ActionHalo"
+expected_bundle_identifier="com.openfire.app"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -64,6 +66,10 @@ verify_plist() {
     local verify_before_extraction
     local require_signed_feed
     local failure_expiration
+    local bundle_name
+    local bundle_display_name
+    local bundle_executable
+    local bundle_identifier
 
     feed_url="$(plist_value "$plist_path" SUFeedURL)"
     public_key="$(plist_value "$plist_path" SUPublicEDKey)"
@@ -72,11 +78,15 @@ verify_plist() {
     verify_before_extraction="$(plist_value "$plist_path" SUVerifyUpdateBeforeExtraction)"
     require_signed_feed="$(plist_value "$plist_path" SURequireSignedFeed)"
     failure_expiration="$(plist_value "$plist_path" SUSignedFeedFailureExpirationInterval)"
+    bundle_name="$(plist_value "$plist_path" CFBundleName)"
+    bundle_display_name="$(plist_value "$plist_path" CFBundleDisplayName)"
+    bundle_executable="$(plist_value "$plist_path" CFBundleExecutable)"
+    bundle_identifier="$(plist_value "$plist_path" CFBundleIdentifier)"
 
     [[ "$feed_url" == "$expected_feed_url" ]] \
         || fail "$description has an unexpected Sparkle feed URL: $feed_url"
     [[ "$public_key" == "$expected_public_key" ]] \
-        || fail "$description does not contain the pinned OpenFire update key."
+        || fail "$description does not contain the pinned ActionHalo update key."
     [[ "$automatic_checks" == "true" ]] \
         || fail "$description must enable automatic update checks by default."
     [[ "$automatic_install" == "false" ]] \
@@ -87,6 +97,26 @@ verify_plist() {
         || fail "$description must require signed appcasts."
     [[ "$failure_expiration" == "0" ]] \
         || fail "$description must not expire signed-feed verification failures."
+    [[ "$bundle_name" == "$expected_app_name" ]] \
+        || fail "$description has an unexpected CFBundleName: $bundle_name"
+    [[ "$bundle_display_name" == "$expected_app_name" ]] \
+        || fail "$description has an unexpected CFBundleDisplayName: $bundle_display_name"
+    [[ "$bundle_executable" == "$expected_app_name" ]] \
+        || fail "$description has an unexpected CFBundleExecutable: $bundle_executable"
+    [[ "$bundle_identifier" == "$expected_bundle_identifier" ]] \
+        || fail "$description must preserve $expected_bundle_identifier during the rename transition."
+    [[ "$(plist_value "$plist_path" 'CFBundleDocumentTypes:0:CFBundleTypeExtensions:0')" == "actionhaloext" ]] \
+        || fail "$description does not register the canonical .actionhaloext package."
+    [[ "$(plist_value "$plist_path" 'CFBundleDocumentTypes:0:LSItemContentTypes:0')" == "com.actionhalo.extension" ]] \
+        || fail "$description does not register the canonical ActionHalo extension UTI."
+    [[ "$(plist_value "$plist_path" 'CFBundleDocumentTypes:1:CFBundleTypeExtensions:0')" == "openfireext" ]] \
+        || fail "$description does not preserve legacy .openfireext opening support."
+    [[ "$(plist_value "$plist_path" 'CFBundleDocumentTypes:1:LSItemContentTypes:0')" == "com.openfire.extension" ]] \
+        || fail "$description does not preserve the legacy OpenFire extension UTI."
+    [[ "$(plist_value "$plist_path" 'UTExportedTypeDeclarations:0:UTTypeIdentifier')" == "com.actionhalo.extension" ]] \
+        || fail "$description does not export the canonical ActionHalo extension UTI."
+    [[ "$(plist_value "$plist_path" 'UTExportedTypeDeclarations:1:UTTypeIdentifier')" == "com.openfire.extension" ]] \
+        || fail "$description does not continue exporting the legacy OpenFire extension UTI."
 }
 
 sparkle_pin_index=""
@@ -113,12 +143,12 @@ verify_plist "$info_plist" "Source Info.plist"
 if [[ -n "$artifact_app" ]]; then
     [[ -d "$artifact_app" ]] || fail "Packaged app does not exist: $artifact_app"
     artifact_plist="$artifact_app/Contents/Info.plist"
-    executable="$artifact_app/Contents/MacOS/OpenFire"
+    executable="$artifact_app/Contents/MacOS/ActionHalo"
     framework="$artifact_app/Contents/Frameworks/Sparkle.framework"
     sparkle_license="$artifact_app/Contents/Resources/ThirdPartyLicenses/Sparkle.txt"
 
     [[ -f "$artifact_plist" ]] || fail "Packaged Info.plist is missing."
-    [[ -x "$executable" ]] || fail "Packaged OpenFire executable is missing."
+    [[ -x "$executable" ]] || fail "Packaged ActionHalo executable is missing."
     [[ -d "$framework" ]] || fail "Packaged Sparkle.framework is missing."
     [[ -f "$sparkle_license" ]] || fail "Packaged Sparkle license notice is missing."
     grep -Fq 'Copyright (c) 2006-2013 Andy Matuschak.' "$sparkle_license" \
@@ -133,13 +163,13 @@ if [[ -n "$artifact_app" ]]; then
     codesign --verify --deep --strict "$artifact_app" >/dev/null 2>&1 \
         || fail "Packaged app signature is invalid."
     otool -L "$executable" | grep -Fq "@rpath/Sparkle.framework/Versions/B/Sparkle" \
-        || fail "OpenFire is not linked to the embedded Sparkle framework through @rpath."
+        || fail "ActionHalo is not linked to the embedded Sparkle framework through @rpath."
     otool -l "$executable" | grep -A2 LC_RPATH | grep -Fq "@executable_path/../Frameworks" \
-        || fail "OpenFire does not contain the embedded-framework runtime search path."
+        || fail "ActionHalo does not contain the embedded-framework runtime search path."
 
     executable_arches="$(lipo -archs "$executable")"
     [[ " $executable_arches " == *" x86_64 "* && " $executable_arches " == *" arm64 "* ]] \
-        || fail "Packaged OpenFire executable is not universal: $executable_arches"
+        || fail "Packaged ActionHalo executable is not universal: $executable_arches"
 
     framework_arches="$(lipo -archs "$framework/Versions/B/Sparkle")"
     [[ " $framework_arches " == *" x86_64 "* && " $framework_arches " == *" arm64 "* ]] \
@@ -152,10 +182,10 @@ if [[ -n "$artifact_app" ]]; then
             || fail "Community release app must use an ad-hoc code signature."
         grep -Eq '^TeamIdentifier=not set$' <<<"$signing_metadata" \
             || fail "Community release app must not carry an Apple Team identity."
-        [[ "$(plist_value "$artifact_plist" CFBundleIdentifier)" == "com.openfire.app" ]] \
+        [[ "$(plist_value "$artifact_plist" CFBundleIdentifier)" == "$expected_bundle_identifier" ]] \
             || fail "Release app has an unexpected bundle identifier."
         ! grep -Eq '^CodeDirectory .*flags=.*runtime' <<<"$signing_metadata" \
-            || fail "Ad-hoc OpenFire must not enable Hardened Runtime because Library Validation blocks its separately ad-hoc-signed Sparkle framework."
+            || fail "Ad-hoc ActionHalo must not enable Hardened Runtime because Library Validation blocks its separately ad-hoc-signed Sparkle framework."
 
         signed_items=(
             "$framework/Versions/B/XPCServices/Installer.xpc"

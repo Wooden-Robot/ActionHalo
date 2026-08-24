@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- 项目对外品牌、应用/可执行文件、SwiftPM 模块、构建产物、插件格式、界面、文档和 GitHub 发布地址统一更名为 ActionHalo。
+- 新插件规范改为 `.actionhaloext`、`com.actionhalo.*` 与 `ACTIONHALO_TEXT(_FILE)`；兼容期内仍可打开、迁移和执行旧 `.openfireext`、`com.openfire.*` 与 `OPENFIRE_TEXT(_FILE)` 插件。
+- 保留现有 Bundle ID、Sparkle 公钥、签名密钥账户和插件指纹版本，延续老用户的设置、权限身份、脚本信任与自动更新链。
+- 旧用户插件按 ID 一次性复制到 ActionHalo 数据目录，ActionHalo 侧已有插件优先，旧副本不删除且用户删除后的插件不会在重启时复活。
+
+- Renamed the public brand, app/executable, SwiftPM module, build artifacts, plugin format, UI, documentation, and GitHub release URLs to ActionHalo.
+- Made `.actionhaloext`, `com.actionhalo.*`, and `ACTIONHALO_TEXT(_FILE)` canonical while continuing to open, migrate, and run legacy `.openfireext`, `com.openfire.*`, and `OPENFIRE_TEXT(_FILE)` plugins during the transition.
+- Preserved the existing bundle identifier, Sparkle public key, signing-key account, and plugin fingerprint version so existing settings, permission identity, script trust, and the signed update chain remain intact.
+- Added one-time, ID-tracked migration into the ActionHalo plugin directory; current packages win conflicts, rollback copies remain untouched, and deleted migrated plugins do not reappear on restart.
+
 ## v0.3.26
 - 修复 Telegram、Codex 等应用无法提供辅助功能焦点元素时，选中文字后圆环无法自动出现、全局快捷键也无响应的问题。
 - 对精确匹配的兼容应用启用受 PID 绑定的 `Cmd+C` 回退，并将缺失焦点支持贯通选区检测、延迟展示和菜单目标上下文。
@@ -82,11 +94,11 @@
 - Added `AccessibilityManager` and `TextSelectionMonitor` regression coverage for Chrome, Arc/Codex, Telegram, and Remote Desktop boundaries.
 
 ## v0.3.19
-- 修复直接往插件目录新增 `.openfireext` 插件包后列表不刷新的问题：现在会同时监听用户插件目录和已有插件包目录，包内 `Config.json` 后续写入也会触发重新加载。
+- 修复直接往插件目录新增 `.actionhaloext` 插件包后列表不刷新的问题：现在会同时监听用户插件目录和已有插件包目录，包内 `Config.json` 后续写入也会触发重新加载。
 - 插件管理列表滚动条改为默认显示，避免用户误以为只加载了前 10 个插件。
 - 补充 `PluginManager` 回归测试，覆盖可监听插件目录筛选与新增插件包监听链路。
 
-- Fixed plugin packages added directly to the plugins folder not appearing in the management list: OpenFire now watches both the user plugins directory and existing `.openfireext` package directories, so later writes such as `Config.json` trigger reloads.
+- Fixed plugin packages added directly to the plugins folder not appearing in the management list: ActionHalo now watches both the user plugins directory and existing `.actionhaloext` package directories, so later writes such as `Config.json` trigger reloads.
 - Made the plugin management scrollbar always visible so users can tell there are more than the first 10 plugins.
 - Added `PluginManager` regression coverage for watchable plugin-directory discovery and newly added plugin package watching.
 
@@ -146,12 +158,12 @@
 - Added regression coverage for rich-text context detection, asynchronous pasteboard updates, and the restored “started in text context” fallback gating in `AccessibilityManager` and `TextSelectionMonitor`.
 
 ## v0.3.13
-- 调整 Accessibility 旧记录清理逻辑：首次安装、同版本重装或升级后只要当前权限实际缺失，就会在弹出权限引导前先同步 reset，避免用户进入辅助功能页时仍看到旧的 OpenFire 授权记录。
+- 调整 Accessibility 旧记录清理逻辑：首次安装、同版本重装或升级后只要当前权限实际缺失，就会在弹出权限引导前先同步 reset，避免用户进入辅助功能页时仍看到旧的 ActionHalo 授权记录。
 - 修复文件拖拽与文本拖选的判定冲突：文件拖拽抑制现在要求拖拽 pasteboard 在本次手势内确实发生变化，避免旧的拖拽残留把正常文本选中一直误判成文件拖拽。
 - 修复 Finder 中文本编辑场景被过度拦截的问题：普通文件拖拽仍不触发圆环，但在 Finder 重命名文件名时选中文本会恢复正常触发。
 - 补充 `AppDelegate` 与 `TextSelectionMonitor` 回归测试，覆盖同版本重装缺权限、拖拽 pasteboard 变化判定和 Finder 可编辑文本焦点等场景。
 
-- Refined stale Accessibility-entry cleanup so first installs, same-version reinstalls, and upgrades all reset before prompting whenever access is actually missing, preventing old OpenFire entries from misleading users in System Settings.
+- Refined stale Accessibility-entry cleanup so first installs, same-version reinstalls, and upgrades all reset before prompting whenever access is actually missing, preventing old ActionHalo entries from misleading users in System Settings.
 - Fixed the conflict between file-drag suppression and normal text selection by requiring the drag pasteboard to change during the current gesture before treating it as a file drag.
 - Restored radial-menu triggering for editable Finder rename fields while continuing to suppress ordinary file-drag interactions.
 - Added regression coverage for the updated `AppDelegate` and `TextSelectionMonitor` behaviors, including same-version reinstalls without access, drag-pasteboard change gating, and editable Finder text focus.
@@ -191,11 +203,11 @@
 - Added regression coverage for Finder and Desktop (WindowManager) frontmost suppression to prevent file drag installs from being misclassified as text selection.
 
 ## v0.3.8
-- 修复截图工具兼容性：当前台应用是系统截图、Snipaste、CleanShot X、Shottr、Xnapper、Snagit、PixPin、iShot 等抓屏工具时，OpenFire 不再介入鼠标抬起后的选区/输入框检测，避免截图界面因为鼠标移动或状态切换被打断。
-- 同时屏蔽 OpenFire 自身作为前台应用时的全局触发检测，减少自干扰。
+- 修复截图工具兼容性：当前台应用是系统截图、Snipaste、CleanShot X、Shottr、Xnapper、Snagit、PixPin、iShot 等抓屏工具时，ActionHalo 不再介入鼠标抬起后的选区/输入框检测，避免截图界面因为鼠标移动或状态切换被打断。
+- 同时屏蔽 ActionHalo 自身作为前台应用时的全局触发检测，减少自干扰。
 
-- Fixed screen-capture compatibility so OpenFire no longer hooks mouse-up selection or empty-input detection while the frontmost app is a screenshot tool such as macOS Screenshot, Snipaste, CleanShot X, Shottr, Xnapper, Snagit, PixPin, or iShot.
-- Also suppressed global trigger detection while OpenFire itself is frontmost to reduce self-interference.
+- Fixed screen-capture compatibility so ActionHalo no longer hooks mouse-up selection or empty-input detection while the frontmost app is a screenshot tool such as macOS Screenshot, Snipaste, CleanShot X, Shottr, Xnapper, Snagit, PixPin, or iShot.
+- Also suppressed global trigger detection while ActionHalo itself is frontmost to reduce self-interference.
 
 ## v0.3.6
 - 修复受保护输入场景的误触发：密码框、隐藏输入框及开启 Secure Event Input 的输入上下文中，不再因为选中内容而弹出圆环。
@@ -264,7 +276,7 @@
 - 修复 GTA 氛围模式下脚本插件信任弹窗无法点击的问题，改为先收起菜单再弹确认框。
 - 优化插件管理和编辑器界面：调整操作按钮布局，增强信任徽章视觉状态，修复长提示文案遮挡，并显著增大执行内容输入区高度。
 - 新增诊断窗口，可查看当前前台应用、焦点元素、选中文本状态、最近一次文本获取来源与失败原因，以及每个插件当前为何可见或不可用。
-- 持久化 OpenFire 全局启用状态，并新增“当前应用插件管理”窗口，支持按应用禁用特定插件且在重启后保留。
+- 持久化 ActionHalo 全局启用状态，并新增“当前应用插件管理”窗口，支持按应用禁用特定插件且在重启后保留。
 - 补充并扩展单元测试，覆盖多屏坐标换算、脚本插件信任、按应用插件覆盖和诊断相关行为。
 
 - Fixed Accessibility coordinate conversion across multiple displays to reduce false hits on secondary and non-primary screens.
@@ -274,7 +286,7 @@
 - Fixed script-plugin trust prompts being unclickable in GTA mode by dismissing the menu before presenting the confirmation dialog.
 - Refined plugin management and editor UI by reworking action button layout, strengthening trust badge states, fixing clipped long warnings, and giving action-content editors much more vertical space.
 - Added a diagnostics window that shows the current frontmost app, focused element, selected-text status, latest text acquisition source and failure reason, and why each plugin is currently visible or unavailable.
-- Persisted the global OpenFire enabled state and added a “manage plugins in current app” window so app-specific plugin disables survive relaunches.
+- Persisted the global ActionHalo enabled state and added a “manage plugins in current app” window so app-specific plugin disables survive relaunches.
 - Expanded unit test coverage for multi-display coordinates, script-plugin trust, per-app plugin overrides, and diagnostics-related behavior.
 
 ## v0.2.2
@@ -295,14 +307,14 @@
 - Expanded unit test coverage for path parsing, pagination, plugin merging, button states, and hover behavior.
 
 ## v0.2.1
-- 菜单栏图标支持右键直接切换 OpenFire 的启用状态。
+- 菜单栏图标支持右键直接切换 ActionHalo 的启用状态。
 - 新增默认关闭的 “Run in iTerm2 / 在 iTerm2 中执行” 插件，可将选中文本作为 shell 命令发送到 iTerm2 执行。
 - 更新中英文 README，明确产品灵感同时来自 GTA V 和 PopClip。
 - 修正文档中的 Script Extensions 示例，补充推荐的外部脚本文件写法与内联脚本说明。
 
-- Added right-click toggling on the menu bar icon to enable or disable OpenFire directly.
+- Added right-click toggling on the menu bar icon to enable or disable ActionHalo directly.
 - Added a default-disabled "Run in iTerm2" plugin that sends selected text to iTerm2 as a shell command.
-- Updated both READMEs to clarify that OpenFire draws inspiration from both GTA V and PopClip.
+- Updated both READMEs to clarify that ActionHalo draws inspiration from both GTA V and PopClip.
 - Fixed the Script Extensions docs to show the recommended bundled script-file layout alongside inline scripts.
 
 ## v0.2.0

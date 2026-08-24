@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Default-disable OpenFire inside iWork, Microsoft Office, and WPS for both fresh installs and upgrades while preserving user opt-in changes after the migration runs once.
+**Goal:** Default-disable ActionHalo inside iWork, Microsoft Office, and WPS for both fresh installs and upgrades while preserving user opt-in changes after the migration runs once.
 
 **Architecture:** Add a one-time startup migration in `AppDelegate` that merges a fixed office-suite bundle-id set into `ExcludedApps` and records a migration version marker. Keep runtime suppression logic unchanged so the existing status bar toggle and blacklist window remain the single source of truth.
 
@@ -13,7 +13,7 @@
 ### Task 1: Add The One-Time Office-App Migration
 
 **Files:**
-- Modify: `/Users/woodenrobot/code/github/OpenFire/Sources/App/App/AppDelegate.swift`
+- Modify: `/Users/woodenrobot/code/github/ActionHalo/Sources/App/App/AppDelegate.swift`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -97,14 +97,14 @@ Expected:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/woodenrobot/code/github/OpenFire/Sources/App/App/AppDelegate.swift /Users/woodenrobot/code/github/OpenFire/Tests/OpenFireTests/AppDelegateTests.swift
+git add /Users/woodenrobot/code/github/ActionHalo/Sources/App/App/AppDelegate.swift /Users/woodenrobot/code/github/ActionHalo/Tests/ActionHaloTests/AppDelegateTests.swift
 git commit -m "Add office-suite default exclusion migration"
 ```
 
 ### Task 2: Cover Merge And Upgrade Edge Cases
 
 **Files:**
-- Modify: `/Users/woodenrobot/code/github/OpenFire/Tests/OpenFireTests/AppDelegateTests.swift`
+- Modify: `/Users/woodenrobot/code/github/ActionHalo/Tests/ActionHaloTests/AppDelegateTests.swift`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -164,6 +164,6 @@ Expected:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add /Users/woodenrobot/code/github/OpenFire/Tests/OpenFireTests/AppDelegateTests.swift
+git add /Users/woodenrobot/code/github/ActionHalo/Tests/ActionHaloTests/AppDelegateTests.swift
 git commit -m "Test office-suite exclusion migration edge cases"
 ```

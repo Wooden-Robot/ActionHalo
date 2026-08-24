@@ -1,0 +1,20 @@
+{
+    "name": "删除",
+    "localizedNames": {
+        "en": "Delete"
+    },
+    "icon": "trash",
+    "identifier": "com.actionhalo.delete",
+    "description": "删除当前选中的文本",
+    "localizedDescriptions": {
+        "en": "Delete the current text selection"
+    },
+    "order": 25,
+    "action": {
+        "type": "key-combo",
+        "key": "delete"
+    },
+    "filter": {
+        "minLength": 1
+    }
+}

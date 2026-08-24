@@ -1,10 +1,24 @@
 import Foundation
 
-/// Loads and parses .openfireext plugin packages
+/// Loads and parses ActionHalo plugin packages.
 final class PluginLoader {
+    static let packageExtension = "actionhaloext"
+    static let legacyPackageExtension = "openfireext"
+    static let supportedPackageExtensions: Set<String> = [
+        packageExtension,
+        legacyPackageExtension,
+    ]
     static let maximumConfigBytes = 1 * 1024 * 1024
+
+    static func isSupportedPackageExtension(_ pathExtension: String) -> Bool {
+        supportedPackageExtensions.contains(pathExtension.lowercased())
+    }
+
+    static func isSupportedPackageURL(_ url: URL) -> Bool {
+        isSupportedPackageExtension(url.pathExtension)
+    }
     
-    /// Load a plugin from a .openfireext directory
+    /// Load a plugin from a .actionhaloext directory
     static func load(
         from directoryURL: URL,
         allowReservedCoreIdentifier: Bool = false
@@ -14,7 +28,7 @@ final class PluginLoader {
               rootValues.isDirectory == true,
               rootValues.isSymbolicLink != true,
               PluginManager.isInstallPackageWithinLimits(directoryURL) else {
-            NSLog("[OpenFire] Plugin package root is unsafe or exceeds limits: \(directoryURL.path)")
+            NSLog("[ActionHalo] Plugin package root is unsafe or exceeds limits: \(directoryURL.path)")
             return nil
         }
 
@@ -30,14 +44,26 @@ final class PluginLoader {
               values.isSymbolicLink != true,
               let fileSize = values.fileSize,
               fileSize <= maximumConfigBytes else {
-            NSLog("[OpenFire] Plugin config is missing, unsafe, or too large: \(configURL.path)")
+            NSLog("[ActionHalo] Plugin config is missing, unsafe, or too large: \(configURL.path)")
             return nil
         }
         
         do {
             let data = try Data(contentsOf: configURL, options: .mappedIfSafe)
             let decoder = JSONDecoder()
-            let config = try decoder.decode(PluginConfig.self, from: data)
+            let decodedConfig = try decoder.decode(PluginConfig.self, from: data)
+            let config = PluginConfig(
+                name: decodedConfig.name,
+                localizedNames: decodedConfig.localizedNames,
+                identifier: PluginManager.canonicalPluginIdentifier(decodedConfig.identifier),
+                action: decodedConfig.action,
+                icon: decodedConfig.icon,
+                description: decodedConfig.description,
+                localizedDescriptions: decodedConfig.localizedDescriptions,
+                filter: decodedConfig.filter,
+                order: decodedConfig.order,
+                isDefaultDisabled: decodedConfig.isDefaultDisabled
+            )
             
             // Validate required fields
             guard !config.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -45,29 +71,29 @@ final class PluginLoader {
                     config.identifier,
                     allowReservedCoreIdentifier: allowReservedCoreIdentifier
                   ) == nil else {
-                NSLog("[OpenFire] Plugin config missing required fields: \(directoryURL.lastPathComponent)")
+                NSLog("[ActionHalo] Plugin config missing required fields: \(directoryURL.lastPathComponent)")
                 return nil
             }
 
             if config.action.type == .url {
                 guard let template = config.action.url,
                       PluginManager.isAllowedPluginURLTemplate(template) else {
-                    NSLog("[OpenFire] Plugin uses an unsupported or invalid URL: \(directoryURL.lastPathComponent)")
+                    NSLog("[ActionHalo] Plugin uses an unsupported or invalid URL: \(directoryURL.lastPathComponent)")
                     return nil
                 }
             }
             
             let plugin = Plugin(config: config, directoryURL: directoryURL)
-            NSLog("[OpenFire] Loaded plugin: \(config.name) (\(config.identifier))")
+            NSLog("[ActionHalo] Loaded plugin: \(config.name) (\(config.identifier))")
             return plugin
             
         } catch {
-            NSLog("[OpenFire] Failed to load plugin at \(directoryURL.path): \(error.localizedDescription)")
+            NSLog("[ActionHalo] Failed to load plugin at \(directoryURL.path): \(error.localizedDescription)")
             return nil
         }
     }
     
-    /// Scan a directory for .openfireext packages
+    /// Scan a directory for current and legacy ActionHalo packages.
     static func scanDirectory(
         _ directoryURL: URL,
         allowReservedCoreIdentifiers: Bool = false
@@ -104,7 +130,7 @@ final class PluginLoader {
             }
             
             for itemURL in sortedContents {
-                if itemURL.pathExtension == "openfireext" {
+                if isSupportedPackageURL(itemURL) {
                     if let plugin = load(
                         from: itemURL,
                         allowReservedCoreIdentifier: allowReservedCoreIdentifiers
@@ -114,7 +140,7 @@ final class PluginLoader {
                 }
             }
         } catch {
-            NSLog("[OpenFire] Failed to scan plugin directory: \(error.localizedDescription)")
+            NSLog("[ActionHalo] Failed to scan plugin directory: \(error.localizedDescription)")
         }
         
         return plugins

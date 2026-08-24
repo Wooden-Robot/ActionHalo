@@ -26,7 +26,7 @@
 "Cancel" = "Cancel";
 "Install Succeeded" = "Install Succeeded";
 "Install Failed" = "Install Failed";
-"Warning: this plugin can perform protected actions on your Mac. OpenFire will require explicit trust before the first run, and again after plugin changes." = "Warning: this plugin can perform protected actions on your Mac. OpenFire will require explicit trust before the first run, and again after plugin changes.";
+"Warning: this plugin can perform protected actions on your Mac. ActionHalo will require explicit trust before the first run, and again after plugin changes." = "Warning: this plugin can perform protected actions on your Mac. ActionHalo will require explicit trust before the first run, and again after plugin changes.";
 "Trust Plugin Before Running" = "Trust Plugin Before Running";
 "Plugin '%@' can perform protected actions on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes." = "Plugin '%@' can perform protected actions on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes.";
 "Trust and Run" = "Trust and Run";
@@ -37,24 +37,24 @@
 "Auto Trigger Toggle Hotkey must include Command, Option, or Control." = "Auto Trigger Toggle Hotkey must include Command, Option, or Control.";
 "Hotkey Registration Failed" = "Hotkey Registration Failed";
 "Plugin '%@' installed successfully." = "Plugin '%@' installed successfully.";
-"Invalid plugin package. Make sure the .openfireext folder contains a valid Config.json." = "Invalid plugin package. Make sure the .openfireext folder contains a valid Config.json.";
+"Invalid plugin package. Make sure the .actionhaloext folder contains a valid Config.json." = "Invalid plugin package. Make sure the .actionhaloext folder contains a valid Config.json.";
 "Plugin identifier is invalid: %@" = "Plugin identifier is invalid: %@";
 "Installing this plugin would replace a different plugin (%@). Rename one of the plugins and try again." = "Installing this plugin would replace a different plugin (%@). Rename one of the plugins and try again.";
 "The plugin changed after the install confirmation was shown. Review it and try again." = "The plugin changed after the install confirmation was shown. Review it and try again.";
 "Plugin validation failed after copying. The package may have changed during installation." = "Plugin validation failed after copying. The package may have changed during installation.";
 "Failed to copy plugin to installation directory. Check permissions.\n(%@)\n%@" = "Failed to copy plugin to installation directory. Check permissions.\n(%@)\n%@";
 "Accessibility Permission Lost" = "Accessibility Permission Lost";
-"OpenFire relies on Accessibility to detect text selection. Please re-check OpenFire in 'System Settings -> Privacy & Security -> Accessibility'." = "OpenFire relies on Accessibility to detect text selection. Please re-check OpenFire in 'System Settings -> Privacy & Security -> Accessibility'.";
+"ActionHalo relies on Accessibility to detect text selection. Please re-check ActionHalo in 'System Settings -> Privacy & Security -> Accessibility'." = "ActionHalo relies on Accessibility to detect text selection. Please re-check ActionHalo in 'System Settings -> Privacy & Security -> Accessibility'.";
 "Text Selection Monitor Failed to Start" = "Text Selection Monitor Failed to Start";
-"OpenFire does not currently have Accessibility permission. Please re-check OpenFire in System Settings." = "OpenFire does not currently have Accessibility permission. Please re-check OpenFire in System Settings.";
-"OpenFire could not start the text selection monitor. If Accessibility is already enabled but OpenFire still does not respond, reset the permission record and re-check OpenFire in System Settings." = "OpenFire could not start the text selection monitor. If Accessibility is already enabled but OpenFire still does not respond, reset the permission record and re-check OpenFire in System Settings.";
+"ActionHalo does not currently have Accessibility permission. Please re-check ActionHalo in System Settings." = "ActionHalo does not currently have Accessibility permission. Please re-check ActionHalo in System Settings.";
+"ActionHalo could not start the text selection monitor. If Accessibility is already enabled but ActionHalo still does not respond, reset the permission record and re-check ActionHalo in System Settings." = "ActionHalo could not start the text selection monitor. If Accessibility is already enabled but ActionHalo still does not respond, reset the permission record and re-check ActionHalo in System Settings.";
 "Open System Settings" = "Open System Settings";
 "Reset Permission" = "Reset Permission";
 "Quit" = "Quit";
 "Permission Restored" = "Permission Restored";
-"OpenFire has resumed working." = "OpenFire has resumed working.";
+"ActionHalo has resumed working." = "ActionHalo has resumed working.";
 "Unsaved Plugin Changes" = "Unsaved Plugin Changes";
-"One or more plugin editors have unsaved changes. Save them before quitting or restarting OpenFire." = "One or more plugin editors have unsaved changes. Save them before quitting or restarting OpenFire.";
+"One or more plugin editors have unsaved changes. Save them before quitting or restarting ActionHalo." = "One or more plugin editors have unsaved changes. Save them before quitting or restarting ActionHalo.";
 "Cancel Quit" = "Cancel Quit";
 "Discard Changes and Quit" = "Discard Changes and Quit";
 "OK" = "OK";
@@ -104,7 +104,7 @@
 "✓ GTA Mode" = "✓ GTA Mode";
 "Open Menu Hotkey: %@" = "Open Menu Hotkey: %@";
 "Auto Trigger Toggle Hotkey: %@" = "Auto Trigger Toggle Hotkey: %@";
-"Quit OpenFire" = "Quit OpenFire";
+"Quit ActionHalo" = "Quit ActionHalo";
 "Failed to Set Launch at Login" = "Failed to Set Launch at Login";
 "Set Open Menu Hotkey" = "Set Open Menu Hotkey";
 "Set Auto Trigger Toggle Hotkey" = "Set Auto Trigger Toggle Hotkey";
@@ -162,9 +162,9 @@
 "Edit" = "Edit";
 "Custom Image" = "Custom Image";
 "Enter a complete URL\nUse {text} as a placeholder for selected text" = "Enter a complete URL\nUse {text} as a placeholder for selected text";
-"Write Shell script\nSelected text is available via $OPENFIRE_TEXT" = "Write Shell script\nSelected text is available via $OPENFIRE_TEXT";
+"Write Shell script\nSelected text is available via $ACTIONHALO_TEXT" = "Write Shell script\nSelected text is available via $ACTIONHALO_TEXT";
 "Write AppleScript code snippet" = "Write AppleScript code snippet";
-"Write AppleScript code snippet\nSelected text is available via system attribute \"OPENFIRE_TEXT\"" = "Write AppleScript code snippet\nSelected text is available via system attribute \"OPENFIRE_TEXT\"";
+"Write AppleScript code snippet\nSelected text is available via system attribute \"ACTIONHALO_TEXT\"" = "Write AppleScript code snippet\nSelected text is available via system attribute \"ACTIONHALO_TEXT\"";
 "Scripts can run commands on your Mac. Only create or install them if you trust their source." = "Scripts can run commands on your Mac. Only create or install them if you trust their source.";
 "Scripts can run commands on your Mac. Only keep this plugin if you trust its source. Saving changes will require trust again on next run." = "Scripts can run commands on your Mac. Only keep this plugin if you trust its source. Saving changes will require trust again on next run.";
 "Key combos can control the current app. Only create or install them if you trust their source." = "Key combos can control the current app. Only create or install them if you trust their source.";
@@ -205,7 +205,7 @@
 "The saved plugin configuration failed final validation." = "The saved plugin configuration failed final validation.";
 "The plugin destination is outside the managed plugin directory." = "The plugin destination is outside the managed plugin directory.";
 
-/* OpenFire UI / Other */
+/* ActionHalo UI / Other */
 "App Blacklist" = "App Blacklist";
 "Plugins in %@" = "Plugins in %@";
 "Disable specific plugins only in %@. Global disabled plugins stay unavailable here." = "Disable specific plugins only in %@. Global disabled plugins stay unavailable here.";
@@ -214,18 +214,18 @@
 "Enabled in this app" = "Enabled in this app";
 "Disabled in this app" = "Disabled in this app";
 "Globally disabled" = "Globally disabled";
-"The OpenFire radial menu will not appear when selecting text in the following apps:" = "The OpenFire radial menu will not appear when selecting text in the following apps:";
-"Please select the application to disable OpenFire in" = "Please select the application to disable OpenFire in";
+"The ActionHalo radial menu will not appear when selecting text in the following apps:" = "The ActionHalo radial menu will not appear when selecting text in the following apps:";
+"Please select the application to disable ActionHalo in" = "Please select the application to disable ActionHalo in";
 "Clear" = "Clear";
 "Diagnostics" = "Diagnostics";
-"Current OpenFire context and plugin visibility report." = "Current OpenFire context and plugin visibility report.";
+"Current ActionHalo context and plugin visibility report." = "Current ActionHalo context and plugin visibility report.";
 "Refresh" = "Refresh";
 "Copy Report" = "Copy Report";
 "Unable to capture diagnostics context." = "Unable to capture diagnostics context.";
 "Empty-input probe point" = "Empty-input probe point";
 "Visible plugins: %d / %d" = "Visible plugins: %d / %d";
 "Shown plugins: %d / %d" = "Shown plugins: %d / %d";
-"OpenFire Diagnostics" = "OpenFire Diagnostics";
+"ActionHalo Diagnostics" = "ActionHalo Diagnostics";
 "Frontmost app" = "Frontmost app";
 "Bundle ID" = "Bundle ID";
 "Accessibility" = "Accessibility";
@@ -266,8 +266,8 @@
 "%@ · %@ · %d chars" = "%@ · %@ · %d chars";
 "%@ · %@" = "%@ · %@";
 "Accessibility permission is missing" = "Accessibility permission is missing";
-"OpenFire is disabled in the current app" = "OpenFire is disabled in the current app";
-"OpenFire is intentionally suppressed for the current frontmost app" = "OpenFire is intentionally suppressed for the current frontmost app";
+"ActionHalo is disabled in the current app" = "ActionHalo is disabled in the current app";
+"ActionHalo is intentionally suppressed for the current frontmost app" = "ActionHalo is intentionally suppressed for the current frontmost app";
 "No selected text was detected via Accessibility" = "No selected text was detected via Accessibility";
 "No active selected text or empty-input shortcut is currently available" = "No active selected text or empty-input shortcut is currently available";
 "Empty-input Paste / Clear shortcut is currently available" = "Empty-input Paste / Clear shortcut is currently available";

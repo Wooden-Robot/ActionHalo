@@ -68,7 +68,7 @@ private final class PasteboardSnapshotFileStore: Sendable {
 
     init?(fileManager: FileManager = .default) {
         directoryURL = fileManager.temporaryDirectory.appendingPathComponent(
-            "OpenFire-Pasteboard-\(UUID().uuidString)",
+            "ActionHalo-Pasteboard-\(UUID().uuidString)",
             isDirectory: true
         )
 
@@ -344,7 +344,7 @@ final class AccessibilityManager {
     static let shared = AccessibilityManager()
     
     private let systemWideElement: AXUIElement
-    private let copyFallbackQueue = DispatchQueue(label: "com.openfire.copy-fallback", qos: .userInitiated)
+    private let copyFallbackQueue = DispatchQueue(label: "com.actionhalo.copy-fallback", qos: .userInitiated)
     private let copyFallbackCoordinator = CopyFallbackRequestCoordinator()
     private var copyFallbackExpectedFocusedElements: [UUID: AXUIElement] = [:]
     private var copyFallbackAllowsMissingFocusedElement: Set<UUID> = []
@@ -772,7 +772,7 @@ final class AccessibilityManager {
                 return
             }
             guard let snapshot = Self.capturePasteboardSnapshot(from: pasteboard) else {
-                NSLog("[OpenFire] Skipping Cmd+C fallback because the clipboard cannot be snapshotted safely.")
+                NSLog("[ActionHalo] Skipping Cmd+C fallback because the clipboard cannot be snapshotted safely.")
                 Self.finishCopyFallbackRequest(
                     coordinator: coordinator,
                     requestID,
@@ -852,7 +852,7 @@ final class AccessibilityManager {
                     to: pasteboard,
                     ifCurrentStateMatches: currentState
                 ) {
-                    NSLog("[OpenFire] Failed to restore the clipboard after Cmd+C fallback.")
+                    NSLog("[ActionHalo] Failed to restore the clipboard after Cmd+C fallback.")
                 }
             }
             

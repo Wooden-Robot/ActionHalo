@@ -10,7 +10,7 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
     
     private let tableView = NSTableView()
     private var orderedPlugins: [Plugin] = []
-    private let dragType = NSPasteboard.PasteboardType("com.openfire.plugin-row")
+    private let dragType = NSPasteboard.PasteboardType("com.actionhalo.plugin-row")
     private let rowHeight: CGFloat = 28
     private let viewWidth: CGFloat = 300
     private let buttonHeight: CGFloat = 36

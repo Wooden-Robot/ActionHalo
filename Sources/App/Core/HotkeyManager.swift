@@ -28,8 +28,8 @@ final class HotkeyManager {
     }
     
     static let shared = HotkeyManager()
-    static let hotkeyChangedNotification = Notification.Name("OpenFireHotkeyChanged")
-    static let toggleHotkeyChangedNotification = Notification.Name("OpenFireToggleHotkeyChanged")
+    static let hotkeyChangedNotification = Notification.Name("ActionHaloHotkeyChanged")
+    static let toggleHotkeyChangedNotification = Notification.Name("ActionHaloToggleHotkeyChanged")
     
     /// Current hotkey stored as (keyCode, modifiers) for manually opening the radial menu
     var hotkey: (keyCode: UInt32, modifiers: UInt32)? {
@@ -151,7 +151,7 @@ final class HotkeyManager {
                 message: "Open Menu Hotkey and Auto Trigger Toggle Hotkey cannot use the same shortcut.".localized
             )
             issues.append(issue)
-            NSLog("[OpenFire] Hotkey registration skipped: duplicate assignment")
+            NSLog("[ActionHalo] Hotkey registration skipped: duplicate assignment")
             return issues
         }
 
@@ -189,7 +189,7 @@ final class HotkeyManager {
             let hotkeyID = EventHotKeyID(signature: fourCharCode("OFIR"), id: 1)
             let status = RegisterEventHotKey(hk.keyCode, hk.modifiers, hotkeyID, GetApplicationEventTarget(), 0, &hotkeyRef)
             if status == noErr {
-                NSLog("[OpenFire] Radial Menu Hotkey registered: \(hotkeyDescription)")
+                NSLog("[ActionHalo] Radial Menu Hotkey registered: \(hotkeyDescription)")
             } else {
                 issues.append(
                     RegistrationIssue(
@@ -205,7 +205,7 @@ final class HotkeyManager {
             let toggleHotkeyID = EventHotKeyID(signature: fourCharCode("OFIR"), id: 2)
             let status = RegisterEventHotKey(thk.keyCode, thk.modifiers, toggleHotkeyID, GetApplicationEventTarget(), 0, &toggleHotkeyRef)
             if status == noErr {
-                NSLog("[OpenFire] Auto-trigger toggle hotkey registered: \(toggleHotkeyDescription)")
+                NSLog("[ActionHalo] Auto-trigger toggle hotkey registered: \(toggleHotkeyDescription)")
             } else {
                 issues.append(
                     RegistrationIssue(

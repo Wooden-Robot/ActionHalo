@@ -1,0 +1,19 @@
+{
+  "name": "复制",
+  "localizedNames": {
+    "en": "Copy"
+  },
+  "icon": "doc.on.doc",
+  "identifier": "com.actionhalo.copy",
+  "description": "复制选中文本到剪贴板",
+  "localizedDescriptions": {
+    "en": "Copy selected text to clipboard"
+  },
+  "order": 10,
+  "action": {
+    "type": "copy"
+  },
+  "filter": {
+    "minLength": 1
+  }
+}

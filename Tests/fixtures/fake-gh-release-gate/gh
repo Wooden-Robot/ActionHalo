@@ -44,17 +44,17 @@ done
 
 expected_tag="${FAKE_GH_EXPECTED_TAG:-v1.2.3}"
 case "$endpoint" in
-    "repos/Wooden-Robot/OpenFire/git/ref/tags/$expected_tag")
+    "repos/Wooden-Robot/ActionHalo/git/ref/tags/$expected_tag")
         printf '%s\t%s\n' \
             "${FAKE_GH_REF_TYPE:-commit}" \
             "${FAKE_GH_REF_SHA:?FAKE_GH_REF_SHA is required}"
         ;;
-    "repos/Wooden-Robot/OpenFire/git/tags/${FAKE_GH_REF_SHA:-missing}")
+    "repos/Wooden-Robot/ActionHalo/git/tags/${FAKE_GH_REF_SHA:-missing}")
         printf '%s\t%s\n' \
             "${FAKE_GH_TAG_TARGET_TYPE:-commit}" \
             "${FAKE_GH_TAG_TARGET_SHA:?FAKE_GH_TAG_TARGET_SHA is required for annotated tags}"
         ;;
-    "repos/Wooden-Robot/OpenFire/releases/tags/$expected_tag")
+    "repos/Wooden-Robot/ActionHalo/releases/tags/$expected_tag")
         printf '%s\t%s\t%s\n' \
             "${FAKE_GH_RELEASE_TAG_NAME:-$expected_tag}" \
             "${FAKE_GH_RELEASE_DRAFT:-true}" \

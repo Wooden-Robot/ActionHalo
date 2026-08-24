@@ -68,7 +68,7 @@ struct PluginVisibilityDiagnostic {
 ///
 /// Plugin configuration is untrusted and filtering happens on the UI path. A blacklist cannot
 /// make Foundation's backtracking matcher safe because there are many ambiguous expressions
-/// beyond nested quantifiers. This parser accepts the regular subset used by OpenFire plugins
+/// beyond nested quantifiers. This parser accepts the regular subset used by ActionHalo plugins
 /// (groups, alternation, character classes, anchors and quantifiers), then compiles it to a
 /// Thompson NFA. Matching has no backtracking and stops at a fixed work budget. Lookarounds,
 /// backreferences, mode modifiers, lazy quantifiers and possessive quantifiers are rejected.
@@ -782,6 +782,8 @@ final class Plugin: Identifiable, Sendable {
         guard let entries = trustedPackageEntries() else { return nil }
 
         var hasher = SHA256()
+        // Compatibility ABI: changing this salt would invalidate every stored
+        // execution-trust decision created before the ActionHalo rename.
         Self.updateFingerprint(&hasher, with: Data("openfire-plugin-package-v3".utf8))
 
         for entry in entries {
@@ -844,7 +846,7 @@ final class Plugin: Identifiable, Sendable {
             options: [],
             errorHandler: { url, error in
                 enumerationFailed = true
-                NSLog("[OpenFire] Failed to enumerate trusted plugin file at \(url.path): \(error.localizedDescription)")
+                NSLog("[ActionHalo] Failed to enumerate trusted plugin file at \(url.path): \(error.localizedDescription)")
                 return false
             }
         ) else {

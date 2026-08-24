@@ -6,7 +6,7 @@ project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 makefile="$project_root/Makefile"
 sparkle_signer="$project_root/Tools/sign_sparkle_framework.sh"
 sparkle_signer_contents="$(<"$sparkle_signer")"
-fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/openfire-community-release-contract.XXXXXX")"
+fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/actionhalo-community-release-contract.XXXXXX")"
 trap 'rm -rf "$fixture_dir"' EXIT
 
 fail() {
@@ -38,6 +38,9 @@ reject_pattern() {
         fail "$description"
     fi
 }
+
+require_fixed "$(<"$makefile")" 'SPARKLE_ACCOUNT ?= OpenFire' \
+    "the default Sparkle Keychain account must preserve the existing signing key"
 
 package_recipe="$(target_recipe package)"
 release_recipe="$(target_recipe release)"
@@ -109,12 +112,12 @@ done
 
 package_dry_run="$(<"$fixture_dir/package.log")"
 dry_main_app_signing_line="$(
-    grep -E 'codesign .*\.build/OpenFire\.app' <<<"$package_dry_run" \
+    grep -E 'codesign .*\.build/ActionHalo\.app' <<<"$package_dry_run" \
         | grep -v -- '--verify' \
         | head -n 1
 )"
-[[ -n "$dry_main_app_signing_line" ]] || fail "package dry-run must sign .build/OpenFire.app"
-require_fixed "$dry_main_app_signing_line" '--entitlements "OpenFire.entitlements"' \
+[[ -n "$dry_main_app_signing_line" ]] || fail "package dry-run must sign .build/ActionHalo.app"
+require_fixed "$dry_main_app_signing_line" '--entitlements "ActionHalo.entitlements"' \
     "package dry-run must retain the main app entitlements"
 require_fixed "$dry_main_app_signing_line" '--sign -' \
     "package dry-run must use ad-hoc signing for the main app"

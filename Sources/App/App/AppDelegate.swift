@@ -55,9 +55,9 @@ private final class MenuTargetContext {
 /// Main application delegate — orchestrates all components
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    static let cutPluginID = "com.openfire.cut"
-    static let deletePluginID = "com.openfire.delete"
-    static let pastePluginID = "com.openfire.builtin.paste"
+    static let cutPluginID = "com.actionhalo.cut"
+    static let deletePluginID = "com.actionhalo.delete"
+    static let pastePluginID = "com.actionhalo.builtin.paste"
     static let menuDismissEventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .keyDown]
     static let resetAccessibilityOnUpdateKey = "ResetAccessibilityPermissionsOnUpdate"
     static let lastAccessibilityResetVersionKey = "LastAccessibilityResetVersion"
@@ -96,7 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var startupPermissionTimer: Timer?
     private var permissionRecoveryTimer: Timer?
     private let pluginInstallQueue = DispatchQueue(
-        label: "com.openfire.plugin-install",
+        label: "com.actionhalo.plugin-install",
         qos: .userInitiated
     )
     private var pendingPluginInstallPaths: Set<String> = []
@@ -108,9 +108,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static func monitoringStartFailureMessage(_ failure: TextSelectionMonitor.MonitoringStartFailure) -> String {
         switch failure {
         case .accessibilityPermissionMissing:
-            return "OpenFire does not currently have Accessibility permission. Please re-check OpenFire in System Settings.".localized
+            return "ActionHalo does not currently have Accessibility permission. Please re-check ActionHalo in System Settings.".localized
         case .eventTapCreationFailed:
-            return "OpenFire could not start the text selection monitor. If Accessibility is already enabled but OpenFire still does not respond, reset the permission record and re-check OpenFire in System Settings.".localized
+            return "ActionHalo could not start the text selection monitor. If Accessibility is already enabled but ActionHalo still does not respond, reset the permission record and re-check ActionHalo in System Settings.".localized
         }
     }
 
@@ -162,6 +162,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     static func accessibilityResetArguments(bundleIdentifier: String = "com.openfire.app") -> [String] {
         ["reset", "Accessibility", bundleIdentifier]
+    }
+
+    static func isSupportedPluginPackageURL(_ url: URL) -> Bool {
+        PluginLoader.isSupportedPackageURL(url)
     }
 
     static func runProcess(_ process: Process, timeout: TimeInterval) throws -> Int32? {
@@ -278,8 +282,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Handle pre-launch document opens (LaunchServices passing args directly)
         for arg in CommandLine.arguments.dropFirst() {
-            if arg.hasSuffix(".openfireext") {
-                let url = URL(fileURLWithPath: arg)
+            let url = URL(fileURLWithPath: arg)
+            if Self.isSupportedPluginPackageURL(url) {
                 _ = installPluginWithConfirmation(from: url)
             }
         }
@@ -301,7 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Check accessibility permission
         if !AccessibilityManager.shared.ensureAccessibilityPermission() {
-            NSLog("[OpenFire] Waiting for accessibility permission...")
+            NSLog("[ActionHalo] Waiting for accessibility permission...")
             // Poll until permission is granted
             startupPermissionTimer = Timer.scheduledTimer(
                 withTimeInterval: 2.0,
@@ -323,6 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Install the root watcher synchronously so package creation cannot be
         // missed, then load plugins while fine-grained watcher discovery runs
         // in the background.
+        PluginManager.shared.migrateLegacyUserPluginsIfNeeded()
         PluginManager.shared.startWatchingPluginDirectories()
         PluginManager.shared.loadAllPlugins()
         
@@ -337,7 +342,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if HotkeyManager.shared.hotkey != nil || HotkeyManager.shared.toggleHotkey != nil {
             let issues = HotkeyManager.shared.registerHotkeys()
             for issue in issues {
-                NSLog("[OpenFire] Hotkey registration issue: \(issue.message)")
+                NSLog("[ActionHalo] Hotkey registration issue: \(issue.message)")
             }
         }
     }
@@ -442,7 +447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Unsaved Plugin Changes".localized
-        alert.informativeText = "One or more plugin editors have unsaved changes. Save them before quitting or restarting OpenFire.".localized
+        alert.informativeText = "One or more plugin editors have unsaved changes. Save them before quitting or restarting ActionHalo.".localized
         alert.addButton(withTitle: "Cancel Quit".localized)
         let discardButton = alert.addButton(withTitle: "Discard Changes and Quit".localized)
         discardButton.hasDestructiveAction = true
@@ -481,7 +486,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Handle file opening (plugin installation)
     
     @objc private func handleOpenDocumentsEvent(event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor) {
-        NSLog("[OpenFire] handleOpenDocumentsEvent raw event received")
+        NSLog("[ActionHalo] handleOpenDocumentsEvent raw event received")
         if let descriptor = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject)) {
             let numItems = descriptor.numberOfItems
             let typeFileURL = OSType(0x6675726c) // "furl" type
@@ -492,7 +497,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if let urlString = String(data: data, encoding: .utf8),
                        let url = URL(string: urlString) {
                         
-                        if url.pathExtension == "openfireext" {
+                        if Self.isSupportedPluginPackageURL(url) {
                             _ = self.installPluginWithConfirmation(from: url)
                         }
                     }
@@ -513,27 +518,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
         let url = URL(fileURLWithPath: filename)
-        NSLog("[OpenFire] application(_:openFile:) called for: \(filename)")
-        if url.pathExtension == "openfireext" {
+        NSLog("[ActionHalo] application(_:openFile:) called for: \(filename)")
+        if Self.isSupportedPluginPackageURL(url) {
             return installPluginWithConfirmation(from: url)
         }
         return false
     }
     
     func application(_ application: NSApplication, open urls: [URL]) {
-        NSLog("[OpenFire] application(_:open:urls) called with: \(urls)")
+        NSLog("[ActionHalo] application(_:open:urls) called with: \(urls)")
         for url in urls {
-            if url.pathExtension == "openfireext" {
+            if Self.isSupportedPluginPackageURL(url) {
                 _ = installPluginWithConfirmation(from: url)
             }
         }
     }
     
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
-        NSLog("[OpenFire] application(_:openFiles:) called with: \(filenames)")
+        NSLog("[ActionHalo] application(_:openFiles:) called with: \(filenames)")
         for filename in filenames {
             let url = URL(fileURLWithPath: filename)
-            if url.pathExtension == "openfireext" {
+            if Self.isSupportedPluginPackageURL(url) {
                 _ = installPluginWithConfirmation(from: url)
             }
         }
@@ -584,7 +589,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var pluginDescription = preview.description ??
             String(format: "Type: %@".localized, preview.actionType.rawValue)
         if preview.requiresExecutionTrust {
-            pluginDescription += "\n\n" + "Warning: this plugin can perform protected actions on your Mac. OpenFire will require explicit trust before the first run, and again after plugin changes.".localized
+            pluginDescription += "\n\n" + "Warning: this plugin can perform protected actions on your Mac. ActionHalo will require explicit trust before the first run, and again after plugin changes.".localized
         }
         
         // Show confirmation alert
@@ -619,7 +624,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.pendingPluginInstallPaths.remove(installPath)
 
             guard !installResult.isSuccess else {
-                NSLog("[OpenFire] Plugin '%@' installed successfully.", installingPluginName)
+                NSLog("[ActionHalo] Plugin '%@' installed successfully.", installingPluginName)
                 self.statusBarController.showTemporaryStatusMessage(
                     String(format: "Installed %@".localized, installingPluginName)
                 )
@@ -650,7 +655,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Services
     
     private func startServices() {
-        NSLog("[OpenFire] Starting text selection monitoring...")
+        NSLog("[ActionHalo] Starting text selection monitoring...")
         permissionRecoveryTimer?.invalidate()
         permissionRecoveryTimer = nil
         if isEnabled {
@@ -708,7 +713,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         
         let alert = NSAlert()
         alert.messageText = "Accessibility Permission Lost".localized
-        alert.informativeText = "OpenFire relies on Accessibility to detect text selection. Please re-check OpenFire in 'System Settings -> Privacy & Security -> Accessibility'.".localized
+        alert.informativeText = "ActionHalo relies on Accessibility to detect text selection. Please re-check ActionHalo in 'System Settings -> Privacy & Security -> Accessibility'.".localized
         alert.alertStyle = .critical
         alert.addButton(withTitle: "Open System Settings".localized)
         alert.addButton(withTitle: "Quit".localized)
@@ -765,7 +770,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
                 let alert = NSAlert()
                 alert.messageText = "Permission Restored".localized
-                alert.informativeText = "OpenFire has resumed working.".localized
+                alert.informativeText = "ActionHalo has resumed working.".localized
                 alert.alertStyle = .informational
                 alert.addButton(withTitle: "OK".localized)
                 NSApp.activate(ignoringOtherApps: true)
@@ -1070,7 +1075,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 AccessibilityManager.shared.isSelectionEditable($0)
                             } ?? false
                         ) else {
-                            NSLog("[OpenFire] Paste cancelled because the original editable target changed.")
+                            NSLog("[ActionHalo] Paste cancelled because the original editable target changed.")
                             return
                         }
                         PluginManager.shared.executePlugin(
@@ -1256,11 +1261,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if lastVersion != currentVersion {
                 UserDefaults.standard.set(currentVersion, forKey: "LastRunVersion")
             }
-            NSLog("[OpenFire] App version changed from \(lastVersion ?? "none") to \(currentVersion). Keeping Accessibility permissions untouched.")
+            NSLog("[ActionHalo] App version changed from \(lastVersion ?? "none") to \(currentVersion). Keeping Accessibility permissions untouched.")
             return
         }
 
-        NSLog("[OpenFire] App updated from \(lastVersion ?? "none") to \(currentVersion). Resetting TCC permissions before prompting so stale Accessibility entries do not mislead the user.")
+        NSLog("[ActionHalo] App updated from \(lastVersion ?? "none") to \(currentVersion). Resetting TCC permissions before prompting so stale Accessibility entries do not mislead the user.")
 
         if resetAccessibilityPermissions() {
             UserDefaults.standard.set(currentVersion, forKey: "LastRunVersion")
@@ -1277,18 +1282,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             guard let terminationStatus = try Self.runProcess(task, timeout: 3) else {
-                NSLog("[OpenFire] Failed to reset Accessibility TCC: tccutil timed out.")
+                NSLog("[ActionHalo] Failed to reset Accessibility TCC: tccutil timed out.")
                 return false
             }
             guard terminationStatus == 0 else {
-                NSLog("[OpenFire] Failed to reset Accessibility TCC: tccutil exited with status \(terminationStatus)")
+                NSLog("[ActionHalo] Failed to reset Accessibility TCC: tccutil exited with status \(terminationStatus)")
                 return false
             }
             let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
             UserDefaults.standard.set(currentVersion, forKey: Self.lastAccessibilityResetVersionKey)
             return true
         } catch {
-            NSLog("[OpenFire] Failed to reset Accessibility TCC: \(error.localizedDescription)")
+            NSLog("[ActionHalo] Failed to reset Accessibility TCC: \(error.localizedDescription)")
             return false
         }
     }

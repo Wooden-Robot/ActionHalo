@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make OpenFire default to disabled inside major office suites while still letting users manually re-enable them later.
+Make ActionHalo default to disabled inside major office suites while still letting users manually re-enable them later.
 
 This applies to:
 
@@ -27,7 +27,7 @@ This applies to:
 
 ## Current Behavior
 
-OpenFire already supports per-app suppression through `ExcludedApps`.
+ActionHalo already supports per-app suppression through `ExcludedApps`.
 
 - The trigger path reads `ExcludedApps` and blocks automatic menu presentation when the frontmost app is in that list.
 - The status bar menu already lets users toggle the current app between enabled and disabled.
@@ -50,11 +50,11 @@ It must not run on every launch forever.
 
 ### First Launch
 
-If OpenFire is launched on a machine that has no prior exclusion list, `ExcludedApps` should be initialized to include the office-suite bundle identifiers above.
+If ActionHalo is launched on a machine that has no prior exclusion list, `ExcludedApps` should be initialized to include the office-suite bundle identifiers above.
 
 Result:
 
-- OpenFire is disabled in iWork, Microsoft Office, and WPS document apps by default.
+- ActionHalo is disabled in iWork, Microsoft Office, and WPS document apps by default.
 - The apps appear in the existing blacklist UI immediately.
 
 ### Existing Users Upgrading
@@ -68,7 +68,7 @@ Result:
 
 ### User Re-Enable Must Be Respected
 
-After the migration has run once, OpenFire must never silently add those apps back again on later launches.
+After the migration has run once, ActionHalo must never silently add those apps back again on later launches.
 
 So if a user manually removes any of these apps from the blacklist, that choice must stick.
 

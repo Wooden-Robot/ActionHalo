@@ -1,0 +1,18 @@
+{
+    "name": "NeoDB 书影音",
+    "identifier": "com.actionhalo.search.neodb",
+    "description": "在 NeoDB 搜索选中的书影音",
+    "localizedNames": {
+        "en": "NeoDB Search"
+    },
+    "localizedDescriptions": {
+        "en": "Search media items on NeoDB"
+    },
+    "icon": "books.vertical.fill",
+    "order": 12,
+    "isDefaultDisabled": true,
+    "action": {
+        "type": "url",
+        "url": "https://neodb.social/search/?q={text}"
+    }
+}

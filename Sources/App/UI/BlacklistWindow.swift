@@ -1,7 +1,7 @@
 import Cocoa
 import UniformTypeIdentifiers
 
-/// A dedicated window to manage apps where OpenFire has been disabled.
+/// A dedicated window to manage apps where ActionHalo has been disabled.
 final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableViewDataSource {
     
     private let tableView = NSTableView()
@@ -33,7 +33,7 @@ final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableVie
         guard let contentView = window?.contentView else { return }
         
         // App header description
-        let label = NSTextField(labelWithString: "The OpenFire radial menu will not appear when selecting text in the following apps:".localized)
+        let label = NSTextField(labelWithString: "The ActionHalo radial menu will not appear when selecting text in the following apps:".localized)
         label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         label.textColor = .secondaryLabelColor
         label.frame = NSRect(x: 20, y: 260, width: 320, height: 20)
@@ -168,7 +168,7 @@ final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableVie
         panel.allowsMultipleSelection = true
         panel.allowedContentTypes = [.applicationBundle]
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        panel.message = "Please select the application to disable OpenFire in".localized
+        panel.message = "Please select the application to disable ActionHalo in".localized
         
         panel.beginSheetModal(for: self.window!) { [weak self] response in
             if response == .OK {

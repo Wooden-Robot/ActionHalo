@@ -5,7 +5,7 @@ set -euo pipefail
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 gate_script="$project_root/Tools/verify_release_version.sh"
 repository_gate_script="$project_root/Tools/verify_release_repository.sh"
-fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/openfire-version-gate.XXXXXX")"
+fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/actionhalo-version-gate.XXXXXX")"
 trap 'rm -rf "$fixture_dir"' EXIT
 
 source_plist="$fixture_dir/Info.plist"
@@ -98,8 +98,8 @@ expect_failure \
 tagged_repo="$fixture_dir/tagged-repo"
 mkdir -p "$tagged_repo"
 git -C "$tagged_repo" init -q
-git -C "$tagged_repo" config user.name "OpenFire Tests"
-git -C "$tagged_repo" config user.email "openfire-tests@example.invalid"
+git -C "$tagged_repo" config user.name "ActionHalo Tests"
+git -C "$tagged_repo" config user.email "actionhalo-tests@example.invalid"
 cp "$source_plist" "$tagged_repo/Info.plist"
 git -C "$tagged_repo" add Info.plist
 git -C "$tagged_repo" commit -q -m "fixture"

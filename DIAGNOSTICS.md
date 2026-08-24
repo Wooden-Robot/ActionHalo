@@ -1,23 +1,23 @@
-# OpenFire Diagnostics Guide
+# ActionHalo Diagnostics Guide
 
 This guide explains how to read the built-in Diagnostics window and how the current text-selection trigger pipeline works in `v0.3.15`.
 
 ## Open The Diagnostics Window
 
-1. Open the OpenFire menu bar item.
+1. Open the ActionHalo menu bar item.
 2. Click `Diagnostics...`.
 3. Click `Refresh` after reproducing the problem once.
 4. Use `Copy Report` if you want to share the current report.
 
 ## What The Diagnostics Window Shows
 
-The Diagnostics panel is a snapshot of the current OpenFire context. It is built in [`DiagnosticsWindow.swift`](./Sources/App/UI/DiagnosticsWindow.swift).
+The Diagnostics panel is a snapshot of the current ActionHalo context. It is built in [`DiagnosticsWindow.swift`](./Sources/App/UI/DiagnosticsWindow.swift).
 
 ### Core Context Fields
 
 - `Frontmost app`: The current foreground application name.
 - `Bundle ID`: The current foreground application bundle identifier.
-- `Accessibility`: Whether OpenFire currently has Accessibility permission.
+- `Accessibility`: Whether ActionHalo currently has Accessibility permission.
 - `App exclusion`: Whether the current app is disabled by the app blacklist.
 - `Focused element`: The current focused accessibility role or role/subrole.
 - `Selected text length`: The selected text length returned by Accessibility.
@@ -33,7 +33,7 @@ The Diagnostics panel is a snapshot of the current OpenFire context. It is built
   - `observerSetupFailed`
   - `observerTimedOut`
   - `noFocusedApplication`
-- `Menu readiness`: Whether OpenFire currently believes the menu can be shown.
+- `Menu readiness`: Whether ActionHalo currently believes the menu can be shown.
 
 ### Plugin Visibility Section
 
@@ -55,19 +55,19 @@ The main selection trigger path lives in [`TextSelectionMonitor.swift`](./Source
 
 ### High-Level Flow
 
-1. OpenFire records state on `leftMouseDown`.
-2. OpenFire evaluates the gesture on `leftMouseUp`.
+1. ActionHalo records state on `leftMouseDown`.
+2. ActionHalo evaluates the gesture on `leftMouseUp`.
 3. Non-text gestures are filtered out first.
-4. If the gesture still looks like text selection, OpenFire tries to acquire the selected text.
+4. If the gesture still looks like text selection, ActionHalo tries to acquire the selected text.
 5. If text is acquired, the radial menu is shown after a short presentation delay.
 
 ### Gesture Filters Applied Before Triggering
 
-OpenFire suppresses the menu before any text acquisition if any of the following is true:
+ActionHalo suppresses the menu before any text acquisition if any of the following is true:
 
 - The drag pasteboard changed during the gesture and now contains file-drag types such as `public.file-url`.
 - The frontmost app is a suppressed context:
-  - OpenFire itself
+  - ActionHalo itself
   - Finder
   - Dock
   - Desktop / WindowManager
@@ -76,9 +76,9 @@ OpenFire suppresses the menu before any text acquisition if any of the following
 
 That last rule is important in `v0.3.15`: window dragging is now blocked by comparing the frontmost window frame before and after the gesture instead of relying on fragile AX text hit-testing.
 
-### How OpenFire Decides A Gesture Is “Text-Like”
+### How ActionHalo Decides A Gesture Is “Text-Like”
 
-OpenFire captures these signals:
+ActionHalo captures these signals:
 
 - whether the gesture started in a text context
 - whether the gesture ended in a text context
@@ -93,7 +93,7 @@ OpenFire captures these signals:
 
 ### Preferred Acquisition Path: Accessibility
 
-OpenFire first tries native Accessibility selection state.
+ActionHalo first tries native Accessibility selection state.
 
 It succeeds when:
 
@@ -107,7 +107,7 @@ When this path works, Diagnostics shows:
 
 ### Fallback Acquisition Path: Cmd+C
 
-If native Accessibility does not yield text quickly enough, OpenFire falls back to synthetic `Cmd+C`.
+If native Accessibility does not yield text quickly enough, ActionHalo falls back to synthetic `Cmd+C`.
 
 This path:
 
@@ -122,7 +122,7 @@ When this path works, Diagnostics shows:
 
 ## Browser / WebView / Telegram Behavior
 
-Different hosts expose different AX quality, so OpenFire treats them slightly differently.
+Different hosts expose different AX quality, so ActionHalo treats them slightly differently.
 
 ### Native Editors
 
@@ -153,12 +153,12 @@ Observed behavior:
 - on mouse-up, Telegram may expose no usable AX hit element
 - on mouse-up, Telegram may expose no usable focused element
 
-Because of that, OpenFire now avoids requiring stable AX hit/focus evidence for Telegram’s fallback path. Instead:
+Because of that, ActionHalo now avoids requiring stable AX hit/focus evidence for Telegram’s fallback path. Instead:
 
 - if the gesture did not move the frontmost window
 - and `Cmd+C` produced fresh non-empty text
 
-OpenFire still allows the radial menu to trigger.
+ActionHalo still allows the radial menu to trigger.
 
 This is the reason Telegram can now work again without reintroducing the old “dragging the window also triggers the menu” bug.
 

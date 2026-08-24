@@ -5,7 +5,7 @@ set -euo pipefail
 project_root="$(cd "$(dirname "$0")/.." && pwd)"
 gate_script="$project_root/Tools/verify_sparkle_update.sh"
 appcast_gate_script="$project_root/Tools/verify_sparkle_appcast.sh"
-fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/openfire-sparkle-gate.XXXXXX")"
+fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/actionhalo-sparkle-gate.XXXXXX")"
 trap 'rm -rf "$fixture_dir"' EXIT
 
 source_plist="$fixture_dir/Info.plist"
@@ -26,6 +26,22 @@ bash "$gate_script" \
     --info-plist "$source_plist" \
     --package-resolved "$resolved_file" >/dev/null
 
+cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleName OpenFire" "$source_plist"
+expect_failure "the legacy app name as the public bundle name" \
+    bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
+
+cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.actionhalo.app" "$source_plist"
+expect_failure "a bundle identifier change during the compatibility transition" \
+    bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
+
+cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
+/usr/libexec/PlistBuddy -c "Delete :CFBundleDocumentTypes:1" "$source_plist"
+expect_failure "removal of legacy .openfireext document support" \
+    bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
+
+cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
 /usr/libexec/PlistBuddy -c "Set :SUFeedURL https://example.com/appcast.xml" "$source_plist"
 expect_failure "an untrusted appcast URL" \
     bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
@@ -63,7 +79,7 @@ sign_update="$project_root/.build/artifacts/sparkle/Sparkle/bin/sign_update"
 }
 
 test_key="$fixture_dir/test-ed25519-private-key"
-archive="$fixture_dir/OpenFire.dmg"
+archive="$fixture_dir/ActionHalo.dmg"
 appcast="$fixture_dir/appcast.xml"
 printf '%s\n' 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' >"$test_key"
 printf '%s\n' 'deterministic Sparkle archive fixture' >"$archive"
@@ -81,7 +97,7 @@ write_appcast() {
     <item>
       <sparkle:version>1.2.3</sparkle:version>
       <sparkle:shortVersionString>1.2.3</sparkle:shortVersionString>
-      <enclosure url="https://github.com/Wooden-Robot/OpenFire/releases/download/v1.2.3/OpenFire.dmg" length="$enclosure_length" type="application/octet-stream" sparkle:edSignature="$archive_signature"/>
+      <enclosure url="https://github.com/Wooden-Robot/ActionHalo/releases/download/v1.2.3/ActionHalo.dmg" length="$enclosure_length" type="application/octet-stream" sparkle:edSignature="$archive_signature"/>
     </item>
   </channel>
 </rss>
@@ -96,7 +112,7 @@ verify_fixture_appcast() {
         --appcast "$appcast_path" \
         --archive "$archive_path" \
         --version 1.2.3 \
-        --download-url https://github.com/Wooden-Robot/OpenFire/releases/download/v1.2.3/OpenFire.dmg \
+        --download-url https://github.com/Wooden-Robot/ActionHalo/releases/download/v1.2.3/ActionHalo.dmg \
         --sign-update "$sign_update" \
         --ed-key-file "$test_key"
 }
@@ -109,7 +125,7 @@ expect_failure "an appcast whose archive version does not match the release" \
         --appcast "$appcast" \
         --archive "$archive" \
         --version 1.2.4 \
-        --download-url https://github.com/Wooden-Robot/OpenFire/releases/download/v1.2.4/OpenFire.dmg \
+        --download-url https://github.com/Wooden-Robot/ActionHalo/releases/download/v1.2.4/ActionHalo.dmg \
         --sign-update "$sign_update" \
         --ed-key-file "$test_key"
 
@@ -119,7 +135,7 @@ sed -i '' 's/<channel>/<channel><title>Tampered<\/title>/' "$tampered_feed"
 expect_failure "an appcast modified after feed signing" \
     verify_fixture_appcast "$tampered_feed" "$archive"
 
-tampered_archive="$fixture_dir/Tampered-OpenFire.dmg"
+tampered_archive="$fixture_dir/Tampered-ActionHalo.dmg"
 cp "$archive" "$tampered_archive"
 printf 'X' | dd of="$tampered_archive" bs=1 seek=0 conv=notrunc 2>/dev/null
 expect_failure "an archive modified after enclosure signing" \
