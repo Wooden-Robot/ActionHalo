@@ -10,7 +10,9 @@
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white)](https://developer.apple.com/swift)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
-<img src="./Assets/actionhalo-demo.png" width="540" alt="ActionHalo radial menu" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 24px 0;"/>
+<img src="./Assets/demo.gif" width="600" alt="ActionHalo Demo 1" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 24px 0 12px;"/>
+
+<img src="./Assets/demo2.gif" width="600" alt="ActionHalo Demo 2" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 12px 0 24px;"/>
 
 > ActionHalo draws inspiration from both GTA V and PopClip, then massively refactors and optimizes the UI, interaction model, and performance with native Core Animation and Swift Concurrency.
 

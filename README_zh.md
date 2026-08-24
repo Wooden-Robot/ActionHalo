@@ -10,7 +10,9 @@
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white)](https://developer.apple.com/swift)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
-<img src="./Assets/actionhalo-demo.png" width="540" alt="ActionHalo 圆环菜单" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 24px 0;"/>
+<img src="./Assets/demo.gif" width="600" alt="ActionHalo 演示 1" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 24px 0 12px;"/>
+
+<img src="./Assets/demo2.gif" width="600" alt="ActionHalo 演示 2" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 12px 0 24px;"/>
 
 > ActionHalo 的灵感同时来自 GTA V 和 PopClip，并在 UI、交互与性能上基于原生 Core Animation 和 Swift Concurrency 做了大规模重构与极速优化。
 
