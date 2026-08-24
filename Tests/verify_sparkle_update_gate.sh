@@ -133,10 +133,17 @@ expect_failure "an appcast without release notes" \
 
 wrong_release_notes_version_appcast="$fixture_dir/wrong-release-notes-version.xml"
 cp "$appcast" "$wrong_release_notes_version_appcast"
-sed -i '' 's/## v1\.2\.3/## v1.2.2/' "$wrong_release_notes_version_appcast"
+sed -i '' 's/## v1\.2\.3/## v1.2.30/' "$wrong_release_notes_version_appcast"
 "$sign_update" --ed-key-file "$test_key" "$wrong_release_notes_version_appcast" >/dev/null
-expect_failure "release notes for a different version" \
+expect_failure "release notes whose version only shares the expected prefix" \
     verify_fixture_appcast "$wrong_release_notes_version_appcast" "$archive"
+
+empty_release_notes_appcast="$fixture_dir/empty-release-notes.xml"
+cp "$appcast" "$empty_release_notes_appcast"
+sed -i '' '/Deterministic release notes fixture/d' "$empty_release_notes_appcast"
+"$sign_update" --ed-key-file "$test_key" "$empty_release_notes_appcast" >/dev/null
+expect_failure "an empty release notes section" \
+    verify_fixture_appcast "$empty_release_notes_appcast" "$archive"
 
 expect_failure "an appcast whose archive version does not match the release" \
     bash "$appcast_gate_script" \

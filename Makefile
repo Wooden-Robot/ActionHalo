@@ -195,8 +195,7 @@ generate-appcast: verify-release-repository verify-release-version verify-sparkl
 	@rm -rf "$(APPCAST_DIR)"
 	@mkdir -p "$(APPCAST_DIR)"
 	@cp "$(BUILD_DIR)/$(DMG_NAME)" "$(APPCAST_DIR)/$(DMG_NAME)"
-	@awk -v heading="## v$(VERSION)" '$$0 == heading { found = 1 } found && $$0 != heading && $$0 ~ /^## / { exit } found { print } END { if (!found) exit 1 }' CHANGELOG.md > "$(APPCAST_DIR)/$(APP_NAME).md"
-	@test -s "$(APPCAST_DIR)/$(APP_NAME).md" || { echo "❌ Missing changelog section for v$(VERSION)."; exit 1; }
+	@awk -v heading="## v$(VERSION)" '$$0 == heading { matches++; if (matches == 1) { in_section = 1; print; next } } in_section && $$0 ~ /^## / { in_section = 0 } in_section { print; if ($$0 !~ /^[[:space:]]*$$/) body = 1 } END { if (matches != 1 || !body) exit 1 }' CHANGELOG.md > "$(APPCAST_DIR)/$(APP_NAME).md" || { echo "❌ Missing, empty, or duplicate changelog section for v$(VERSION)."; exit 1; }
 	@"$(SPARKLE_TOOLS)/generate_appcast" \
 		--account "$(SPARKLE_ACCOUNT)" \
 		--embed-release-notes \

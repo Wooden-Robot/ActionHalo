@@ -134,8 +134,13 @@ actual_archive_length="$(stat -f '%z' "$archive")"
     || fail "Appcast update enclosure has no well-formed Ed25519 signature."
 [[ "$release_notes_format" == "markdown" ]] \
     || fail "Appcast release notes format is $release_notes_format; expected markdown."
-[[ "$release_notes" == *"## v$version"* ]] \
-    || fail "Appcast release notes do not contain the v$version changelog section."
+release_notes_heading="## v$version"
+release_notes_heading_count="$(awk -v heading="$release_notes_heading" '$0 == heading { count++ } END { print count + 0 }' <<<"$release_notes")"
+release_notes_body="$(awk -v heading="$release_notes_heading" '$0 == heading { found = 1; next } found && $0 ~ /^## / { exit } found && $0 !~ /^[[:space:]]*$/ { print; exit }' <<<"$release_notes")"
+[[ "$release_notes_heading_count" == "1" ]] \
+    || fail "Appcast release notes must contain exactly one v$version heading."
+[[ -n "$release_notes_body" ]] \
+    || fail "Appcast release notes for v$version must contain non-empty content."
 
 "$sign_update" "${credential_args[@]}" --verify "$appcast" >/dev/null \
     || fail "Appcast feed signature verification failed."
