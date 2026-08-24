@@ -88,6 +88,12 @@ require_fixed "$appcast_recipe" 'Tools/verify_release_dmg.sh' \
     "generate-appcast must validate the community DMG before signing it"
 require_fixed "$appcast_recipe" '$(SPARKLE_TOOLS)/generate_appcast' \
     "generate-appcast must use Sparkle's appcast generator"
+require_fixed "$appcast_recipe" 'CHANGELOG.md' \
+    "generate-appcast must derive release notes from the project changelog"
+require_fixed "$appcast_recipe" '$(APPCAST_DIR)/$(APP_NAME).md' \
+    "generate-appcast must stage release notes with the same basename as the DMG"
+require_fixed "$appcast_recipe" '--embed-release-notes' \
+    "generate-appcast must embed release notes in the signed feed"
 require_fixed "$appcast_recipe" 'Tools/verify_sparkle_appcast.sh' \
     "generate-appcast must cryptographically verify the feed and archive"
 

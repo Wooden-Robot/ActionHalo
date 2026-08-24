@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.3.28
+
+- OpenFire 原位升级后的 App 包会在启动服务前排他原子改名为 `ActionHalo.app` 并重新启动；目标冲突、父目录不可写、只读卷、网络卷和 App 包自身为符号链接时均不覆盖、不删除。
+- 首次改名由 Finder 双击 `.actionhaloext` 或 `.openfireext` 触发时，会在重启后继续处理原始插件安装请求，不会因迁移丢失。
+- Sparkle appcast 会嵌入本版本更新日志，更新窗口可以直接显示发布说明；发布门禁会拒绝缺少说明或说明版本不匹配的 feed。
+
+- App bundles upgraded in place from OpenFire are atomically renamed without replacement to `ActionHalo.app` before services start, then relaunched; conflicts, unwritable parent folders, read-only or network volumes, and app-bundle symlinks remain untouched.
+- Finder-launched `.actionhaloext` and `.openfireext` requests are carried through the one-time rename and handled after relaunch instead of being dropped.
+- The Sparkle appcast embeds this version's changelog so release notes appear directly in the update window; release gates reject feeds with missing or mismatched notes.
+
 ## v0.3.27
 
 - 项目对外品牌、应用/可执行文件、SwiftPM 模块、构建产物、插件格式、界面、文档和 GitHub 发布地址统一更名为 ActionHalo。

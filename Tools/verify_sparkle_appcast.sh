@@ -92,6 +92,8 @@ version_path="$item_path/*[local-name()=\"version\" and namespace-uri()=\"$spark
 short_version_path="$item_path/*[local-name()=\"shortVersionString\" and namespace-uri()=\"$sparkle_namespace\"]"
 enclosure_path="$item_path/*[local-name()=\"enclosure\" and namespace-uri()=\"\"]"
 signature_path="$enclosure_path/@*[local-name()=\"edSignature\" and namespace-uri()=\"$sparkle_namespace\"]"
+description_path="$item_path/*[local-name()=\"description\" and namespace-uri()=\"\"]"
+description_format_path="$description_path/@*[local-name()=\"format\" and namespace-uri()=\"$sparkle_namespace\"]"
 
 [[ "$(xml_count "$item_path")" == "1" ]] \
     || fail "Appcast must contain exactly one current update."
@@ -103,6 +105,10 @@ signature_path="$enclosure_path/@*[local-name()=\"edSignature\" and namespace-ur
     || fail "Appcast must contain exactly one update enclosure."
 [[ "$(xml_count "$signature_path")" == "1" ]] \
     || fail "Appcast must contain exactly one Sparkle archive signature."
+[[ "$(xml_count "$description_path")" == "1" ]] \
+    || fail "Appcast must contain embedded release notes."
+[[ "$(xml_count "$description_format_path")" == "1" ]] \
+    || fail "Appcast release notes must declare their Sparkle format."
 
 actual_version="$(xml_value "$version_path")"
 actual_short_version="$(xml_value "$short_version_path")"
@@ -110,6 +116,8 @@ actual_download_url="$(xml_value "$enclosure_path/@url")"
 archive_length="$(xml_value "$enclosure_path/@length")"
 archive_type="$(xml_value "$enclosure_path/@type")"
 archive_signature="$(xml_value "$signature_path")"
+release_notes="$(xml_value "$description_path")"
+release_notes_format="$(xml_value "$description_format_path")"
 actual_archive_length="$(stat -f '%z' "$archive")"
 
 [[ "$actual_version" == "$version" ]] \
@@ -124,6 +132,15 @@ actual_archive_length="$(stat -f '%z' "$archive")"
     || fail "Appcast enclosure length $archive_length does not match archive size $actual_archive_length."
 [[ "$archive_signature" =~ ^[A-Za-z0-9+/]{86}==$ ]] \
     || fail "Appcast update enclosure has no well-formed Ed25519 signature."
+[[ "$release_notes_format" == "markdown" ]] \
+    || fail "Appcast release notes format is $release_notes_format; expected markdown."
+release_notes_heading="## v$version"
+release_notes_heading_count="$(awk -v heading="$release_notes_heading" '$0 == heading { count++ } END { print count + 0 }' <<<"$release_notes")"
+release_notes_body="$(awk -v heading="$release_notes_heading" '$0 == heading { found = 1; next } found && $0 ~ /^## / { exit } found && $0 !~ /^[[:space:]]*$/ { print; exit }' <<<"$release_notes")"
+[[ "$release_notes_heading_count" == "1" ]] \
+    || fail "Appcast release notes must contain exactly one v$version heading."
+[[ -n "$release_notes_body" ]] \
+    || fail "Appcast release notes for v$version must contain non-empty content."
 
 "$sign_update" "${credential_args[@]}" --verify "$appcast" >/dev/null \
     || fail "Appcast feed signature verification failed."

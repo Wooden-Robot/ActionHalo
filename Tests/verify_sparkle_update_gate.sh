@@ -97,6 +97,10 @@ write_appcast() {
     <item>
       <sparkle:version>1.2.3</sparkle:version>
       <sparkle:shortVersionString>1.2.3</sparkle:shortVersionString>
+      <description sparkle:format="markdown"><![CDATA[## v1.2.3
+
+- Deterministic release notes fixture.
+]]></description>
       <enclosure url="https://github.com/Wooden-Robot/ActionHalo/releases/download/v1.2.3/ActionHalo.dmg" length="$enclosure_length" type="application/octet-stream" sparkle:edSignature="$archive_signature"/>
     </item>
   </channel>
@@ -119,6 +123,27 @@ verify_fixture_appcast() {
 
 write_appcast "$appcast" "$archive_length"
 verify_fixture_appcast "$appcast" "$archive" >/dev/null
+
+missing_release_notes_appcast="$fixture_dir/missing-release-notes.xml"
+cp "$appcast" "$missing_release_notes_appcast"
+sed -i '' '/<description /,/<\/description>/d' "$missing_release_notes_appcast"
+"$sign_update" --ed-key-file "$test_key" "$missing_release_notes_appcast" >/dev/null
+expect_failure "an appcast without release notes" \
+    verify_fixture_appcast "$missing_release_notes_appcast" "$archive"
+
+wrong_release_notes_version_appcast="$fixture_dir/wrong-release-notes-version.xml"
+cp "$appcast" "$wrong_release_notes_version_appcast"
+sed -i '' 's/## v1\.2\.3/## v1.2.30/' "$wrong_release_notes_version_appcast"
+"$sign_update" --ed-key-file "$test_key" "$wrong_release_notes_version_appcast" >/dev/null
+expect_failure "release notes whose version only shares the expected prefix" \
+    verify_fixture_appcast "$wrong_release_notes_version_appcast" "$archive"
+
+empty_release_notes_appcast="$fixture_dir/empty-release-notes.xml"
+cp "$appcast" "$empty_release_notes_appcast"
+sed -i '' '/Deterministic release notes fixture/d' "$empty_release_notes_appcast"
+"$sign_update" --ed-key-file "$test_key" "$empty_release_notes_appcast" >/dev/null
+expect_failure "an empty release notes section" \
+    verify_fixture_appcast "$empty_release_notes_appcast" "$archive"
 
 expect_failure "an appcast whose archive version does not match the release" \
     bash "$appcast_gate_script" \

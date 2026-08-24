@@ -65,6 +65,23 @@ final class AppDelegateTests: XCTestCase {
         )
     }
 
+    func testMigrationRelaunchCarriesPendingFinderPluginRequests() {
+        XCTAssertEqual(
+            AppDelegate.migrationLaunchArguments(
+                commandLineArguments: ["--verbose", "/tmp/Legacy.openfireext"],
+                pendingPluginURLs: [
+                    URL(fileURLWithPath: "/tmp/Plugin with spaces.actionhaloext"),
+                    URL(fileURLWithPath: "/tmp/Legacy.openfireext")
+                ]
+            ),
+            [
+                "--verbose",
+                "/tmp/Legacy.openfireext",
+                "/tmp/Plugin with spaces.actionhaloext"
+            ]
+        )
+    }
+
     func testProcessRunnerReturnsWithoutWaitingForever() throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sleep")

@@ -10,7 +10,9 @@
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white)](https://developer.apple.com/swift)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
-<img src="./Assets/actionhalo-demo.png" width="540" alt="ActionHalo 圆环菜单" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 24px 0;"/>
+<img src="./Assets/demo.gif" width="600" alt="ActionHalo 演示 1" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 24px 0 12px;"/>
+
+<img src="./Assets/demo2.gif" width="600" alt="ActionHalo 演示 2" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 12px 0 24px;"/>
 
 > ActionHalo 的灵感同时来自 GTA V 和 PopClip，并在 UI、交互与性能上基于原生 Core Animation 和 Swift Concurrency 做了大规模重构与极速优化。
 
@@ -72,7 +74,7 @@ ActionHalo 社区版目前不使用 Developer ID。更新真实性由 App 内置
 
 - OpenFire `v0.3.23`–`v0.3.26` 可在 GitHub 仓库原地改名后通过 Sparkle 自动升级到 ActionHalo。旧仓库 URL 必须持续重定向到 `Wooden-Robot/ActionHalo`；不要删除重建仓库，也不要再次占用旧的 `OpenFire` 仓库名。
 - `v0.3.22` 及更早版本尚未内置可信更新公钥，需要最后手动安装一次 ActionHalo DMG。
-- 兼容期内保留现有 Bundle ID，以延续偏好设置、登录启动状态、macOS 允许保留的权限和已签名更新链。原地升级后，应用文件在磁盘上可能仍叫 `OpenFire.app`，但显示名和运行程序已经是 ActionHalo。不要同时安装两份 `OpenFire.app` 与 `ActionHalo.app`。
+- 兼容期内保留现有 Bundle ID，以延续偏好设置、登录启动状态、macOS 允许保留的权限和已签名更新链。Sparkle 会先把更新安装到现有 `OpenFire.app`；ActionHalo 在启动任何服务前，会在父目录可写时将这个精确匹配的本地 App 包排他原子改名为 `ActionHalo.app` 并重新启动。它绝不会覆盖已有目标；父目录不可写、只读卷、网络卷、App 包自身是符号链接或已有另一份 `ActionHalo.app` 时，会安全保留旧路径。不要同时安装两份 `OpenFire.app` 与 `ActionHalo.app`。
 - 旧用户插件会从 `Application Support/OpenFire/Plugins` 一次性复制到 ActionHalo 插件目录，旧副本保留用于回滚。兼容期内仍可使用 `.openfireext`、`com.openfire.*` 插件 ID，以及 `OPENFIRE_TEXT` / `OPENFIRE_TEXT_FILE`。
 
 ### 触发方式说明
