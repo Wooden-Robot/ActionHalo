@@ -135,6 +135,12 @@ final class PluginManager: Sendable {
     static let maximumInstallPackageBytes = Plugin.maximumTrustedPackageBytes
     static let maximumPluginEnvironmentTextBytes = 32 * 1024
     static let pendingOperationRecoveryMinimumAge: TimeInterval = 30
+    private static let appleScriptUTF8FileReaderSource = """
+    on run argv
+        return read (POSIX file (item 1 of argv)) as «class utf8»
+    end run
+    """
+
     static let unsupportedPluginIdentifierNamespace = "com.openfire"
     static let allowedPluginURLSchemes: Set<String> = [
         "http",
@@ -275,6 +281,16 @@ final class PluginManager: Sendable {
                 of: "system attribute \"ACTIONHALO_TEXT\"",
                 with: fileReadExpression
             )
+    }
+
+    // Keep Standard Additions' `read` command out of the host script so
+    // AppleScriptObjC cannot resolve it against `current application`.
+    static func appleScriptUTF8FileReadExpression(path: String) -> String {
+        let readerLiteral = appleScriptStringLiteralExpression(
+            for: appleScriptUTF8FileReaderSource
+        )
+        let pathLiteral = appleScriptStringLiteralExpression(for: path)
+        return "run script (\(readerLiteral)) with parameters {\(pathLiteral)}"
     }
 
     static func isAllowedPluginURLTemplate(_ template: String) -> Bool {
@@ -1668,10 +1684,11 @@ final class PluginManager: Sendable {
             do {
                 try text.write(to: textFile, atomically: true, encoding: .utf8)
                 
-                // Transparently replace both the current and legacy text variables
-                // with a file-based UTF-8 read.
-                // so that CJK characters are handled correctly without users needing to know about the file
-                let fileReadExpr = "read (POSIX file \"\(textFile.path)\") as \u{00AB}class utf8\u{00BB}"
+                // Transparently replace the environment lookup with a file-based
+                // UTF-8 read so plugins receive Unicode text without extra work.
+                let fileReadExpr = Self.appleScriptUTF8FileReadExpression(
+                    path: textFile.path
+                )
                 let finalSource = Self.replacingPluginTextEnvironmentReferences(
                     in: appleScriptSource,
                     with: fileReadExpr

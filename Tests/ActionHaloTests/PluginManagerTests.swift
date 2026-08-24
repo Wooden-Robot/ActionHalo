@@ -1514,6 +1514,65 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertTrue(rendered.contains("set legacyText to (system attribute \"OPENFIRE_TEXT\")"))
     }
 
+    func testAppleScriptUTF8FileReplacementExecutesInsideFrameworkUsingScript() throws {
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(temporaryDirectory)
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory,
+            withIntermediateDirectories: true
+        )
+
+        let selectedText = "ActionHalo 中文 👋\n第二行"
+        let textFile = temporaryDirectory.appendingPathComponent(
+            #"selection "quoted" \ 中文.txt"#
+        )
+        let scriptFile = temporaryDirectory.appendingPathComponent("probe.applescript")
+        try selectedText.write(to: textFile, atomically: true, encoding: .utf8)
+
+        let expectedLiteral = PluginManager.appleScriptStringLiteralExpression(
+            for: selectedText
+        )
+        let source = """
+        use framework "AppKit"
+        use scripting additions
+
+        set actualText to (system attribute "ACTIONHALO_TEXT")
+        if actualText is not (\(expectedLiteral)) then
+            error "Selection text mismatch." number 1701
+        end if
+        """
+        let fileReadExpression = PluginManager.appleScriptUTF8FileReadExpression(
+            path: textFile.path
+        )
+        let rendered = PluginManager.replacingPluginTextEnvironmentReferences(
+            in: source,
+            with: fileReadExpression
+        )
+        XCTAssertFalse(rendered.contains("ACTIONHALO_TEXT"))
+        try rendered.write(to: scriptFile, atomically: true, encoding: .utf8)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = [scriptFile.path]
+        process.currentDirectoryURL = temporaryDirectory
+
+        var environment = PluginManager.pluginProcessEnvironment(
+            text: selectedText,
+            textFilePath: textFile.path
+        )
+        environment.removeValue(forKey: "ACTIONHALO_TEXT")
+        process.environment = environment
+
+        let status = PluginManager.shared.runProcessWithTimeout(
+            process,
+            timeout: 5,
+            logPrefix: "AppleScript UTF-8 runtime probe"
+        )
+
+        XCTAssertEqual(status, 0)
+    }
+
     func testBuiltInRunShellReadsBinaryUnsafeSelectionFromTextFile() throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

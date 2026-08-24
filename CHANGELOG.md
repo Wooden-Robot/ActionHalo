@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.3.31
+
+- 修复 “Search in Telegram” 点击后无响应的问题：AppleScriptObjC 插件现在通过隔离的 UTF-8 文件读取器接收选中文字，避免 `read` 被错误解析到 `current application`；新增中文、emoji、多行文本及特殊路径的运行时回归测试。
+
+- Fixed “Search in Telegram” doing nothing: AppleScriptObjC plugins now receive selected text through an isolated UTF-8 file reader, preventing `read` from being resolved against `current application`; added runtime regression coverage for CJK, emoji, multiline text, and escaped paths.
+
 ## v0.3.30
 
 - 修复新应用图标的透明画布被错误渲染为不透明白色的问题；圆环外侧与中心现在使用真实透明像素，同时保留选中块的描边和高亮效果。
