@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.3.30
+
+- 修复新应用图标的透明画布被错误渲染为不透明白色的问题；圆环外侧与中心现在使用真实透明像素，同时保留选中块的描边和高亮效果。
+
+- Fixed the new app icon's transparent canvas being rendered as opaque white; the area outside the wheel and its center now use genuine transparent pixels while preserving the selected segment's border and highlight.
+
 ## v0.3.29
 
 - ActionHalo 改用独立 Bundle ID `com.actionhalo.app`，只注册 `.actionhaloext` 与 `com.actionhalo.extension`；macOS 辅助功能、启动项和文件类型不再沿用旧应用身份。
