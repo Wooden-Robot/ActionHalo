@@ -3,11 +3,7 @@ import Foundation
 /// Loads and parses ActionHalo plugin packages.
 final class PluginLoader {
     static let packageExtension = "actionhaloext"
-    static let legacyPackageExtension = "openfireext"
-    static let supportedPackageExtensions: Set<String> = [
-        packageExtension,
-        legacyPackageExtension,
-    ]
+    static let supportedPackageExtensions: Set<String> = [packageExtension]
     static let maximumConfigBytes = 1 * 1024 * 1024
 
     static func isSupportedPackageExtension(_ pathExtension: String) -> Bool {
@@ -17,12 +13,22 @@ final class PluginLoader {
     static func isSupportedPackageURL(_ url: URL) -> Bool {
         isSupportedPackageExtension(url.pathExtension)
     }
+
+    private static func isLoadablePackageURL(_ url: URL) -> Bool {
+        isSupportedPackageURL(url) ||
+            url.lastPathComponent.lowercased().hasSuffix(".\(packageExtension).pending")
+    }
     
     /// Load a plugin from a .actionhaloext directory
     static func load(
         from directoryURL: URL,
         allowReservedCoreIdentifier: Bool = false
     ) -> Plugin? {
+        guard isLoadablePackageURL(directoryURL) else {
+            NSLog("[ActionHalo] Unsupported plugin package extension: \(directoryURL.path)")
+            return nil
+        }
+
         let rootKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
         guard let rootValues = try? directoryURL.resourceValues(forKeys: rootKeys),
               rootValues.isDirectory == true,
@@ -55,7 +61,7 @@ final class PluginLoader {
             let config = PluginConfig(
                 name: decodedConfig.name,
                 localizedNames: decodedConfig.localizedNames,
-                identifier: PluginManager.canonicalPluginIdentifier(decodedConfig.identifier),
+                identifier: decodedConfig.identifier,
                 action: decodedConfig.action,
                 icon: decodedConfig.icon,
                 description: decodedConfig.description,
@@ -93,7 +99,7 @@ final class PluginLoader {
         }
     }
     
-    /// Scan a directory for current and legacy ActionHalo packages.
+    /// Scan a directory for ActionHalo packages.
     static func scanDirectory(
         _ directoryURL: URL,
         allowReservedCoreIdentifiers: Bool = false

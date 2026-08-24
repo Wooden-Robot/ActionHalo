@@ -13,12 +13,12 @@ info_plist=""
 artifact_app=""
 require_ad_hoc=false
 package_resolved="$project_root/Package.resolved"
-expected_feed_url="https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/appcast.xml"
-expected_public_key="YpDJbUKWW/mYy47N4BULh0vfKr4PGvV5dv5OAGyJrAo="
+expected_feed_url="https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/actionhalo-appcast.xml"
+expected_public_key="PEn1mxr6DuGIBoGHNbx21ZANmnIi6gr/kBaaYRcKTTY="
 expected_sparkle_version="2.9.4"
 expected_sparkle_revision="b6496a74a087257ef5e6da1c5b29a447a60f5bd7"
 expected_app_name="ActionHalo"
-expected_bundle_identifier="com.openfire.app"
+expected_bundle_identifier="com.actionhalo.app"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -56,6 +56,10 @@ plist_value() {
         || fail "$1 is missing $2."
 }
 
+plist_key_exists() {
+    /usr/libexec/PlistBuddy -c "Print :$2" "$1" >/dev/null 2>&1
+}
+
 verify_plist() {
     local plist_path="$1"
     local description="$2"
@@ -70,6 +74,8 @@ verify_plist() {
     local bundle_display_name
     local bundle_executable
     local bundle_identifier
+    local legacy_identity
+    local signing_identifier
 
     feed_url="$(plist_value "$plist_path" SUFeedURL)"
     public_key="$(plist_value "$plist_path" SUPublicEDKey)"
@@ -104,19 +110,32 @@ verify_plist() {
     [[ "$bundle_executable" == "$expected_app_name" ]] \
         || fail "$description has an unexpected CFBundleExecutable: $bundle_executable"
     [[ "$bundle_identifier" == "$expected_bundle_identifier" ]] \
-        || fail "$description must preserve $expected_bundle_identifier during the rename transition."
+        || fail "$description has an unexpected bundle identifier: $bundle_identifier"
+    legacy_identity="$(plutil -convert xml1 -o - "$plist_path" | grep -Ei 'openfire|com\.openfire' || true)"
+    [[ -z "$legacy_identity" ]] \
+        || fail "$description still contains a legacy OpenFire identity."
     [[ "$(plist_value "$plist_path" 'CFBundleDocumentTypes:0:CFBundleTypeExtensions:0')" == "actionhaloext" ]] \
         || fail "$description does not register the canonical .actionhaloext package."
+    [[ "$(plist_value "$plist_path" 'CFBundleDocumentTypes:0:CFBundleTypeName')" == "ActionHalo Extension" ]] \
+        || fail "$description has an unexpected ActionHalo document type name."
     [[ "$(plist_value "$plist_path" 'CFBundleDocumentTypes:0:LSItemContentTypes:0')" == "com.actionhalo.extension" ]] \
         || fail "$description does not register the canonical ActionHalo extension UTI."
-    [[ "$(plist_value "$plist_path" 'CFBundleDocumentTypes:1:CFBundleTypeExtensions:0')" == "openfireext" ]] \
-        || fail "$description does not preserve legacy .openfireext opening support."
-    [[ "$(plist_value "$plist_path" 'CFBundleDocumentTypes:1:LSItemContentTypes:0')" == "com.openfire.extension" ]] \
-        || fail "$description does not preserve the legacy OpenFire extension UTI."
+    ! plist_key_exists "$plist_path" 'CFBundleDocumentTypes:0:CFBundleTypeExtensions:1' \
+        || fail "$description registers more than one extension for ActionHalo documents."
+    ! plist_key_exists "$plist_path" 'CFBundleDocumentTypes:0:LSItemContentTypes:1' \
+        || fail "$description registers more than one UTI for ActionHalo documents."
+    ! plist_key_exists "$plist_path" 'CFBundleDocumentTypes:1' \
+        || fail "$description registers a non-ActionHalo document type."
     [[ "$(plist_value "$plist_path" 'UTExportedTypeDeclarations:0:UTTypeIdentifier')" == "com.actionhalo.extension" ]] \
         || fail "$description does not export the canonical ActionHalo extension UTI."
-    [[ "$(plist_value "$plist_path" 'UTExportedTypeDeclarations:1:UTTypeIdentifier')" == "com.openfire.extension" ]] \
-        || fail "$description does not continue exporting the legacy OpenFire extension UTI."
+    [[ "$(plist_value "$plist_path" 'UTExportedTypeDeclarations:0:UTTypeDescription')" == "ActionHalo Extension Package" ]] \
+        || fail "$description has an unexpected ActionHalo UTI description."
+    [[ "$(plist_value "$plist_path" 'UTExportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension:0')" == "actionhaloext" ]] \
+        || fail "$description does not export the canonical .actionhaloext filename extension."
+    ! plist_key_exists "$plist_path" 'UTExportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension:1' \
+        || fail "$description exports more than one filename extension for the ActionHalo UTI."
+    ! plist_key_exists "$plist_path" 'UTExportedTypeDeclarations:1' \
+        || fail "$description exports a non-ActionHalo UTI."
 }
 
 sparkle_pin_index=""
@@ -182,6 +201,9 @@ if [[ -n "$artifact_app" ]]; then
             || fail "Community release app must use an ad-hoc code signature."
         grep -Eq '^TeamIdentifier=not set$' <<<"$signing_metadata" \
             || fail "Community release app must not carry an Apple Team identity."
+        signing_identifier="$(sed -n 's/^Identifier=//p' <<<"$signing_metadata")"
+        [[ "$signing_identifier" == "$expected_bundle_identifier" ]] \
+            || fail "Release code-signing identifier is $signing_identifier; expected $expected_bundle_identifier."
         [[ "$(plist_value "$artifact_plist" CFBundleIdentifier)" == "$expected_bundle_identifier" ]] \
             || fail "Release app has an unexpected bundle identifier."
         ! grep -Eq '^CodeDirectory .*flags=.*runtime' <<<"$signing_metadata" \

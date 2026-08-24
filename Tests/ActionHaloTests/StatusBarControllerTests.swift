@@ -4,11 +4,11 @@ import XCTest
 @MainActor
 final class StatusBarControllerTests: XCTestCase {
     func testLaunchAgentPlistUsesBundleIdentifierInsteadOfBundlePath() {
-        let plist = StatusBarController.launchAgentPlist(bundleIdentifier: "com.openfire.app")
+        let plist = StatusBarController.launchAgentPlist(bundleIdentifier: "com.actionhalo.app")
 
         XCTAssertTrue(plist.contains("<string>/usr/bin/open</string>"))
         XCTAssertTrue(plist.contains("<string>-b</string>"))
-        XCTAssertTrue(plist.contains("<string>com.openfire.app</string>"))
+        XCTAssertTrue(plist.contains("<string>com.actionhalo.app</string>"))
         XCTAssertFalse(plist.contains(Bundle.main.bundlePath))
     }
 
@@ -37,32 +37,39 @@ final class StatusBarControllerTests: XCTestCase {
         )
     }
 
-    func testBaseStatusIconTracksEnabledState() {
-        XCTAssertEqual(StatusBarController.baseStatusIconSymbolName(isEnabled: true), "flame.fill")
-        XCTAssertEqual(StatusBarController.baseStatusIconSymbolName(isEnabled: false), "flame")
+    func testBaseStatusIconTracksEnabledState() throws {
+        let enabledImage = StatusBarController.baseStatusIconImage(isEnabled: true)
+        let disabledImage = StatusBarController.baseStatusIconImage(isEnabled: false)
+
+        XCTAssertEqual(enabledImage.size, NSSize(width: 18, height: 18))
+        XCTAssertEqual(disabledImage.size, NSSize(width: 18, height: 18))
+        XCTAssertTrue(enabledImage.isTemplate)
+        XCTAssertTrue(disabledImage.isTemplate)
+        XCTAssertEqual(enabledImage.accessibilityDescription, "ActionHalo")
+        XCTAssertNotEqual(
+            try XCTUnwrap(enabledImage.tiffRepresentation),
+            try XCTUnwrap(disabledImage.tiffRepresentation)
+        )
     }
 
-    func testEnabledStateMigratesLegacyPreference() throws {
+    func testEnabledStateDefaultsToTrue() throws {
         let suiteName = "StatusBarControllerTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(false, forKey: "OpenFireEnabled")
 
-        XCTAssertFalse(StatusBarController.migratedEnabledState(userDefaults: defaults))
-        XCTAssertEqual(defaults.object(forKey: "ActionHaloEnabled") as? Bool, false)
+        XCTAssertTrue(StatusBarController.enabledState(userDefaults: defaults))
     }
 
-    func testCurrentEnabledStateTakesPrecedenceOverLegacyPreference() throws {
+    func testEnabledStateReadsActionHaloPreference() throws {
         let suiteName = "StatusBarControllerTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        defaults.set(true, forKey: "ActionHaloEnabled")
-        defaults.set(false, forKey: "OpenFireEnabled")
+        defaults.set(false, forKey: "ActionHaloEnabled")
 
-        XCTAssertTrue(StatusBarController.migratedEnabledState(userDefaults: defaults))
+        XCTAssertFalse(StatusBarController.enabledState(userDefaults: defaults))
     }
 
-    func testEnabledStateWritesCurrentAndLegacyPreferencesForRollback() throws {
+    func testEnabledStateWritesActionHaloPreference() throws {
         let suiteName = "StatusBarControllerTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -70,6 +77,5 @@ final class StatusBarControllerTests: XCTestCase {
         StatusBarController.persistEnabledState(false, userDefaults: defaults)
 
         XCTAssertEqual(defaults.object(forKey: "ActionHaloEnabled") as? Bool, false)
-        XCTAssertEqual(defaults.object(forKey: "OpenFireEnabled") as? Bool, false)
     }
 }

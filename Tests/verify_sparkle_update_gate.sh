@@ -32,18 +32,43 @@ expect_failure "the legacy app name as the public bundle name" \
     bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
 
 cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.actionhalo.app" "$source_plist"
-expect_failure "a bundle identifier change during the compatibility transition" \
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.openfire.app" "$source_plist"
+expect_failure "the legacy OpenFire bundle identifier" \
     bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
 
 cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
-/usr/libexec/PlistBuddy -c "Delete :CFBundleDocumentTypes:1" "$source_plist"
-expect_failure "removal of legacy .openfireext document support" \
+/usr/libexec/PlistBuddy -c "Set :CFBundleDocumentTypes:0:CFBundleTypeExtensions:0 openfireext" "$source_plist"
+expect_failure "the legacy .openfireext document extension" \
     bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
 
 cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
-/usr/libexec/PlistBuddy -c "Set :SUFeedURL https://example.com/appcast.xml" "$source_plist"
-expect_failure "an untrusted appcast URL" \
+/usr/libexec/PlistBuddy -c "Set :CFBundleDocumentTypes:0:LSItemContentTypes:0 com.openfire.extension" "$source_plist"
+expect_failure "the legacy OpenFire document UTI" \
+    bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
+
+cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:1 dict" "$source_plist"
+expect_failure "an additional non-ActionHalo document type" \
+    bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
+
+cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
+/usr/libexec/PlistBuddy -c "Set :UTExportedTypeDeclarations:0:UTTypeIdentifier com.openfire.extension" "$source_plist"
+expect_failure "the legacy OpenFire exported UTI" \
+    bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
+
+cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
+/usr/libexec/PlistBuddy -c "Add :UTExportedTypeDeclarations:1 dict" "$source_plist"
+expect_failure "an additional non-ActionHalo exported UTI" \
+    bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
+
+cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
+/usr/libexec/PlistBuddy -c "Set :SUFeedURL https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/appcast.xml" "$source_plist"
+expect_failure "the legacy shared appcast URL" \
+    bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
+
+cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
+/usr/libexec/PlistBuddy -c "Set :SUPublicEDKey YpDJbUKWW/mYy47N4BULh0vfKr4PGvV5dv5OAGyJrAo=" "$source_plist"
+expect_failure "the legacy OpenFire update signing key" \
     bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
 
 cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"

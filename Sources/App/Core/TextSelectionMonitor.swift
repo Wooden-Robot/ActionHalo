@@ -22,14 +22,12 @@ final class TextSelectionMonitor {
 
     nonisolated private static let suppressedFrontmostBundleIDs: Set<String> = [
         "comactionhaloapp",
-        "comopenfireapp",
         "comappledock",
         "comapplefinder",
         "comapplewindowmanager"
     ]
     nonisolated private static let suppressedFrontmostNames: Set<String> = [
         "actionhalo",
-        "openfire",
         "finder",
         "dock",
         "desktop"
@@ -126,9 +124,7 @@ final class TextSelectionMonitor {
         let normalizedBundleID = normalizeFrontmostAppIdentifier(bundleID)
         let normalizedName = normalizeFrontmostAppIdentifier(localizedName)
         if normalizedBundleID == "comactionhaloapp" ||
-            normalizedBundleID == "comopenfireapp" ||
-            normalizedName == "actionhalo" ||
-            normalizedName == "openfire" {
+            normalizedName == "actionhalo" {
             return true
         }
 

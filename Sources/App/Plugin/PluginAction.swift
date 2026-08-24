@@ -782,9 +782,7 @@ final class Plugin: Identifiable, Sendable {
         guard let entries = trustedPackageEntries() else { return nil }
 
         var hasher = SHA256()
-        // Compatibility ABI: changing this salt would invalidate every stored
-        // execution-trust decision created before the ActionHalo rename.
-        Self.updateFingerprint(&hasher, with: Data("openfire-plugin-package-v3".utf8))
+        Self.updateFingerprint(&hasher, with: Data("actionhalo-plugin-package-v1".utf8))
 
         for entry in entries {
             Self.updateFingerprint(&hasher, with: Data(entry.relativePath.utf8))

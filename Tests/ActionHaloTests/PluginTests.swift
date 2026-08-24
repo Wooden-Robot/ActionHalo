@@ -298,12 +298,16 @@ final class PluginTests: XCTestCase {
         )
     }
 
-    func testPluginLoaderScansLegacyPackageAndCanonicalizesIdentifier() throws {
+    func testPluginLoaderRejectsUnsupportedExtensionAndIdentifier() throws {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         temporaryDirectories.append(directoryURL)
-        let legacyBundleURL = directoryURL.appendingPathComponent(
+        let unsupportedExtensionURL = directoryURL.appendingPathComponent(
             "Legacy.openfireext",
+            isDirectory: true
+        )
+        let unsupportedIdentifierURL = directoryURL.appendingPathComponent(
+            "RenamedLegacy.actionhaloext",
             isDirectory: true
         )
         let currentBundleURL = directoryURL.appendingPathComponent(
@@ -311,21 +315,31 @@ final class PluginTests: XCTestCase {
             isDirectory: true
         )
         try FileManager.default.createDirectory(
-            at: legacyBundleURL,
+            at: unsupportedExtensionURL,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: unsupportedIdentifierURL,
             withIntermediateDirectories: true
         )
         try FileManager.default.createDirectory(
             at: currentBundleURL,
             withIntermediateDirectories: true
         )
-        try """
+        let unsupportedConfig = """
         {
             "name": "Legacy",
             "identifier": "com.openfire.legacy-search",
             "action": { "type": "copy" }
         }
-        """.write(
-            to: legacyBundleURL.appendingPathComponent("Config.json"),
+        """
+        try unsupportedConfig.write(
+            to: unsupportedExtensionURL.appendingPathComponent("Config.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try unsupportedConfig.write(
+            to: unsupportedIdentifierURL.appendingPathComponent("Config.json"),
             atomically: true,
             encoding: .utf8
         )
@@ -343,12 +357,11 @@ final class PluginTests: XCTestCase {
 
         let plugins = PluginLoader.scanDirectory(directoryURL)
 
-        XCTAssertEqual(
-            Set(plugins.map(\.id)),
-            ["com.actionhalo.legacy-search", "com.actionhalo.current-search"]
-        )
-        XCTAssertTrue(PluginLoader.isSupportedPackageURL(legacyBundleURL))
+        XCTAssertEqual(plugins.map(\.id), ["com.actionhalo.current-search"])
+        XCTAssertFalse(PluginLoader.isSupportedPackageURL(unsupportedExtensionURL))
         XCTAssertTrue(PluginLoader.isSupportedPackageURL(currentBundleURL))
+        XCTAssertNil(PluginLoader.load(from: unsupportedExtensionURL))
+        XCTAssertNil(PluginLoader.load(from: unsupportedIdentifierURL))
     }
 
     func testCoreDefaultKeyComboPluginDoesNotRequireExecutionTrust() throws {

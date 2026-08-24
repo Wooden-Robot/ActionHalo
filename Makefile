@@ -7,10 +7,12 @@ VERSION ?=
 ARTIFACT_PLIST ?=
 APP_ENTITLEMENTS = ActionHalo.entitlements
 SPARKLE_VERSION = 2.9.4
-# Compatibility: existing releases were signed with the key stored under this
-# Keychain account. Renaming it without copying the private key would break
-# update signing.
-SPARKLE_ACCOUNT ?= OpenFire
+# ActionHalo uses its own Keychain account and update trust root.
+SPARKLE_ACCOUNT ?= ActionHalo
+# The legacy account contains the former trust root only for signing a
+# non-installable migration notice. It cannot sign ActionHalo updates.
+LEGACY_SPARKLE_ACCOUNT ?= ActionHaloLegacyMigration
+LEGACY_SPARKLE_PUBLIC_KEY = YpDJbUKWW/mYy47N4BULh0vfKr4PGvV5dv5OAGyJrAo=
 BUILD_DIR = .build
 OUTPUT = $(BUILD_DIR)/ActionHalo
 SPARKLE_DISTRIBUTION = $(BUILD_DIR)/artifacts/sparkle/Sparkle
@@ -19,7 +21,10 @@ SPARKLE_FRAMEWORK = $(SPARKLE_FRAMEWORK_PARENT)/Sparkle.framework
 SPARKLE_TOOLS = $(SPARKLE_DISTRIBUTION)/bin
 SPARKLE_LICENSE = $(SPARKLE_DISTRIBUTION)/LICENSE
 APPCAST_DIR = $(BUILD_DIR)/appcast-input
-APPCAST_PATH = $(BUILD_DIR)/appcast.xml
+APPCAST_NAME = actionhalo-appcast.xml
+APPCAST_PATH = $(BUILD_DIR)/$(APPCAST_NAME)
+LEGACY_APPCAST_NAME = appcast.xml
+LEGACY_APPCAST_PATH = $(BUILD_DIR)/$(LEGACY_APPCAST_NAME)
 
 SWIFT_FILES := $(shell find Sources/App -name "*.swift" | sort)
 FRAMEWORKS = -framework Cocoa -framework Carbon -framework JavaScriptCore
@@ -38,7 +43,7 @@ DMG_BACKGROUND = $(BUILD_DIR)/dmg-background.png
 
 .DEFAULT_GOAL := help
 
-.PHONY: help all clean force dependencies package release generate-appcast publish-release-assets verify-release-repository verify-release-version verify-release-entitlements verify-sparkle-update run test
+.PHONY: help all clean force dependencies package release generate-appcast generate-legacy-migration-appcast publish-release-assets verify-release-repository verify-release-version verify-release-entitlements verify-sparkle-update run test
 
 help:
 	@echo "ActionHalo 可用 make 命令："
@@ -46,8 +51,8 @@ help:
 	@echo "  make / make help  显示本说明，不执行构建。"
 	@echo "  make all          编译 universal ActionHalo 二进制到 $(OUTPUT)。"
 	@echo "  make package      创建 ad-hoc 签名的社区版 $(APP_NAME).app 和 $(DMG_NAME)。"
-	@echo "  make release      校验版本/tag 后打包社区版并生成 Sparkle 签名更新源。"
-	@echo "  make publish-release-assets  将 DMG 与签名 appcast 上传到草稿 GitHub Release。"
+	@echo "  make release      校验版本/tag 后打包，并生成新旧两个独立签名更新源。"
+	@echo "  make publish-release-assets  将 DMG 与两个签名 appcast 上传到草稿 GitHub Release。"
 	@echo "                    校验远端摘要后才公开；正式目标均需显式 VERSION 和精确 tag。"
 	@echo "  make run          打包、重置开发构建的 Accessibility 权限，然后启动 ActionHalo。"
 	@echo "  make test         运行 Swift 测试。"
@@ -82,11 +87,10 @@ $(OUTPUT): force $(SWIFT_FILES) Makefile Package.swift Package.resolved
 force:
 
 run: package
-	@echo "🛑 Stopping existing ActionHalo and legacy OpenFire instances..."
+	@echo "🛑 Stopping existing ActionHalo instances..."
 	@killall ActionHalo 2>/dev/null || true
-	@killall OpenFire 2>/dev/null || true
 	@echo "🧹 Clearing stale TCC Accessibility permissions for new build..."
-	@tccutil reset Accessibility com.openfire.app 2>/dev/null || true
+	@tccutil reset Accessibility com.actionhalo.app 2>/dev/null || true
 	@echo "🔥 Starting ActionHalo..."
 	@open $(APP_DIR)
 
@@ -178,8 +182,10 @@ release: verify-release-repository verify-release-version verify-release-entitle
 		VERSION="$(VERSION)" \
 		ARTIFACT_PLIST="$(APP_CONTENTS)/Info.plist"
 	@$(MAKE) generate-appcast VERSION="$(VERSION)" SPARKLE_ACCOUNT="$(SPARKLE_ACCOUNT)"
+	@$(MAKE) generate-legacy-migration-appcast VERSION="$(VERSION)" LEGACY_SPARKLE_ACCOUNT="$(LEGACY_SPARKLE_ACCOUNT)"
 	@echo "✅ Validated ad-hoc community release at $(BUILD_DIR)/$(DMG_NAME)"
-	@echo "✅ Signed Sparkle feed created at $(APPCAST_PATH)"
+	@echo "✅ Signed ActionHalo update feed created at $(APPCAST_PATH)"
+	@echo "✅ Signed legacy migration notice created at $(LEGACY_APPCAST_PATH)"
 
 generate-appcast: verify-release-repository verify-release-version verify-sparkle-update
 	@test -f "$(BUILD_DIR)/$(DMG_NAME)" || { echo "❌ Missing release image: $(BUILD_DIR)/$(DMG_NAME)"; exit 1; }
@@ -212,29 +218,45 @@ generate-appcast: verify-release-repository verify-release-version verify-sparkl
 		--account "$(SPARKLE_ACCOUNT)"
 	@rm -rf "$(APPCAST_DIR)"
 
+generate-legacy-migration-appcast: verify-release-repository verify-release-version
+	@test -x "$(SPARKLE_TOOLS)/sign_update" || { echo "❌ Sparkle sign_update tool is missing."; exit 1; }
+	@test -x "$(SPARKLE_TOOLS)/generate_keys" || { echo "❌ Sparkle generate_keys tool is missing."; exit 1; }
+	@bash Tools/generate_legacy_migration_appcast.sh \
+		--version "$(VERSION)" \
+		--output "$(LEGACY_APPCAST_PATH)" \
+		--sign-update "$(SPARKLE_TOOLS)/sign_update" \
+		--generate-keys "$(SPARKLE_TOOLS)/generate_keys" \
+		--account "$(LEGACY_SPARKLE_ACCOUNT)" \
+		--expected-public-key "$(LEGACY_SPARKLE_PUBLIC_KEY)"
+
 publish-release-assets: verify-release-repository verify-release-version verify-sparkle-update
 	@command -v gh >/dev/null || { echo "❌ GitHub CLI is required. Install and authenticate gh first."; exit 1; }
 	@test -f "$(BUILD_DIR)/$(DMG_NAME)" || { echo "❌ Missing release image: $(BUILD_DIR)/$(DMG_NAME)"; exit 1; }
 	@bash Tools/verify_github_draft_release.sh --version "$(VERSION)"
 	@EXISTING="$$(gh api "repos/Wooden-Robot/ActionHalo/releases/tags/v$(VERSION)" --hostname github.com --jq '.assets[].name')" || { echo "❌ Could not inspect existing draft assets."; exit 1; }; \
 		! echo "$${EXISTING}" | grep -Fxq "$(DMG_NAME)" || { echo "❌ Draft already contains $(DMG_NAME); refusing to overwrite it."; exit 1; }; \
-		! echo "$${EXISTING}" | grep -Fxq "appcast.xml" || { echo "❌ Draft already contains appcast.xml; refusing to overwrite it."; exit 1; }
+		! echo "$${EXISTING}" | grep -Fxq "$(APPCAST_NAME)" || { echo "❌ Draft already contains $(APPCAST_NAME); refusing to overwrite it."; exit 1; }; \
+		! echo "$${EXISTING}" | grep -Fxq "$(LEGACY_APPCAST_NAME)" || { echo "❌ Draft already contains $(LEGACY_APPCAST_NAME); refusing to overwrite it."; exit 1; }
 	@bash Tools/verify_release_dmg.sh \
 		--dmg "$(BUILD_DIR)/$(DMG_NAME)" \
 		--version "$(VERSION)" \
 		--info-plist Sources/App/Resources/Info.plist \
 		--package-resolved Package.resolved
 	@$(MAKE) generate-appcast VERSION="$(VERSION)" SPARKLE_ACCOUNT="$(SPARKLE_ACCOUNT)"
-	@gh release upload "v$(VERSION)" "$(BUILD_DIR)/$(DMG_NAME)#$(DMG_NAME)" "$(APPCAST_PATH)#appcast.xml" --repo "github.com/Wooden-Robot/ActionHalo"
+	@$(MAKE) generate-legacy-migration-appcast VERSION="$(VERSION)" LEGACY_SPARKLE_ACCOUNT="$(LEGACY_SPARKLE_ACCOUNT)"
+	@gh release upload "v$(VERSION)" "$(BUILD_DIR)/$(DMG_NAME)#$(DMG_NAME)" "$(APPCAST_PATH)#$(APPCAST_NAME)" "$(LEGACY_APPCAST_PATH)#$(LEGACY_APPCAST_NAME)" --repo "github.com/Wooden-Robot/ActionHalo"
 	@LOCAL_DMG_DIGEST="sha256:$$(shasum -a 256 "$(BUILD_DIR)/$(DMG_NAME)" | awk '{print $$1}')"; \
 		LOCAL_APPCAST_DIGEST="sha256:$$(shasum -a 256 "$(APPCAST_PATH)" | awk '{print $$1}')"; \
+		LOCAL_LEGACY_APPCAST_DIGEST="sha256:$$(shasum -a 256 "$(LEGACY_APPCAST_PATH)" | awk '{print $$1}')"; \
 		REMOTE_DMG_DIGEST="$$(gh api "repos/Wooden-Robot/ActionHalo/releases/tags/v$(VERSION)" --hostname github.com --jq '.assets[] | select(.name == "$(DMG_NAME)") | .digest')"; \
-		REMOTE_APPCAST_DIGEST="$$(gh api "repos/Wooden-Robot/ActionHalo/releases/tags/v$(VERSION)" --hostname github.com --jq '.assets[] | select(.name == "appcast.xml") | .digest')"; \
+		REMOTE_APPCAST_DIGEST="$$(gh api "repos/Wooden-Robot/ActionHalo/releases/tags/v$(VERSION)" --hostname github.com --jq '.assets[] | select(.name == "$(APPCAST_NAME)") | .digest')"; \
+		REMOTE_LEGACY_APPCAST_DIGEST="$$(gh api "repos/Wooden-Robot/ActionHalo/releases/tags/v$(VERSION)" --hostname github.com --jq '.assets[] | select(.name == "$(LEGACY_APPCAST_NAME)") | .digest')"; \
 		[ "$${REMOTE_DMG_DIGEST}" = "$${LOCAL_DMG_DIGEST}" ] || { echo "❌ Uploaded DMG digest mismatch; draft remains unpublished."; exit 1; }; \
-		[ "$${REMOTE_APPCAST_DIGEST}" = "$${LOCAL_APPCAST_DIGEST}" ] || { echo "❌ Uploaded appcast digest mismatch; draft remains unpublished."; exit 1; }
+		[ "$${REMOTE_APPCAST_DIGEST}" = "$${LOCAL_APPCAST_DIGEST}" ] || { echo "❌ Uploaded ActionHalo appcast digest mismatch; draft remains unpublished."; exit 1; }; \
+		[ "$${REMOTE_LEGACY_APPCAST_DIGEST}" = "$${LOCAL_LEGACY_APPCAST_DIGEST}" ] || { echo "❌ Uploaded legacy migration appcast digest mismatch; draft remains unpublished."; exit 1; }
 	@bash Tools/verify_github_draft_release.sh --version "$(VERSION)"
 	@gh release edit "v$(VERSION)" --draft=false --latest --repo "github.com/Wooden-Robot/ActionHalo"
-	@echo "✅ Verified both remote asset digests and published v$(VERSION)."
+	@echo "✅ Verified all three remote asset digests and published v$(VERSION)."
 
 clean:
 	rm -rf $(BUILD_DIR)
@@ -244,6 +266,7 @@ test: dependencies
 	bash Tests/verify_release_version_gate.sh
 	bash Tests/verify_release_entitlements_gate.sh
 	bash Tests/verify_sparkle_update_gate.sh
+	bash Tests/verify_legacy_migration_appcast_gate.sh
 	bash Tests/verify_github_release_gate.sh
 	bash Tests/verify_community_release_contract.sh
 	swift test

@@ -5,8 +5,8 @@ import Cocoa
 final class StatusBarController: NSObject {
     private static let wheelBackdropEnabledKey = "WheelBackdropEnabled"
     private static let enabledKey = "ActionHaloEnabled"
-    private static let legacyEnabledKey = "OpenFireEnabled"
-    private static let launchAgentLabel = "com.openfire.app"
+    private static let launchAgentLabel = "com.actionhalo.app"
+    private static let statusIconSize = NSSize(width: 18, height: 18)
     
     private var statusItem: NSStatusItem?
     private var mainMenu: NSMenu?
@@ -28,19 +28,12 @@ final class StatusBarController: NSObject {
     var currentEnabledState: Bool { isEnabled }
 
     override init() {
-        isEnabled = Self.migratedEnabledState()
+        isEnabled = Self.enabledState()
         super.init()
     }
 
-    static func migratedEnabledState(userDefaults: UserDefaults = .standard) -> Bool {
-        if let currentValue = userDefaults.object(forKey: enabledKey) as? Bool {
-            return currentValue
-        }
-        if let legacyValue = userDefaults.object(forKey: legacyEnabledKey) as? Bool {
-            userDefaults.set(legacyValue, forKey: enabledKey)
-            return legacyValue
-        }
-        return true
+    static func enabledState(userDefaults: UserDefaults = .standard) -> Bool {
+        userDefaults.object(forKey: enabledKey) as? Bool ?? true
     }
 
     static func persistEnabledState(
@@ -48,12 +41,54 @@ final class StatusBarController: NSObject {
         userDefaults: UserDefaults = .standard
     ) {
         userDefaults.set(isEnabled, forKey: enabledKey)
-        // Keep rollback compatibility with releases that still read the old key.
-        userDefaults.set(isEnabled, forKey: legacyEnabledKey)
     }
 
-    static func baseStatusIconSymbolName(isEnabled: Bool) -> String {
-        isEnabled ? "flame.fill" : "flame"
+    static func baseStatusIconImage(isEnabled: Bool) -> NSImage {
+        let image = NSImage(size: statusIconSize, flipped: false) { rect in
+            drawStatusIcon(in: rect, isEnabled: isEnabled)
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "ActionHalo"
+        return image
+    }
+
+    private static func drawStatusIcon(in rect: NSRect, isEnabled: Bool) {
+        let center = NSPoint(x: rect.midX, y: rect.midY)
+        let selectedIndex = 1
+        let step: CGFloat = 45
+        let halfSpan: CGFloat = 20.5
+        let radius: CGFloat = 5.75
+        let lineWidth: CGFloat = 2.8
+
+        func drawSegment(_ index: Int, alpha: CGFloat, outwardOffset: CGFloat) {
+            let middleAngle = CGFloat(index) * step
+            let radians = middleAngle * .pi / 180
+            let segmentCenter = NSPoint(
+                x: center.x + cos(radians) * outwardOffset,
+                y: center.y + sin(radians) * outwardOffset
+            )
+
+            let path = NSBezierPath()
+            path.appendArc(
+                withCenter: segmentCenter,
+                radius: radius,
+                startAngle: middleAngle - halfSpan,
+                endAngle: middleAngle + halfSpan
+            )
+            path.lineWidth = lineWidth
+            path.lineCapStyle = .butt
+            NSColor.black.withAlphaComponent(alpha).setStroke()
+            path.stroke()
+        }
+
+        for index in 0..<8 where !isEnabled || index != selectedIndex {
+            drawSegment(index, alpha: isEnabled ? 0.66 : 0.45, outwardOffset: 0)
+        }
+
+        if isEnabled {
+            drawSegment(selectedIndex, alpha: 1, outwardOffset: 0.65)
+        }
     }
 
     static func shouldDetachStatusMenu(attachedMenu: NSMenu?, closedMenu: NSMenu) -> Bool {
@@ -137,7 +172,7 @@ final class StatusBarController: NSObject {
         menu.delegate = self
         
         // Title
-        let titleItem = NSMenuItem(title: "ActionHalo 🔥", action: nil, keyEquivalent: "")
+        let titleItem = NSMenuItem(title: "ActionHalo", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
         menu.addItem(NSMenuItem.separator())
@@ -349,12 +384,7 @@ final class StatusBarController: NSObject {
 
     private func updateStatusItemIcon(button: NSStatusBarButton) {
         guard statusFeedbackTimer == nil else { return }
-        button.image = NSImage(
-            systemSymbolName: Self.baseStatusIconSymbolName(isEnabled: isEnabled),
-            accessibilityDescription: "ActionHalo"
-        )
-        button.image?.size = NSSize(width: 18, height: 18)
-        button.image?.isTemplate = true
+        button.image = Self.baseStatusIconImage(isEnabled: isEnabled)
     }
 
     func showTemporaryStatusMessage(_ message: String, symbolName: String = "checkmark.circle.fill", duration: TimeInterval = 2.0) {

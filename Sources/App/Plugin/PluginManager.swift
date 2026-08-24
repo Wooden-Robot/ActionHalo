@@ -67,13 +67,6 @@ final class PluginManager: Sendable {
         }
     }
 
-    struct LegacyPluginMigrationResult: Equatable, Sendable {
-        var copiedPackages = 0
-        var skippedPackages = 0
-        var failedPackages = 0
-        var processedPluginIDs: Set<String> = []
-    }
-
     enum PluginScriptSource: Equatable, Sendable {
         case bundledFile(URL)
         case inline(String)
@@ -136,15 +129,13 @@ final class PluginManager: Sendable {
     static let pluginsReloadedNotification = Notification.Name("ActionHaloPluginsReloaded")
     static let trustedPluginFingerprintsKey = "trustedPluginFingerprints"
     static let perAppDisabledPluginsKey = "perAppDisabledPlugins"
-    static let legacyPluginMigrationProcessedIDsKey = "ActionHaloLegacyPluginMigrationProcessedIDs"
     static let verbosePluginLoggingKey = "VerbosePluginLoggingEnabled"
     static let maxPluginProcessStderrBytes = 64 * 1024
     static let maximumInstallPackageFileCount = Plugin.maximumTrustedPackageFileCount
     static let maximumInstallPackageBytes = Plugin.maximumTrustedPackageBytes
     static let maximumPluginEnvironmentTextBytes = 32 * 1024
     static let pendingOperationRecoveryMinimumAge: TimeInterval = 30
-    static let legacyPluginIdentifierPrefix = "com.openfire."
-    static let pluginIdentifierPrefix = "com.actionhalo."
+    static let unsupportedPluginIdentifierNamespace = "com.openfire"
     static let allowedPluginURLSchemes: Set<String> = [
         "http",
         "https",
@@ -165,56 +156,6 @@ final class PluginManager: Sendable {
         "com.actionhalo.reveal-path"
     ]
 
-    static func canonicalPluginIdentifier(_ identifier: String) -> String {
-        let lowercased = identifier.lowercased()
-        guard lowercased.hasPrefix(legacyPluginIdentifierPrefix) else {
-            return identifier
-        }
-        return pluginIdentifierPrefix + String(identifier.dropFirst(legacyPluginIdentifierPrefix.count))
-    }
-
-    static func canonicalPluginIdentifiers(_ identifiers: [String]) -> [String] {
-        var seen: Set<String> = []
-        return identifiers.compactMap { identifier in
-            let canonical = canonicalPluginIdentifier(identifier)
-            return seen.insert(canonical).inserted ? canonical : nil
-        }
-    }
-
-    static func migrateLegacyPluginState(userDefaults: UserDefaults = .standard) {
-        for key in ["deletedBuiltInPlugins", "disabledPlugins", "userEnabledPlugins", "pluginOrder"] {
-            guard let stored = userDefaults.stringArray(forKey: key) else { continue }
-            let migrated = canonicalPluginIdentifiers(stored)
-            if migrated != stored {
-                userDefaults.set(migrated, forKey: key)
-            }
-        }
-
-        if let storedOverrides = userDefaults.dictionary(forKey: perAppDisabledPluginsKey) as? [String: [String]] {
-            let migratedOverrides = storedOverrides.mapValues(canonicalPluginIdentifiers)
-            if migratedOverrides != storedOverrides {
-                userDefaults.set(migratedOverrides, forKey: perAppDisabledPluginsKey)
-            }
-        }
-
-        if let storedTrust = userDefaults.dictionary(forKey: trustedPluginFingerprintsKey) as? [String: String] {
-            var migratedTrust: [String: String] = [:]
-            for (identifier, fingerprint) in storedTrust
-            where canonicalPluginIdentifier(identifier) == identifier {
-                migratedTrust[identifier] = fingerprint
-            }
-            for (identifier, fingerprint) in storedTrust {
-                let canonical = canonicalPluginIdentifier(identifier)
-                if migratedTrust[canonical] == nil {
-                    migratedTrust[canonical] = fingerprint
-                }
-            }
-            if migratedTrust != storedTrust {
-                userDefaults.set(migratedTrust, forKey: trustedPluginFingerprintsKey)
-            }
-        }
-    }
-    
     private struct State: Sendable {
         var plugins: [Plugin] = []
         var userPluginsDirectoryOverride: URL?
@@ -255,11 +196,6 @@ final class PluginManager: Sendable {
         return appSupport.appendingPathComponent("ActionHalo/Plugins")
     }
 
-    var legacyUserPluginsURL: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("OpenFire/Plugins")
-    }
-    
     /// Built-in plugins directory
     var builtInPluginsURL: URL {
         // When packaged as a .app bundle, look in Contents/Resources/Plugins
@@ -274,9 +210,7 @@ final class PluginManager: Sendable {
         return executableURL.deletingLastPathComponent().appendingPathComponent("Plugins")
     }
     
-    private init() {
-        Self.migrateLegacyPluginState()
-    }
+    private init() {}
 
     static func mergePluginsPreservingExisting(user: [Plugin], builtIn: [Plugin]) -> [Plugin] {
         var merged: [Plugin] = []
@@ -317,13 +251,12 @@ final class PluginManager: Sendable {
         var environment = baseEnvironment
         environment.removeValue(forKey: "ACTIONHALO_TEXT")
         environment.removeValue(forKey: "OPENFIRE_TEXT")
+        environment.removeValue(forKey: "OPENFIRE_TEXT_FILE")
         environment["ACTIONHALO_TEXT_FILE"] = textFilePath
-        environment["OPENFIRE_TEXT_FILE"] = textFilePath
 
         if !text.contains("\0"),
            text.utf8.count <= maximumPluginEnvironmentTextBytes {
             environment["ACTIONHALO_TEXT"] = text
-            environment["OPENFIRE_TEXT"] = text
         }
 
         return environment
@@ -340,14 +273,6 @@ final class PluginManager: Sendable {
             )
             .replacingOccurrences(
                 of: "system attribute \"ACTIONHALO_TEXT\"",
-                with: fileReadExpression
-            )
-            .replacingOccurrences(
-                of: "(system attribute \"OPENFIRE_TEXT\")",
-                with: "(\(fileReadExpression))"
-            )
-            .replacingOccurrences(
-                of: "system attribute \"OPENFIRE_TEXT\"",
                 with: fileReadExpression
             )
     }
@@ -424,125 +349,6 @@ final class PluginManager: Sendable {
         builtInPluginsURL: URL = PluginManager.shared.builtInPluginsURL
     ) -> Bool {
         isPluginDirectory(pluginURL, inside: builtInPluginsURL)
-    }
-
-    @discardableResult
-    static func migrateLegacyUserPlugins(
-        from legacyPluginsURL: URL,
-        to userPluginsURL: URL,
-        processedPluginIDs: Set<String> = [],
-        fileManager: FileManager = .default
-    ) -> LegacyPluginMigrationResult {
-        var result = LegacyPluginMigrationResult()
-        guard !sameFileURL(legacyPluginsURL, userPluginsURL),
-              fileManager.fileExists(atPath: legacyPluginsURL.path) else {
-            return result
-        }
-
-        do {
-            try fileManager.createDirectory(at: userPluginsURL, withIntermediateDirectories: true)
-            let currentPackages = try fileManager.contentsOfDirectory(
-                at: userPluginsURL,
-                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-                options: [.skipsHiddenFiles]
-            )
-            var currentPluginIDs = Set(
-                currentPackages
-                    .filter(PluginLoader.isSupportedPackageURL)
-                    .compactMap { PluginLoader.load(from: $0)?.id }
-            )
-            let packages = try fileManager.contentsOfDirectory(
-                at: legacyPluginsURL,
-                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-                options: [.skipsHiddenFiles]
-            ).filter(PluginLoader.isSupportedPackageURL)
-
-            for packageURL in packages {
-                guard isPluginDirectory(packageURL, inside: legacyPluginsURL),
-                      let values = try? packageURL.resourceValues(
-                        forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
-                      ),
-                      values.isDirectory == true,
-                      values.isSymbolicLink != true,
-                      let plugin = PluginLoader.load(from: packageURL) else {
-                    result.failedPackages += 1
-                    continue
-                }
-
-                guard !processedPluginIDs.contains(plugin.id) else {
-                    result.skippedPackages += 1
-                    continue
-                }
-                guard !currentPluginIDs.contains(plugin.id) else {
-                    result.skippedPackages += 1
-                    result.processedPluginIDs.insert(plugin.id)
-                    continue
-                }
-
-                let destinationURL = userPluginsURL.appendingPathComponent(
-                    visibleUserPluginFileName(for: plugin.id),
-                    isDirectory: true
-                )
-                guard isPluginDirectory(destinationURL, inside: userPluginsURL) else {
-                    result.failedPackages += 1
-                    continue
-                }
-                guard !fileManager.fileExists(atPath: destinationURL.path) else {
-                    result.skippedPackages += 1
-                    result.processedPluginIDs.insert(plugin.id)
-                    continue
-                }
-
-                do {
-                    try fileManager.copyItem(at: packageURL, to: destinationURL)
-                    result.copiedPackages += 1
-                    result.processedPluginIDs.insert(plugin.id)
-                    currentPluginIDs.insert(plugin.id)
-                } catch {
-                    result.failedPackages += 1
-                }
-            }
-        } catch {
-            result.failedPackages += 1
-        }
-
-        return result
-    }
-
-    @discardableResult
-    func migrateLegacyUserPluginsIfNeeded(
-        fileManager: FileManager = .default,
-        userDefaults: UserDefaults = .standard
-    ) -> LegacyPluginMigrationResult {
-        guard userPluginsDirectoryOverride == nil else {
-            return LegacyPluginMigrationResult()
-        }
-        let processedPluginIDs = Set(
-            userDefaults.stringArray(forKey: Self.legacyPluginMigrationProcessedIDsKey) ?? []
-        )
-        let result = Self.migrateLegacyUserPlugins(
-            from: legacyUserPluginsURL,
-            to: userPluginsURL,
-            processedPluginIDs: processedPluginIDs,
-            fileManager: fileManager
-        )
-        let updatedProcessedPluginIDs = processedPluginIDs.union(result.processedPluginIDs)
-        if updatedProcessedPluginIDs != processedPluginIDs {
-            userDefaults.set(
-                updatedProcessedPluginIDs.sorted(),
-                forKey: Self.legacyPluginMigrationProcessedIDsKey
-            )
-        }
-        if result.copiedPackages > 0 {
-            NSLog("[ActionHalo] Migrated \(result.copiedPackages) legacy plugin package(s).")
-        }
-        if result.skippedPackages > 0 {
-            NSLog("[ActionHalo] Skipped \(result.skippedPackages) previously migrated or conflicting legacy plugin package(s); ActionHalo packages take precedence.")
-        }
-        if result.failedPackages > 0 {
-            NSLog("[ActionHalo] Failed to migrate \(result.failedPackages) legacy plugin package(s).")
-        }
-        return result
     }
 
     static func pluginPackageDirectories(
@@ -639,10 +445,8 @@ final class PluginManager: Sendable {
     }
 
     static func isReservedCorePluginIdentifier(_ identifier: String) -> Bool {
-        let canonical = canonicalPluginIdentifier(
-            identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        ).lowercased()
-        return coreDefaultPluginIDs.contains(canonical)
+        let normalized = identifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return coreDefaultPluginIDs.contains(normalized)
     }
 
     static func pluginIdentifierValidationMessage(
@@ -663,6 +467,12 @@ final class PluginManager: Sendable {
         let identifierPattern = #"^[A-Za-z0-9.-]+$"#
         if id.range(of: identifierPattern, options: .regularExpression) == nil {
             return "Identifier must use only letters, numbers, dots, and hyphens.".localized
+        }
+
+        let normalizedID = id.lowercased()
+        if normalizedID == unsupportedPluginIdentifierNamespace ||
+            normalizedID.hasPrefix(unsupportedPluginIdentifierNamespace + ".") {
+            return "This plugin identifier uses an unsupported namespace.".localized
         }
 
         if !allowLegacyBoundaryCharacters,
