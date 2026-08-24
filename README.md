@@ -68,14 +68,14 @@ Built-in automatic blacklist management UI. Supports dragging and dropping apps,
 
 Use **Check for Updates...** from the menu bar. Choose **Install Update** when a signed update is offered; after the download is verified and ready, Sparkle asks for the standard **Install and Relaunch** confirmation, installs the app atomically, then relaunches the updated version. Automatic checks can still be enabled or disabled from the menu. If a plugin editor has unsaved changes, ActionHalo blocks the quit until you save them or explicitly discard them.
 
-ActionHalo community builds do not use a Developer ID. Update authenticity comes from the Ed25519 public key embedded in the app, which verifies both the appcast and the downloaded archive before installation. Because ad-hoc signatures do not provide a stable Apple identity, macOS may ask you to grant Accessibility or Automation access again after an update.
+ActionHalo community builds do not use a Developer ID. Update authenticity comes from ActionHalo's own Ed25519 public key embedded in the app, which verifies both the dedicated `actionhalo-appcast.xml` feed and the downloaded archive before installation. Because ad-hoc signatures do not provide a stable Apple identity, macOS may ask you to grant Accessibility or Automation access again after an update.
 
-### Upgrading from OpenFire
+### Moving from OpenFire
 
-- OpenFire `v0.3.23`–`v0.3.26` can update to ActionHalo through Sparkle after the GitHub repository is renamed in place. The old repository URL must keep redirecting to `Wooden-Robot/ActionHalo`; do not delete/recreate the repository or reuse the old `OpenFire` slug.
-- `v0.3.22` and earlier do not contain the trusted updater key, so they require one final manual ActionHalo DMG installation.
-- ActionHalo keeps the existing bundle identifier during this transition, preserving preferences, launch-at-login state, permissions where macOS allows it, and the signed update chain. Sparkle initially installs the update into the existing `OpenFire.app`; before starting services, ActionHalo atomically renames that exact local bundle to `ActionHalo.app` when its parent folder is writable, then relaunches. It never overwrites an existing destination, and safely keeps the legacy path when the parent is not writable, the volume is read-only or remote, the app bundle itself is a symbolic link, or another `ActionHalo.app` already exists. Do not keep separate `OpenFire.app` and `ActionHalo.app` copies installed at the same time.
-- Existing user plugins are copied once from `Application Support/OpenFire/Plugins` into the ActionHalo plugin directory without deleting the rollback copy. Legacy `.openfireext` packages, `com.openfire.*` plugin identifiers, and `OPENFIRE_TEXT` / `OPENFIRE_TEXT_FILE` remain accepted during the compatibility period.
+- OpenFire cannot automatically update to ActionHalo. Its update window only shows a migration notice; the **Learn More** button downloads the latest ActionHalo DMG and never installs or replaces the old app.
+- Download the latest [ActionHalo DMG](https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/ActionHalo.dmg), drag `ActionHalo.app` into `Applications`, then launch it. ActionHalo is a separate application with bundle identifier `com.actionhalo.app`, so grant Accessibility again when prompted.
+- On first launch, ActionHalo imports and converts compatible settings and plugins once. Existing ActionHalo data wins conflicts, and plugin trust is deliberately not inherited, so review and trust migrated scripts again before enabling them.
+- After the migration succeeds, cleanup is offered only when a verified `/Applications/OpenFire.app` or `~/Applications/OpenFire.app` exists. With approval, ActionHalo moves that app to the Trash, removes its matching official login item if present, and resets the old Accessibility record; old settings and plugin data remain available as a backup.
 
 ### How Triggering Works
 
@@ -206,7 +206,7 @@ ActionHalo comes with a fully-featured **Visual Plugin Editor** built right into
 Plugin `filter.regex` values run through a linear-time, non-backtracking matcher so an imported plugin cannot freeze the menu with pathological input. The supported subset includes literals, `.`, `^` / `$`, groups and `(?:...)`, alternation, character classes, `*` / `+` / `?` / `{m,n}`, and the `\s`, `\d`, and `\w` families. Lookarounds, backreferences, mode modifiers, lazy quantifiers, and possessive quantifiers are rejected. Patterns are limited to 1 KiB and regex-filtered selections to 4,096 UTF-16 code units; omit `filter.regex` when every selection should match.
 
 #### Script Extensions
-For `shell-script` and `applescript`, the standard plugin layout is to point `action.script` at a bundled script file inside the `.actionhaloext` package. ActionHalo also supports inline script text in the same `script` field for short snippets. `ACTIONHALO_TEXT_FILE` is always the canonical UTF-8 input. `ACTIONHALO_TEXT` is also provided when the text is at most 32 KiB and contains no NUL character. During the rename transition, the equivalent legacy variables `OPENFIRE_TEXT_FILE` and `OPENFIRE_TEXT` are provided under the same rules.
+For `shell-script` and `applescript`, the standard plugin layout is to point `action.script` at a bundled script file inside the `.actionhaloext` package. ActionHalo also supports inline script text in the same `script` field for short snippets. `ACTIONHALO_TEXT_FILE` is always the canonical UTF-8 input. `ACTIONHALO_TEXT` is also provided when the text is at most 32 KiB and contains no NUL character.
 
 **Recommended package layout**
 ```text
@@ -255,12 +255,14 @@ make package             # local verification .app and .dmg
 `make package` produces an ad-hoc-signed community `.app` and `.dmg` without applying release-version checks. A publishable community build must use the separate `make release` gate from a clean commit carrying the exact `vX.Y.Z` tag. Pass `VERSION=X.Y.Z` explicitly; it must match the tag and both version fields in the source and packaged app `Info.plist`:
 
 ```bash
-make release VERSION=X.Y.Z SPARKLE_ACCOUNT="OpenFire"
+make release VERSION=X.Y.Z SPARKLE_ACCOUNT="ActionHalo"
 ```
 
-The first ActionHalo release version must be greater than `0.3.26`. `make release` fails before packaging if the repository, version, tag, or Sparkle configuration is invalid. It ad-hoc signs Sparkle's nested helpers and the app, verifies the Apple Events entitlement and universal binaries, mounts the final DMG read-only, and verifies the contained app. It then uses the existing private Ed25519 key stored under the legacy `OpenFire` Keychain account to create `.build/appcast.xml`; that account name is intentionally retained as a local signing-key lookup, not as public branding. The feed and enclosure signatures, exact archive length, version, and URL are all verified against that final DMG. The Ed25519 private key is the community release trust root and must be backed up securely.
+`make release` fails before packaging if the repository, version, tag, application identity, or Sparkle configuration is invalid. It ad-hoc signs Sparkle's nested helpers and the app, verifies the Apple Events entitlement and universal binaries, mounts the final DMG read-only, and verifies the contained app. ActionHalo's installable update feed is written to `.build/actionhalo-appcast.xml` and signed with the independent Ed25519 key stored under the `ActionHalo` Keychain account; its public key is pinned in `Info.plist`. Back up that private key securely, and never use the previous application's key to sign an installable ActionHalo update.
 
-Create the matching GitHub Release as a **draft with no assets**, then run `make publish-release-assets VERSION=X.Y.Z SPARKLE_ACCOUNT=OpenFire`. It refuses replacement, uploads the DMG and appcast while the Release remains hidden, checks both remote SHA-256 digests, and only then publishes the Release. This prevents update clients from observing a half-published or mixed asset pair.
+The release also writes `.build/appcast.xml` as a separately signed informational feed for old installations. The former trust root is isolated under the `ActionHaloLegacyMigration` Keychain account and may sign only this enclosure-free notice. The feed can present the migration message plus a direct link to the latest ActionHalo DMG, but it must never make ActionHalo installable by the old updater. Keep GitHub's repository-rename redirect intact and do not reuse the old repository slug while this notice is supported, or existing clients will not reach the feed.
+
+Create the matching GitHub Release as a **draft with no assets**, then run `make publish-release-assets VERSION=X.Y.Z SPARKLE_ACCOUNT=ActionHalo`. It refuses replacement, uploads the DMG, `actionhalo-appcast.xml`, and the informational `appcast.xml` while the Release remains hidden, checks all remote SHA-256 digests, and only then publishes the Release. This prevents either update client from observing a half-published or mixed asset set.
 
 This workflow intentionally does not use Developer ID signing or Apple notarization. Consequently, it cannot remove macOS's first-launch warning or guarantee that TCC permissions survive an update; Ed25519 protects update authenticity but does not create an Apple-trusted application identity.
 

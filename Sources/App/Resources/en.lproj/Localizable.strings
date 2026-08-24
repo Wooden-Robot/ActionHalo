@@ -39,6 +39,7 @@
 "Plugin '%@' installed successfully." = "Plugin '%@' installed successfully.";
 "Invalid plugin package. Make sure the .actionhaloext folder contains a valid Config.json." = "Invalid plugin package. Make sure the .actionhaloext folder contains a valid Config.json.";
 "Plugin identifier is invalid: %@" = "Plugin identifier is invalid: %@";
+"This plugin identifier uses an unsupported namespace." = "This plugin identifier uses an unsupported namespace.";
 "Installing this plugin would replace a different plugin (%@). Rename one of the plugins and try again." = "Installing this plugin would replace a different plugin (%@). Rename one of the plugins and try again.";
 "The plugin changed after the install confirmation was shown. Review it and try again." = "The plugin changed after the install confirmation was shown. Review it and try again.";
 "Plugin validation failed after copying. The package may have changed during installation." = "Plugin validation failed after copying. The package may have changed during installation.";
@@ -315,3 +316,32 @@
 // Pagination
 "Previous" = "Previous";
 "Next" = "Next";
+
+/* Verified legacy installation cleanup */
+"ActionHalo Is Installed" = "ActionHalo Is Installed";
+"A verified OpenFire.app was found at:\n%@\n\nCompatible settings and plugins have been imported into ActionHalo. Incompatible or skipped items remain in the old Application Support data. Move OpenFire.app to the Trash? Its official login item will also be removed if present. The original Application Support and Preferences data will be preserved." = "A verified OpenFire.app was found at:\n%@\n\nCompatible settings and plugins have been imported into ActionHalo. Incompatible or skipped items remain in the old Application Support data. Move OpenFire.app to the Trash? Its official login item will also be removed if present. The original Application Support and Preferences data will be preserved.";
+"Move Legacy App to Trash" = "Move Legacy App to Trash";
+"Legacy App Moved to Trash" = "Legacy App Moved to Trash";
+"The verified OpenFire.app was moved to the Trash. Its official login item was also removed if present. The original Application Support and Preferences data were preserved." = "The verified OpenFire.app was moved to the Trash. Its official login item was also removed if present. The original Application Support and Preferences data were preserved.";
+"Legacy Cleanup Incomplete" = "Legacy Cleanup Incomplete";
+
+/* One-time OpenFire data import */
+"OpenFire Migration Incomplete" = "OpenFire Migration Incomplete";
+"Setting “%@”: %@" = "Setting “%@”: %@";
+"Plugin “%@” (%@): %@" = "Plugin “%@” (%@): %@";
+"Migration step “%@”: %@" = "Migration step “%@”: %@";
+"The migration did not complete, but no detailed error was reported." = "The migration did not complete, but no detailed error was reported.";
+"ActionHalo could not finish importing all compatible settings and plugins from OpenFire.\n\nFailed items:\n%@\n\nOpenFire, its settings, and its plugins will be kept. ActionHalo will retry the import the next time it starts. The old app will not be cleaned up until the import succeeds." = "ActionHalo could not finish importing all compatible settings and plugins from OpenFire.\n\nFailed items:\n%@\n\nOpenFire, its settings, and its plugins will be kept. ActionHalo will retry the import the next time it starts. The old app will not be cleaned up until the import succeeds.";
+"source package validation" = "source package validation";
+"existing ActionHalo plugin inspection" = "existing ActionHalo plugin inspection";
+"configuration conversion" = "configuration conversion";
+"package copy" = "package copy";
+"converted package validation" = "converted package validation";
+"package installation" = "package installation";
+"reading OpenFire settings" = "reading OpenFire settings";
+"reading ActionHalo settings" = "reading ActionHalo settings";
+"writing ActionHalo settings" = "writing ActionHalo settings";
+"reading the OpenFire plugin folder" = "reading the OpenFire plugin folder";
+"preparing the ActionHalo plugin folder" = "preparing the ActionHalo plugin folder";
+"migrating the login item" = "migrating the login item";
+"recording migration completion" = "recording migration completion";

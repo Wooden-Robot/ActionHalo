@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private let statusBarController = StatusBarController()
+    private let legacyMigrationStartupCoordinator: LegacyMigrationStartupCoordinator?
     private var radialMenuWindow: RadialMenuWindow?
     private var isEnabled = true
     private var currentSelectedText: String = ""
@@ -107,6 +108,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Global monitor for clicking outside
     private var globalClickMonitor: Any?
     private var globalClickMonitorGeneration: UInt64 = 0
+
+    override init() {
+        legacyMigrationStartupCoordinator = nil
+        super.init()
+    }
+
+    init(
+        legacyDataImportResult: LegacyDataImportResult,
+        legacyMigrationDependencies: LegacyMigrationStartupCoordinator.Dependencies? = nil
+    ) {
+        legacyMigrationStartupCoordinator = LegacyMigrationStartupCoordinator(
+            importResult: legacyDataImportResult,
+            dependencies: legacyMigrationDependencies
+        )
+        super.init()
+    }
 
     static func monitoringStartFailureMessage(_ failure: TextSelectionMonitor.MonitoringStartFailure) -> String {
         switch failure {
@@ -163,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    static func accessibilityResetArguments(bundleIdentifier: String = "com.openfire.app") -> [String] {
+    static func accessibilityResetArguments(bundleIdentifier: String = "com.actionhalo.app") -> [String] {
         ["reset", "Accessibility", bundleIdentifier]
     }
 
@@ -270,27 +287,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // AppKit delivers Finder document-open requests before this callback.
-        // Carry those paths through the one-time app-bundle rename so the
-        // user's original plugin-open action is not lost during relaunch.
+        // Preserve those paths until startup completes so the user's original
+        // plugin-open action is not lost.
         let queuedPrelaunchPluginURLs = pendingPrelaunchPluginURLs
-        let migrationArguments = Self.migrationLaunchArguments(
-            commandLineArguments: Array(CommandLine.arguments.dropFirst()),
-            pendingPluginURLs: queuedPrelaunchPluginURLs
-        )
-        if InstalledAppNameMigration.renameAndScheduleRelaunchIfNeeded(
-            launchArguments: migrationArguments
-        ) {
-            exit(EXIT_SUCCESS)
-        }
 
         hasFinishedLaunching = true
         pendingPrelaunchPluginURLs.removeAll()
 
-        // Automatically clear stale accessibility permissions if the app was updated
-        // This prevents the macOS "permission toggle is on but doesn't work" bug for unsigned apps
-        checkAndUpdateAccessibilityState()
-        applyDefaultOfficeSuiteExcludedAppsMigrationIfNeeded()
-        
         // Hide dock icon (backup, Info.plist should handle this)
         NSApp.setActivationPolicy(.accessory)
         
@@ -311,6 +314,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }()
         mainMenu.addItem(editMenuItem)
         NSApp.mainMenu = mainMenu
+
+        // Import already ran before this delegate was constructed. Route its
+        // result before Accessibility can show a system prompt, keeping the two
+        // modal flows strictly ordered. Finder-open URLs remain in the local
+        // queue above and are handled immediately after this returns.
+        legacyMigrationStartupCoordinator?.handlePostLaunchResult()
+
+        // Automatically clear stale accessibility permissions if the app was updated.
+        checkAndUpdateAccessibilityState()
+        applyDefaultOfficeSuiteExcludedAppsMigrationIfNeeded()
         
         // Handle pre-launch document opens (LaunchServices passing args directly)
         for arg in CommandLine.arguments.dropFirst() {
@@ -330,10 +343,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.setEnabled(enabled)
         }
 
-        // Check accessibility permission
+        // Check accessibility permission.
         if !AccessibilityManager.shared.ensureAccessibilityPermission() {
             NSLog("[ActionHalo] Waiting for accessibility permission...")
-            // Poll until permission is granted
             startupPermissionTimer = Timer.scheduledTimer(
                 withTimeInterval: 2.0,
                 repeats: true
@@ -350,22 +362,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             startServices()
         }
-        
+
         // Install the root watcher synchronously so package creation cannot be
         // missed, then load plugins while fine-grained watcher discovery runs
         // in the background.
-        PluginManager.shared.migrateLegacyUserPluginsIfNeeded()
         PluginManager.shared.startWatchingPluginDirectories()
         PluginManager.shared.loadAllPlugins()
-        
-        // Setup global hotkeys
+
+        // Setup global hotkeys.
         HotkeyManager.shared.onHotkeyPressed = { [weak self] in
             self?.handleHotkeyTriggered()
         }
         HotkeyManager.shared.onToggleHotkeyPressed = { [weak self] in
             self?.statusBarController.toggleEnabled()
         }
-        
+
         if HotkeyManager.shared.hotkey != nil || HotkeyManager.shared.toggleHotkey != nil {
             let issues = HotkeyManager.shared.registerHotkeys()
             for issue in issues {
@@ -561,24 +572,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = handlePluginOpenRequest(url)
         }
         sender.reply(toOpenOrPrint: .success)
-    }
-
-    static func migrationLaunchArguments(
-        commandLineArguments: [String],
-        pendingPluginURLs: [URL]
-    ) -> [String] {
-        var arguments = commandLineArguments
-        var includedPluginPaths = Set(commandLineArguments.compactMap { argument -> String? in
-            let url = URL(fileURLWithPath: argument).standardizedFileURL
-            return isSupportedPluginPackageURL(url) ? url.path : nil
-        })
-        for url in pendingPluginURLs {
-            let path = url.standardizedFileURL.path
-            if includedPluginPaths.insert(path).inserted {
-                arguments.append(path)
-            }
-        }
-        return arguments
     }
 
     private func handlePluginOpenRequest(_ url: URL) -> Bool {
@@ -1327,7 +1320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
         task.arguments = Self.accessibilityResetArguments(
-            bundleIdentifier: Bundle.main.bundleIdentifier ?? "com.openfire.app"
+            bundleIdentifier: Bundle.main.bundleIdentifier ?? "com.actionhalo.app"
         )
 
         do {

@@ -39,6 +39,7 @@
 "Plugin '%@' installed successfully." = "插件「%@」已成功安装并启用。";
 "Invalid plugin package. Make sure the .actionhaloext folder contains a valid Config.json." = "插件包无效。请确认 .actionhaloext 文件夹里包含有效的 Config.json。";
 "Plugin identifier is invalid: %@" = "插件标识符无效：%@";
+"This plugin identifier uses an unsupported namespace." = "此插件标识符使用了不受支持的命名空间。";
 "Installing this plugin would replace a different plugin (%@). Rename one of the plugins and try again." = "安装这个插件会替换另一个插件（%@）。请重命名其中一个插件后再试。";
 "The plugin changed after the install confirmation was shown. Review it and try again." = "显示安装确认后插件已发生变化，请重新检查后再试。";
 "Plugin validation failed after copying. The package may have changed during installation." = "复制后插件校验失败。插件包可能在安装过程中发生了变化。";
@@ -305,3 +306,32 @@
 // Pagination
 "Previous" = "上一页";
 "Next" = "下一页";
+
+/* 已验证的旧版安装清理 */
+"ActionHalo Is Installed" = "ActionHalo 已安装";
+"A verified OpenFire.app was found at:\n%@\n\nCompatible settings and plugins have been imported into ActionHalo. Incompatible or skipped items remain in the old Application Support data. Move OpenFire.app to the Trash? Its official login item will also be removed if present. The original Application Support and Preferences data will be preserved." = "在以下位置检测到经过验证的 OpenFire.app：\n%@\n\n兼容的设置和插件已经导入 ActionHalo。不兼容或跳过的项目仍保留在旧版 Application Support 数据中。是否将 OpenFire.app 移到废纸篓？如存在匹配的官方旧登录项，也会一并移除。原始 Application Support 与 Preferences 数据将继续保留。";
+"Move Legacy App to Trash" = "将旧版移到废纸篓";
+"Legacy App Moved to Trash" = "旧版已移到废纸篓";
+"The verified OpenFire.app was moved to the Trash. Its official login item was also removed if present. The original Application Support and Preferences data were preserved." = "经过验证的 OpenFire.app 已移到废纸篓；如存在匹配的官方旧登录项，也已移除。原始 Application Support 与 Preferences 数据仍然保留。";
+"Legacy Cleanup Incomplete" = "旧版清理未完成";
+
+/* 一次性导入 OpenFire 数据 */
+"OpenFire Migration Incomplete" = "OpenFire 迁移未完成";
+"Setting “%@”: %@" = "设置“%@”：%@";
+"Plugin “%@” (%@): %@" = "插件“%@”（%@）：%@";
+"Migration step “%@”: %@" = "迁移步骤“%@”：%@";
+"The migration did not complete, but no detailed error was reported." = "迁移尚未完成，但没有返回详细错误。";
+"ActionHalo could not finish importing all compatible settings and plugins from OpenFire.\n\nFailed items:\n%@\n\nOpenFire, its settings, and its plugins will be kept. ActionHalo will retry the import the next time it starts. The old app will not be cleaned up until the import succeeds." = "ActionHalo 未能从 OpenFire 完整导入所有兼容的设置和插件。\n\n失败项目：\n%@\n\nOpenFire 及其原始设置和插件会继续保留。ActionHalo 会在下次启动时重试导入；导入成功前不会清理旧版 App。";
+"source package validation" = "验证源插件包";
+"existing ActionHalo plugin inspection" = "检查已有的 ActionHalo 插件";
+"configuration conversion" = "转换插件配置";
+"package copy" = "复制插件包";
+"converted package validation" = "验证转换后的插件包";
+"package installation" = "安装插件包";
+"reading OpenFire settings" = "读取 OpenFire 设置";
+"reading ActionHalo settings" = "读取 ActionHalo 设置";
+"writing ActionHalo settings" = "写入 ActionHalo 设置";
+"reading the OpenFire plugin folder" = "读取 OpenFire 插件目录";
+"preparing the ActionHalo plugin folder" = "准备 ActionHalo 插件目录";
+"migrating the login item" = "迁移登录项";
+"recording migration completion" = "记录迁移完成状态";

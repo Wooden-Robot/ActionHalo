@@ -35,7 +35,6 @@ final class PluginManagerTests: GlobalStateTestCase {
         PluginManager.perAppDisabledPluginsKey,
         PluginManager.trustedPluginFingerprintsKey,
         PluginManager.verbosePluginLoggingKey,
-        PluginManager.legacyPluginMigrationProcessedIDsKey,
     ]
     
     override func setUp() {
@@ -395,196 +394,25 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertEqual(PluginManager.visibleUserPluginFileName(for: "com.test.book"), "com.test.book.actionhaloext")
     }
 
-    func testCanonicalPluginIdentifierMigratesOnlyLegacyNamespace() {
+    func testPluginIdentifierValidationRejectsUnsupportedNamespaceCaseInsensitively() {
+        let expectedMessage = "This plugin identifier uses an unsupported namespace.".localized
+
         XCTAssertEqual(
-            PluginManager.canonicalPluginIdentifier("com.openfire.search"),
-            "com.actionhalo.search"
-        )
-        XCTAssertEqual(
-            PluginManager.canonicalPluginIdentifier("com.actionhalo.search"),
-            "com.actionhalo.search"
+            PluginManager.pluginIdentifierValidationMessage("com.openfire.search"),
+            expectedMessage
         )
         XCTAssertEqual(
-            PluginManager.canonicalPluginIdentifier("com.example.openfire.search"),
-            "com.example.openfire.search"
-        )
-        XCTAssertTrue(PluginManager.isReservedCorePluginIdentifier("com.openfire.copy"))
-    }
-
-    func testLegacyPluginStateMigrationPreservesCurrentValuesAndIsIdempotent() {
-        let defaults = UserDefaults.standard
-        for key in ["deletedBuiltInPlugins", "disabledPlugins", "userEnabledPlugins", "pluginOrder"] {
-            defaults.set(
-                ["com.openfire.search", "com.actionhalo.search", "com.test.keep"],
-                forKey: key
-            )
-        }
-        defaults.set(
-            [
-                "com.apple.Safari": [
-                    "com.openfire.translate",
-                    "com.actionhalo.translate",
-                    "com.test.scoped",
-                ],
-            ],
-            forKey: PluginManager.perAppDisabledPluginsKey
-        )
-        defaults.set(
-            [
-                "com.openfire.run-shell": "legacy-only",
-                "com.openfire.search": "legacy-conflict",
-                "com.actionhalo.search": "current-wins",
-            ],
-            forKey: PluginManager.trustedPluginFingerprintsKey
-        )
-
-        PluginManager.migrateLegacyPluginState(userDefaults: defaults)
-        PluginManager.migrateLegacyPluginState(userDefaults: defaults)
-
-        for key in ["deletedBuiltInPlugins", "disabledPlugins", "userEnabledPlugins", "pluginOrder"] {
-            XCTAssertEqual(
-                defaults.stringArray(forKey: key),
-                ["com.actionhalo.search", "com.test.keep"]
-            )
-        }
-        XCTAssertEqual(
-            defaults.dictionary(forKey: PluginManager.perAppDisabledPluginsKey) as? [String: [String]],
-            [
-                "com.apple.Safari": [
-                    "com.actionhalo.translate",
-                    "com.test.scoped",
-                ],
-            ]
+            PluginManager.pluginIdentifierValidationMessage("COM.OPENFIRE.SEARCH"),
+            expectedMessage
         )
         XCTAssertEqual(
-            defaults.dictionary(forKey: PluginManager.trustedPluginFingerprintsKey) as? [String: String],
-            [
-                "com.actionhalo.run-shell": "legacy-only",
-                "com.actionhalo.search": "current-wins",
-            ]
+            PluginManager.pluginIdentifierValidationMessage("com.openfire"),
+            expectedMessage
         )
-    }
-
-    func testLegacyUserPluginMigrationCopiesOnceWithoutDeletingSource() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        temporaryDirectories.append(rootURL)
-        let legacyPluginsURL = rootURL.appendingPathComponent("OpenFire/Plugins", isDirectory: true)
-        let userPluginsURL = rootURL.appendingPathComponent("ActionHalo/Plugins", isDirectory: true)
-        let legacyPackageURL = legacyPluginsURL.appendingPathComponent(
-            "Legacy Search.openfireext",
-            isDirectory: true
+        XCTAssertNil(
+            PluginManager.pluginIdentifierValidationMessage("com.example.openfire.search")
         )
-        try FileManager.default.createDirectory(
-            at: legacyPackageURL,
-            withIntermediateDirectories: true
-        )
-        try pluginConfig(identifier: "com.openfire.legacy-search", name: "Legacy Search")
-            .write(
-                to: legacyPackageURL.appendingPathComponent("Config.json"),
-                atomically: true,
-                encoding: .utf8
-            )
-
-        let firstResult = PluginManager.migrateLegacyUserPlugins(
-            from: legacyPluginsURL,
-            to: userPluginsURL
-        )
-        let migratedPackageURL = userPluginsURL.appendingPathComponent(
-            "com.actionhalo.legacy-search.actionhaloext",
-            isDirectory: true
-        )
-        let legacyPlugin = try XCTUnwrap(PluginLoader.load(from: legacyPackageURL))
-        let migratedPlugin = try XCTUnwrap(PluginLoader.load(from: migratedPackageURL))
-
-        XCTAssertEqual(firstResult.copiedPackages, 1)
-        XCTAssertEqual(firstResult.processedPluginIDs, ["com.actionhalo.legacy-search"])
-        XCTAssertEqual(migratedPlugin.id, "com.actionhalo.legacy-search")
-        XCTAssertEqual(migratedPlugin.packageFingerprint, legacyPlugin.packageFingerprint)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyPackageURL.path))
-
-        try FileManager.default.removeItem(at: migratedPackageURL)
-        let secondResult = PluginManager.migrateLegacyUserPlugins(
-            from: legacyPluginsURL,
-            to: userPluginsURL,
-            processedPluginIDs: firstResult.processedPluginIDs
-        )
-
-        XCTAssertEqual(secondResult.skippedPackages, 1)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: migratedPackageURL.path))
-    }
-
-    func testLegacyUserPluginMigrationKeepsExistingActionHaloPackage() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        temporaryDirectories.append(rootURL)
-        let legacyPluginsURL = rootURL.appendingPathComponent("OpenFire/Plugins", isDirectory: true)
-        let userPluginsURL = rootURL.appendingPathComponent("ActionHalo/Plugins", isDirectory: true)
-        let legacyPackageURL = legacyPluginsURL.appendingPathComponent("Legacy.openfireext", isDirectory: true)
-        let currentPackageURL = userPluginsURL.appendingPathComponent(
-            "Renamed by User.actionhaloext",
-            isDirectory: true
-        )
-        let canonicalPackageURL = userPluginsURL.appendingPathComponent(
-            "com.actionhalo.shared.actionhaloext",
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(at: legacyPackageURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: currentPackageURL, withIntermediateDirectories: true)
-        try pluginConfig(identifier: "com.openfire.shared", name: "Legacy")
-            .write(
-                to: legacyPackageURL.appendingPathComponent("Config.json"),
-                atomically: true,
-                encoding: .utf8
-            )
-        try pluginConfig(identifier: "com.actionhalo.shared", name: "Current")
-            .write(
-                to: currentPackageURL.appendingPathComponent("Config.json"),
-                atomically: true,
-                encoding: .utf8
-            )
-
-        let result = PluginManager.migrateLegacyUserPlugins(
-            from: legacyPluginsURL,
-            to: userPluginsURL
-        )
-
-        XCTAssertEqual(result.skippedPackages, 1)
-        XCTAssertEqual(result.processedPluginIDs, ["com.actionhalo.shared"])
-        XCTAssertEqual(PluginLoader.load(from: currentPackageURL)?.name, "Current")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: canonicalPackageURL.path))
-    }
-
-    func testLegacyUserPluginMigrationRetriesPreviouslyInvalidPackage() throws {
-        let rootURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        temporaryDirectories.append(rootURL)
-        let legacyPluginsURL = rootURL.appendingPathComponent("OpenFire/Plugins", isDirectory: true)
-        let userPluginsURL = rootURL.appendingPathComponent("ActionHalo/Plugins", isDirectory: true)
-        let legacyPackageURL = legacyPluginsURL.appendingPathComponent("Retry.openfireext", isDirectory: true)
-        try FileManager.default.createDirectory(at: legacyPackageURL, withIntermediateDirectories: true)
-
-        let failedResult = PluginManager.migrateLegacyUserPlugins(
-            from: legacyPluginsURL,
-            to: userPluginsURL
-        )
-        XCTAssertEqual(failedResult.failedPackages, 1)
-        XCTAssertTrue(failedResult.processedPluginIDs.isEmpty)
-
-        try pluginConfig(identifier: "com.openfire.retry", name: "Retry")
-            .write(
-                to: legacyPackageURL.appendingPathComponent("Config.json"),
-                atomically: true,
-                encoding: .utf8
-            )
-        let retriedResult = PluginManager.migrateLegacyUserPlugins(
-            from: legacyPluginsURL,
-            to: userPluginsURL,
-            processedPluginIDs: failedResult.processedPluginIDs
-        )
-
-        XCTAssertEqual(retriedResult.copiedPackages, 1)
-        XCTAssertEqual(retriedResult.processedPluginIDs, ["com.actionhalo.retry"])
+        XCTAssertFalse(PluginManager.isReservedCorePluginIdentifier("com.openfire.copy"))
     }
 
     func testPluginIdentifierValidationMatchesEditorRulesForNewPlugins() {
@@ -1638,12 +1466,13 @@ final class PluginManagerTests: GlobalStateTestCase {
             baseEnvironment: [
                 "ACTIONHALO_TEXT": "stale-current",
                 "OPENFIRE_TEXT": "stale-legacy",
+                "OPENFIRE_TEXT_FILE": "/tmp/stale-legacy",
             ]
         )
         XCTAssertNil(nulEnvironment["ACTIONHALO_TEXT"])
         XCTAssertNil(nulEnvironment["OPENFIRE_TEXT"])
         XCTAssertEqual(nulEnvironment["ACTIONHALO_TEXT_FILE"], "/tmp/text")
-        XCTAssertEqual(nulEnvironment["OPENFIRE_TEXT_FILE"], "/tmp/text")
+        XCTAssertNil(nulEnvironment["OPENFIRE_TEXT_FILE"])
 
         let oversizedEnvironment = PluginManager.pluginProcessEnvironment(
             text: String(
@@ -1656,7 +1485,7 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertNil(oversizedEnvironment["ACTIONHALO_TEXT"])
         XCTAssertNil(oversizedEnvironment["OPENFIRE_TEXT"])
         XCTAssertEqual(oversizedEnvironment["ACTIONHALO_TEXT_FILE"], "/tmp/large")
-        XCTAssertEqual(oversizedEnvironment["OPENFIRE_TEXT_FILE"], "/tmp/large")
+        XCTAssertNil(oversizedEnvironment["OPENFIRE_TEXT_FILE"])
 
         let normalEnvironment = PluginManager.pluginProcessEnvironment(
             text: "hello",
@@ -1664,12 +1493,12 @@ final class PluginManagerTests: GlobalStateTestCase {
             baseEnvironment: [:]
         )
         XCTAssertEqual(normalEnvironment["ACTIONHALO_TEXT"], "hello")
-        XCTAssertEqual(normalEnvironment["OPENFIRE_TEXT"], "hello")
         XCTAssertEqual(normalEnvironment["ACTIONHALO_TEXT_FILE"], "/tmp/normal")
-        XCTAssertEqual(normalEnvironment["OPENFIRE_TEXT_FILE"], "/tmp/normal")
+        XCTAssertNil(normalEnvironment["OPENFIRE_TEXT"])
+        XCTAssertNil(normalEnvironment["OPENFIRE_TEXT_FILE"])
     }
 
-    func testAppleScriptTextInputSupportsCurrentAndLegacyEnvironmentNames() {
+    func testAppleScriptTextInputOnlyRewritesActionHaloEnvironmentName() {
         let source = """
         set currentText to system attribute "ACTIONHALO_TEXT"
         set legacyText to (system attribute "OPENFIRE_TEXT")
@@ -1681,9 +1510,8 @@ final class PluginManagerTests: GlobalStateTestCase {
         )
 
         XCTAssertTrue(rendered.contains("set currentText to read selectionFile as «class utf8»"))
-        XCTAssertTrue(rendered.contains("set legacyText to (read selectionFile as «class utf8»)"))
         XCTAssertFalse(rendered.contains("ACTIONHALO_TEXT"))
-        XCTAssertFalse(rendered.contains("OPENFIRE_TEXT"))
+        XCTAssertTrue(rendered.contains("set legacyText to (system attribute \"OPENFIRE_TEXT\")"))
     }
 
     func testBuiltInRunShellReadsBinaryUnsafeSelectionFromTextFile() throws {

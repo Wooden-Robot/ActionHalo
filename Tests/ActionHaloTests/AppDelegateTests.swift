@@ -40,45 +40,23 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertTrue(AppDelegate.shouldOfferAccessibilityPermissionReset(for: .eventTapCreationFailed))
     }
 
-    func testAccessibilityResetArgumentsPreserveLegacyBundleIDForTCCContinuity() {
+    func testAccessibilityResetArgumentsUseActionHaloBundleID() {
         XCTAssertEqual(
-            AppDelegate.accessibilityResetArguments(bundleIdentifier: "com.openfire.app"),
-            ["reset", "Accessibility", "com.openfire.app"]
+            AppDelegate.accessibilityResetArguments(bundleIdentifier: "com.actionhalo.app"),
+            ["reset", "Accessibility", "com.actionhalo.app"]
         )
     }
 
-    func testPluginPackageOpeningAcceptsCurrentAndLegacyExtensions() {
+    func testPluginPackageOpeningAcceptsActionHaloExtension() {
         XCTAssertTrue(
             AppDelegate.isSupportedPluginPackageURL(
                 URL(fileURLWithPath: "/tmp/Search.actionhaloext")
-            )
-        )
-        XCTAssertTrue(
-            AppDelegate.isSupportedPluginPackageURL(
-                URL(fileURLWithPath: "/tmp/Search.openfireext")
             )
         )
         XCTAssertFalse(
             AppDelegate.isSupportedPluginPackageURL(
                 URL(fileURLWithPath: "/tmp/Search.plugin")
             )
-        )
-    }
-
-    func testMigrationRelaunchCarriesPendingFinderPluginRequests() {
-        XCTAssertEqual(
-            AppDelegate.migrationLaunchArguments(
-                commandLineArguments: ["--verbose", "/tmp/Legacy.openfireext"],
-                pendingPluginURLs: [
-                    URL(fileURLWithPath: "/tmp/Plugin with spaces.actionhaloext"),
-                    URL(fileURLWithPath: "/tmp/Legacy.openfireext")
-                ]
-            ),
-            [
-                "--verbose",
-                "/tmp/Legacy.openfireext",
-                "/tmp/Plugin with spaces.actionhaloext"
-            ]
         )
     }
 

@@ -48,6 +48,9 @@ jobs:
       - name: Test Sparkle update gate
         run: bash Tests/verify_sparkle_update_gate.sh
 
+      - name: Test legacy migration notice gate
+        run: bash Tests/verify_legacy_migration_appcast_gate.sh
+
       - name: Test GitHub Release gate
         run: bash Tests/verify_github_release_gate.sh
 

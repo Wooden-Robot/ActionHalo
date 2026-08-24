@@ -11,12 +11,11 @@
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <!-- Kept stable so existing installations can update to ActionHalo via Sparkle. -->
-    <string>com.openfire.app</string>
+    <string>com.actionhalo.app</string>
 	<key>CFBundleVersion</key>
-	<string>0.3.28</string>
+	<string>0.3.29</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.28</string>
+	<string>0.3.29</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
@@ -28,9 +27,9 @@
     <key>NSAppleEventsUsageDescription</key>
     <string>ActionHalo uses Apple Events so enabled plugins can perform requested actions in other applications.</string>
     <key>SUFeedURL</key>
-    <string>https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/appcast.xml</string>
+    <string>https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/actionhalo-appcast.xml</string>
     <key>SUPublicEDKey</key>
-    <string>YpDJbUKWW/mYy47N4BULh0vfKr4PGvV5dv5OAGyJrAo=</string>
+    <string>PEn1mxr6DuGIBoGHNbx21ZANmnIi6gr/kBaaYRcKTTY=</string>
     <key>SUEnableAutomaticChecks</key>
     <true/>
     <key>SUAutomaticallyUpdate</key>
@@ -61,24 +60,6 @@
                 <string>com.actionhalo.extension</string>
             </array>
         </dict>
-        <dict>
-            <key>CFBundleTypeExtensions</key>
-            <array>
-                <string>openfireext</string>
-            </array>
-            <key>CFBundleTypeName</key>
-            <string>ActionHalo Legacy Extension</string>
-            <key>CFBundleTypeRole</key>
-            <string>Editor</string>
-            <key>LSHandlerRank</key>
-            <string>Owner</string>
-            <key>LSTypeIsPackage</key>
-            <true/>
-            <key>LSItemContentTypes</key>
-            <array>
-                <string>com.openfire.extension</string>
-            </array>
-        </dict>
     </array>
     <key>UTExportedTypeDeclarations</key>
     <array>
@@ -96,25 +77,6 @@
                 <key>public.filename-extension</key>
                 <array>
                     <string>actionhaloext</string>
-                </array>
-            </dict>
-            <key>UTTypeIconFile</key>
-            <string>AppIcon</string>
-        </dict>
-        <dict>
-            <key>UTTypeIdentifier</key>
-            <string>com.openfire.extension</string>
-            <key>UTTypeDescription</key>
-            <string>ActionHalo Legacy Extension Package</string>
-            <key>UTTypeConformsTo</key>
-            <array>
-                <string>com.apple.package</string>
-            </array>
-            <key>UTTypeTagSpecification</key>
-            <dict>
-                <key>public.filename-extension</key>
-                <array>
-                    <string>openfireext</string>
                 </array>
             </dict>
             <key>UTTypeIconFile</key>

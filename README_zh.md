@@ -68,14 +68,14 @@
 
 在菜单栏选择 **检查更新...**。发现已签名的新版本后，先点击 **安装更新**；下载并验证完成后，Sparkle 会按默认流程再次显示 **安装并重启** 确认，随后原子安装并重启到新版本。菜单中的自动检查开关仍可随时启用或关闭。如果插件编辑器中存在未保存内容，ActionHalo 会阻止退出，直到你保存或明确丢弃这些修改。
 
-ActionHalo 社区版目前不使用 Developer ID。更新真实性由 App 内置的 Ed25519 公钥保证：安装前会同时校验 appcast 和下载归档。由于 ad-hoc 签名无法提供稳定的 Apple 身份，版本更新后 macOS 可能要求重新授予辅助功能或自动化权限。
+ActionHalo 社区版目前不使用 Developer ID。更新真实性由 App 内置的 ActionHalo 独立 Ed25519 公钥保证：安装前会同时校验专用的 `actionhalo-appcast.xml` 更新源和下载归档。由于 ad-hoc 签名无法提供稳定的 Apple 身份，版本更新后 macOS 可能要求重新授予辅助功能或自动化权限。
 
-### 从 OpenFire 升级
+### 从 OpenFire 迁移
 
-- OpenFire `v0.3.23`–`v0.3.26` 可在 GitHub 仓库原地改名后通过 Sparkle 自动升级到 ActionHalo。旧仓库 URL 必须持续重定向到 `Wooden-Robot/ActionHalo`；不要删除重建仓库，也不要再次占用旧的 `OpenFire` 仓库名。
-- `v0.3.22` 及更早版本尚未内置可信更新公钥，需要最后手动安装一次 ActionHalo DMG。
-- 兼容期内保留现有 Bundle ID，以延续偏好设置、登录启动状态、macOS 允许保留的权限和已签名更新链。Sparkle 会先把更新安装到现有 `OpenFire.app`；ActionHalo 在启动任何服务前，会在父目录可写时将这个精确匹配的本地 App 包排他原子改名为 `ActionHalo.app` 并重新启动。它绝不会覆盖已有目标；父目录不可写、只读卷、网络卷、App 包自身是符号链接或已有另一份 `ActionHalo.app` 时，会安全保留旧路径。不要同时安装两份 `OpenFire.app` 与 `ActionHalo.app`。
-- 旧用户插件会从 `Application Support/OpenFire/Plugins` 一次性复制到 ActionHalo 插件目录，旧副本保留用于回滚。兼容期内仍可使用 `.openfireext`、`com.openfire.*` 插件 ID，以及 `OPENFIRE_TEXT` / `OPENFIRE_TEXT_FILE`。
+- OpenFire 不能自动升级为 ActionHalo。旧版更新窗口只会显示迁移提示；点击**了解更多**会直接下载最新 ActionHalo DMG，但绝不会自动安装或替换旧 App。
+- 下载最新的 [ActionHalo DMG](https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/ActionHalo.dmg)，把 `ActionHalo.app` 拖入“应用程序”并首次启动。ActionHalo 是 Bundle ID 为 `com.actionhalo.app` 的独立应用，请按提示重新授予辅助功能权限。
+- 首次启动时，ActionHalo 会一次性导入并转换可兼容的旧设置与插件；冲突时以 ActionHalo 现有数据为准。插件信任状态不会继承，启用迁移脚本前请重新检查并确认信任。
+- 迁移成功后，只有检测并验证通过的 `/Applications/OpenFire.app` 或 `~/Applications/OpenFire.app` 才会出现清理提示。确认后，ActionHalo 会将该 App 移到废纸篓、移除存在且匹配的官方旧登录项，并重置旧辅助功能记录；旧设置和插件数据会继续保留作为备份。
 
 ### 触发方式说明
 
@@ -206,7 +206,7 @@ ActionHalo 内置了功能完善的**可视化插件编辑器**，无需再手�
 插件的 `filter.regex` 使用线性时间、无回溯的匹配器，避免导入的插件用恶意表达式卡住菜单。支持的子集包括字面量、`.`、`^` / `$`、分组与 `(?:...)`、或、字符类、`*` / `+` / `?` / `{m,n}`，以及 `\s`、`\d`、`\w` 系列；前后查找、反向引用、模式修饰符、惰性量词和占有量词会被拒绝。表达式上限为 1 KiB，参与正则筛选的选中文本上限为 4,096 个 UTF-16 code unit；若希望匹配所有文本，请省略 `filter.regex`。
 
 #### 脚本类扩展
-对于 `shell-script` 和 `applescript`，标准插件写法是让 `action.script` 指向 `.actionhaloext` 包内附带的脚本文件。ActionHalo 也支持把简短脚本直接内联写进同一个 `script` 字段。`ACTIONHALO_TEXT_FILE` 始终是规范的 UTF-8 输入；仅当文本不超过 32 KiB 且不含 NUL 字符时才同时提供 `ACTIONHALO_TEXT`。改名兼容期内，旧变量 `OPENFIRE_TEXT_FILE` 与 `OPENFIRE_TEXT` 也按同样规则提供。
+对于 `shell-script` 和 `applescript`，标准插件写法是让 `action.script` 指向 `.actionhaloext` 包内附带的脚本文件。ActionHalo 也支持把简短脚本直接内联写进同一个 `script` 字段。`ACTIONHALO_TEXT_FILE` 始终是规范的 UTF-8 输入；仅当文本不超过 32 KiB 且不含 NUL 字符时才同时提供 `ACTIONHALO_TEXT`。
 
 **推荐的插件结构**
 ```text
@@ -255,12 +255,14 @@ make package             # 本地验证用 .app 与 .dmg
 `make package` 生成 ad-hoc 签名的社区版 `.app` 与 `.dmg`，但不执行发布版本校验。可发布的社区版必须在干净提交及准确的 `vX.Y.Z` tag 上使用独立的 `make release` 门禁，并显式传入 `VERSION=X.Y.Z`；该版本必须同时匹配 tag、源码与打包后 App 的 `Info.plist` 两个版本字段：
 
 ```bash
-make release VERSION=X.Y.Z SPARKLE_ACCOUNT="OpenFire"
+make release VERSION=X.Y.Z SPARKLE_ACCOUNT="ActionHalo"
 ```
 
-首个 ActionHalo 版本必须高于 `0.3.26`。`make release` 会在仓库状态、版本、tag 或 Sparkle 配置不合法时提前失败，并再次核对打包后 App 的版本。检查通过后，它会对 Sparkle 嵌套 helper 和主 App 执行 ad-hoc 签名，验证 Apple Events 权限、通用架构以及最终 DMG 内的 App；随后使用钥匙串中旧 `OpenFire` 账户保存的现有 Ed25519 私钥生成 `.build/appcast.xml`。这里的账户名只用于本机查找签名密钥，并非对外品牌，因此有意保留。门禁会把 feed 与 enclosure 签名、归档长度、版本和 URL 全部与这份最终 DMG 逐项绑定。Ed25519 私钥是社区版发布的信任根，必须安全备份。
+`make release` 会在仓库状态、版本、tag、应用身份或 Sparkle 配置不合法时提前失败，并再次核对打包后 App 的版本。检查通过后，它会对 Sparkle 嵌套 helper 和主 App 执行 ad-hoc 签名，验证 Apple Events 权限、通用架构以及最终 DMG 内的 App。ActionHalo 的可安装更新源输出为 `.build/actionhalo-appcast.xml`，使用钥匙串 `ActionHalo` 账户中的独立 Ed25519 密钥签名，其公钥固定在 `Info.plist` 中。必须安全备份这把私钥，且绝不能使用旧应用密钥签署可安装的 ActionHalo 更新。
 
-先创建一个**不含资产的草稿 GitHub Release**，再执行 `make publish-release-assets VERSION=X.Y.Z SPARKLE_ACCOUNT=OpenFire`。该目标拒绝覆盖已有资产，在 Release 仍不可见时上传 DMG 与 appcast，核对两个远端 SHA-256 摘要后才公开 Release，避免客户端看到只上传一半或互不匹配的更新资产。
+发布流程还会生成 `.build/appcast.xml`，作为单独签名的旧安装迁移提示源。旧 trust root 被隔离在钥匙串 `ActionHaloLegacyMigration` 账户中，只允许签署这份不含 enclosure 的提示 feed；它可以显示迁移说明和最新 ActionHalo DMG 的直接下载链接，但绝不能让旧更新器自动安装 ActionHalo。支持这份提示期间必须保留 GitHub 仓库改名重定向，且不得重新占用旧仓库名，否则现有客户端将无法访问该 feed。
+
+先创建一个**不含资产的草稿 GitHub Release**，再执行 `make publish-release-assets VERSION=X.Y.Z SPARKLE_ACCOUNT=ActionHalo`。该目标拒绝覆盖已有资产，在 Release 仍不可见时上传 DMG、`actionhalo-appcast.xml` 与提示用 `appcast.xml`，核对全部远端 SHA-256 摘要后才公开 Release，避免任一客户端看到只上传一半或互不匹配的资产集合。
 
 这套流程明确不使用 Developer ID 签名与 Apple 公证，因此无法消除首次启动警告，也无法保证 TCC 权限在更新后持续有效；Ed25519 负责的是更新真实性，而不是建立 Apple 信任的应用身份。
 

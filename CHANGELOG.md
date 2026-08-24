@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.3.29
+
+- ActionHalo 改用独立 Bundle ID `com.actionhalo.app`，只注册 `.actionhaloext` 与 `com.actionhalo.extension`；macOS 辅助功能、启动项和文件类型不再沿用旧应用身份。
+- OpenFire 不再自动安装 ActionHalo。旧更新源只显示无 enclosure 的迁移提示，“了解更多”链接直达最新 DMG；ActionHalo 首次启动会一次性转换兼容设置与插件（新数据优先、插件信任不迁移）。清理仅识别 `/Applications/OpenFire.app` 与 `~/Applications/OpenFire.app`，确认后移到废纸篓，并按需清理匹配的官方旧启动项与 TCC 记录。
+- ActionHalo 自动更新改用独立的 `actionhalo-appcast.xml` 和 `ActionHalo` 签名密钥账户；appcast 会嵌入本版本更新日志，发布门禁会拒绝旧身份、错误更新源或缺失说明的产物。
+- 更换为匹配 GTA 式动作轮盘交互的新应用图标：八块等分圆环、右上选中块外突高亮；菜单栏同步使用适配深浅背景的 18px 单色分段图标。
+
+- ActionHalo now uses the independent bundle identifier `com.actionhalo.app` and registers only `.actionhaloext` with `com.actionhalo.extension`; Accessibility, launch-at-login, and document identities are no longer inherited from the previous application.
+- OpenFire no longer installs ActionHalo as an automatic update. Its legacy feed only presents an enclosure-free migration notice whose **Learn More** link downloads the latest DMG; ActionHalo converts compatible settings and plugins once on first launch (new data wins and trust is not inherited). Cleanup recognizes only `/Applications/OpenFire.app` and `~/Applications/OpenFire.app`; with approval, it trashes that app and conditionally removes its matching official login item and TCC record.
+- ActionHalo updates use the dedicated `actionhalo-appcast.xml` feed and `ActionHalo` signing-key account. The appcast embeds this version's changelog, while release gates reject legacy identities, the wrong feed, or missing release notes.
+- Replaced the app icon with an eight-segment action wheel that matches the GTA-style interaction, including an outward, highlighted upper-right selection; the menu bar now uses a matching 18px monochrome segmented icon for both light and dark appearances.
+
 ## v0.3.28
 
 - OpenFire 原位升级后的 App 包会在启动服务前排他原子改名为 `ActionHalo.app` 并重新启动；目标冲突、父目录不可写、只读卷、网络卷和 App 包自身为符号链接时均不覆盖、不删除。

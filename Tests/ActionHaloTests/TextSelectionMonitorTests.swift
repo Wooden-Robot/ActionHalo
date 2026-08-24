@@ -489,20 +489,12 @@ final class TextSelectionMonitorTests: XCTestCase {
 
     func testShouldSuppressForFrontmostAppSuppressesActionHaloItself() {
         XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
-            bundleID: "com.openfire.app",
-            localizedName: "Unrelated"
-        ))
-        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
             bundleID: "com.actionhalo.app",
             localizedName: "Unrelated"
         ))
         XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
             bundleID: "com.example.unrelated",
             localizedName: "ActionHalo"
-        ))
-        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
-            bundleID: "com.example.unrelated",
-            localizedName: "OpenFire"
         ))
     }
 
@@ -573,11 +565,6 @@ final class TextSelectionMonitorTests: XCTestCase {
 
     func testCriticalAppSuppressionCannotBeBypassedByEditableElement() {
         XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
-            bundleID: "com.openfire.app",
-            localizedName: "Unrelated",
-            isFocusedSelectionEditable: true
-        ))
-        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
             bundleID: "com.actionhalo.app",
             localizedName: "Unrelated",
             isFocusedSelectionEditable: true
@@ -585,11 +572,6 @@ final class TextSelectionMonitorTests: XCTestCase {
         XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
             bundleID: "com.example.unrelated",
             localizedName: "ActionHalo",
-            isFocusedSelectionEditable: true
-        ))
-        XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(
-            bundleID: "com.example.unrelated",
-            localizedName: "OpenFire",
             isFocusedSelectionEditable: true
         ))
         XCTAssertTrue(TextSelectionMonitor.shouldSuppressForFrontmostApp(

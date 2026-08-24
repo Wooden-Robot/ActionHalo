@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>ActionHalo app icon</title>
+  <desc>Eight equal action-wheel sectors with a highlighted upper-right selection.</desc>
+  <defs>
+    <path id="segment" d="M 874.150 367.269 A 390 390 0 0 1 874.150 656.731 L 734.862 601.065 A 240 240 0 0 0 734.862 422.935 Z"/>
+    <filter id="white-glow" x="-65%" y="-65%" width="230%" height="230%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="36"/>
+    </filter>
+    <filter id="contrast-halo" x="-45%" y="-45%" width="190%" height="190%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+  </defs>
+
+  <g fill="#3C3F43" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="3">
+    <use href="#segment" transform="rotate(0 512 512)"/>
+    <use href="#segment" transform="rotate(45 512 512)"/>
+    <use href="#segment" transform="rotate(90 512 512)"/>
+    <use href="#segment" transform="rotate(135 512 512)"/>
+    <use href="#segment" transform="rotate(180 512 512)"/>
+    <use href="#segment" transform="rotate(225 512 512)"/>
+    <use href="#segment" transform="rotate(270 512 512)"/>
+  </g>
+
+  <g transform="translate(11.314 -11.314)">
+    <use href="#segment" transform="rotate(315 512 512)" fill="#FAFAFA" opacity="0.78" filter="url(#white-glow)"/>
+    <use href="#segment" transform="rotate(315 512 512)" fill="#17191C" opacity="0.52" filter="url(#contrast-halo)"/>
+    <use href="#segment" transform="rotate(315 512 512)" fill="none" stroke="#24272A" stroke-opacity="0.46" stroke-width="14"/>
+    <use href="#segment" transform="rotate(315 512 512)" fill="#BEC1C2" stroke="#FFFFFF" stroke-opacity="0.94" stroke-width="6"/>
+  </g>
+</svg>
