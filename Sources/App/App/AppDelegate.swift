@@ -1,4 +1,5 @@
 import Cocoa
+import Darwin
 
 /// Main-thread interaction gate used by transient UI surfaces.
 ///
@@ -100,6 +101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         qos: .userInitiated
     )
     private var pendingPluginInstallPaths: Set<String> = []
+    private var pendingPrelaunchPluginURLs: [URL] = []
+    private var hasFinishedLaunching = false
     
     // Global monitor for clicking outside
     private var globalClickMonitor: Any?
@@ -253,7 +256,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return (mergedApps, defaultOfficeSuiteExcludedAppsMigrationVersion)
     }
     
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // UIElement apps can miss the normal delegate callback for document
+        // opens, so register the matching AppleEvent path before AppKit
+        // delivers any cold-launch files.
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleOpenDocumentsEvent(event:withReplyEvent:)),
+            forEventClass: AEEventClass(kCoreEventClass),
+            andEventID: AEEventID(kAEOpenDocuments)
+        )
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // AppKit delivers Finder document-open requests before this callback.
+        // Carry those paths through the one-time app-bundle rename so the
+        // user's original plugin-open action is not lost during relaunch.
+        let queuedPrelaunchPluginURLs = pendingPrelaunchPluginURLs
+        let migrationArguments = Self.migrationLaunchArguments(
+            commandLineArguments: Array(CommandLine.arguments.dropFirst()),
+            pendingPluginURLs: queuedPrelaunchPluginURLs
+        )
+        if InstalledAppNameMigration.renameAndScheduleRelaunchIfNeeded(
+            launchArguments: migrationArguments
+        ) {
+            exit(EXIT_SUCCESS)
+        }
+
+        hasFinishedLaunching = true
+        pendingPrelaunchPluginURLs.removeAll()
+
         // Automatically clear stale accessibility permissions if the app was updated
         // This prevents the macOS "permission toggle is on but doesn't work" bug for unsigned apps
         checkAndUpdateAccessibilityState()
@@ -287,14 +319,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 _ = installPluginWithConfirmation(from: url)
             }
         }
-        
-        // Manually intercept AppleEvents for double-clicking documents since UIElement apps sometimes drop them
-        NSAppleEventManager.shared().setEventHandler(
-            self,
-            andSelector: #selector(handleOpenDocumentsEvent(event:withReplyEvent:)),
-            forEventClass: AEEventClass(kCoreEventClass),
-            andEventID: AEEventID(kAEOpenDocuments)
-        )
+        for url in queuedPrelaunchPluginURLs {
+            _ = installPluginWithConfirmation(from: url)
+        }
         
         // Setup status bar
         statusBarController.setup()
@@ -497,9 +524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if let urlString = String(data: data, encoding: .utf8),
                        let url = URL(string: urlString) {
                         
-                        if Self.isSupportedPluginPackageURL(url) {
-                            _ = self.installPluginWithConfirmation(from: url)
-                        }
+                        _ = self.handlePluginOpenRequest(url)
                     }
                 }
             }
@@ -519,18 +544,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
         let url = URL(fileURLWithPath: filename)
         NSLog("[ActionHalo] application(_:openFile:) called for: \(filename)")
-        if Self.isSupportedPluginPackageURL(url) {
-            return installPluginWithConfirmation(from: url)
-        }
-        return false
+        return handlePluginOpenRequest(url)
     }
     
     func application(_ application: NSApplication, open urls: [URL]) {
         NSLog("[ActionHalo] application(_:open:urls) called with: \(urls)")
         for url in urls {
-            if Self.isSupportedPluginPackageURL(url) {
-                _ = installPluginWithConfirmation(from: url)
-            }
+            _ = handlePluginOpenRequest(url)
         }
     }
     
@@ -538,11 +558,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("[ActionHalo] application(_:openFiles:) called with: \(filenames)")
         for filename in filenames {
             let url = URL(fileURLWithPath: filename)
-            if Self.isSupportedPluginPackageURL(url) {
-                _ = installPluginWithConfirmation(from: url)
-            }
+            _ = handlePluginOpenRequest(url)
         }
         sender.reply(toOpenOrPrint: .success)
+    }
+
+    static func migrationLaunchArguments(
+        commandLineArguments: [String],
+        pendingPluginURLs: [URL]
+    ) -> [String] {
+        var arguments = commandLineArguments
+        var includedPluginPaths = Set(commandLineArguments.compactMap { argument -> String? in
+            let url = URL(fileURLWithPath: argument).standardizedFileURL
+            return isSupportedPluginPackageURL(url) ? url.path : nil
+        })
+        for url in pendingPluginURLs {
+            let path = url.standardizedFileURL.path
+            if includedPluginPaths.insert(path).inserted {
+                arguments.append(path)
+            }
+        }
+        return arguments
+    }
+
+    private func handlePluginOpenRequest(_ url: URL) -> Bool {
+        guard Self.isSupportedPluginPackageURL(url) else {
+            return false
+        }
+        let standardizedURL = url.standardizedFileURL
+        guard hasFinishedLaunching else {
+            if !pendingPrelaunchPluginURLs.contains(standardizedURL) {
+                pendingPrelaunchPluginURLs.append(standardizedURL)
+            }
+            return true
+        }
+        return installPluginWithConfirmation(from: standardizedURL)
     }
     
     private func installPluginWithConfirmation(from url: URL) -> Bool {
