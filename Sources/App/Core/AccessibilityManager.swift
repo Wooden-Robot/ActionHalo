@@ -683,8 +683,12 @@ final class AccessibilityManager {
     nonisolated static func copyFallbackFocusedElementMatches(
         expectedFocusedElementAvailable: Bool,
         focusedElementMatches: Bool,
-        allowMissingFocusedElement: Bool
+        allowMissingFocusedElement: Bool,
+        acquiredSelectionContextMatches: Bool? = nil
     ) -> Bool {
+        if let acquiredSelectionContextMatches {
+            return acquiredSelectionContextMatches
+        }
         if expectedFocusedElementAvailable {
             return focusedElementMatches
         }
@@ -715,6 +719,9 @@ final class AccessibilityManager {
         expectedProcessIdentifier: pid_t? = NSWorkspace.shared.frontmostApplication?.processIdentifier,
         expectedFocusedElement: AXUIElement? = nil,
         allowMissingFocusedElement: Bool = false,
+        expectedBundleID: String? = nil,
+        expectedWindowID: CGWindowID? = nil,
+        allowsAcquiredSelectionFocusFallback: Bool = false,
         completion: @escaping @MainActor @Sendable (String?) -> Void
     ) -> UUID {
         let requestID = copyFallbackCoordinator.beginRequest()
@@ -856,10 +863,17 @@ final class AccessibilityManager {
                 }
             }
             
+            // Synthetic input remains strictly bound to the original focused
+            // element. Only after fresh copied text exists may Telegram's
+            // Monterey AX focus degrade to the same owning AXWindow.
             let contextIsStillValid = Self.copyFallbackContextIsValid(
                 coordinator: coordinator,
                 requestID: requestID,
-                expectedProcessIdentifier: expectedProcessIdentifier
+                expectedProcessIdentifier: expectedProcessIdentifier,
+                expectedBundleID: expectedBundleID,
+                expectedWindowID: expectedWindowID,
+                allowsAcquiredSelectionFocusFallback:
+                    allowsAcquiredSelectionFocusFallback && copyObservation.hasFreshCopiedText
             )
             let result = Self.copyFallbackResult(
                 copiedText: copyObservation.copiedText,
@@ -893,7 +907,10 @@ final class AccessibilityManager {
     nonisolated private static func copyFallbackContextIsValid(
         coordinator: CopyFallbackRequestCoordinator,
         requestID: UUID,
-        expectedProcessIdentifier: pid_t?
+        expectedProcessIdentifier: pid_t?,
+        expectedBundleID: String? = nil,
+        expectedWindowID: CGWindowID? = nil,
+        allowsAcquiredSelectionFocusFallback: Bool = false
     ) -> Bool {
         let context: (
             processIdentifier: pid_t?,
@@ -904,10 +921,38 @@ final class AccessibilityManager {
             context = MainActor.assumeIsolated {
                 let manager = AccessibilityManager.shared
                 let expectedFocusedElement = manager.copyFallbackExpectedFocusedElements[requestID]
+                let currentProcessIdentifier =
+                    NSWorkspace.shared.frontmostApplication?.processIdentifier
                 let allowMissingFocusedElement =
                     manager.copyFallbackAllowsMissingFocusedElement.contains(requestID)
+                let currentFocusedElement = manager.getFocusedElement()
+                let acquiredSelectionContextMatches =
+                    allowsAcquiredSelectionFocusFallback
+                    ? TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+                        expectedProcessIdentifier: expectedProcessIdentifier,
+                        currentProcessIdentifier: currentProcessIdentifier,
+                        bundleID: expectedBundleID,
+                        expectedFocusedElementAvailable: expectedFocusedElement != nil,
+                        currentFocusedElementAvailable: currentFocusedElement != nil,
+                        focusedElementMatches: areSameAccessibilityElement(
+                            expectedFocusedElement,
+                            currentFocusedElement
+                        ),
+                        currentFocusedElementIsStructural:
+                            manager.isStructuralSelectionFocus(currentFocusedElement),
+                        focusedWindowMatches: areSameAccessibilityElement(
+                            manager.selectionWindow(for: expectedFocusedElement),
+                            manager.selectionWindow(for: currentFocusedElement)
+                        ),
+                        expectedWindowID: expectedWindowID,
+                        currentWindowID: TextSelectionMonitor.currentFrontmostWindowSnapshot(
+                            frontmostProcessID: currentProcessIdentifier,
+                            matching: expectedWindowID
+                        )?.windowID
+                    )
+                    : nil
                 return (
-                    NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                    currentProcessIdentifier,
                     manager.shouldSuppressCopyFallback(
                         allowMissingFocusedElement: allowMissingFocusedElement
                     ),
@@ -915,9 +960,10 @@ final class AccessibilityManager {
                         expectedFocusedElementAvailable: expectedFocusedElement != nil,
                         focusedElementMatches: areSameAccessibilityElement(
                             expectedFocusedElement,
-                            manager.getFocusedElement()
+                            currentFocusedElement
                         ),
-                        allowMissingFocusedElement: allowMissingFocusedElement
+                        allowMissingFocusedElement: allowMissingFocusedElement,
+                        acquiredSelectionContextMatches: acquiredSelectionContextMatches
                     )
                 )
             }
@@ -925,10 +971,38 @@ final class AccessibilityManager {
             context = DispatchQueue.main.sync {
                 let manager = AccessibilityManager.shared
                 let expectedFocusedElement = manager.copyFallbackExpectedFocusedElements[requestID]
+                let currentProcessIdentifier =
+                    NSWorkspace.shared.frontmostApplication?.processIdentifier
                 let allowMissingFocusedElement =
                     manager.copyFallbackAllowsMissingFocusedElement.contains(requestID)
+                let currentFocusedElement = manager.getFocusedElement()
+                let acquiredSelectionContextMatches =
+                    allowsAcquiredSelectionFocusFallback
+                    ? TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+                        expectedProcessIdentifier: expectedProcessIdentifier,
+                        currentProcessIdentifier: currentProcessIdentifier,
+                        bundleID: expectedBundleID,
+                        expectedFocusedElementAvailable: expectedFocusedElement != nil,
+                        currentFocusedElementAvailable: currentFocusedElement != nil,
+                        focusedElementMatches: areSameAccessibilityElement(
+                            expectedFocusedElement,
+                            currentFocusedElement
+                        ),
+                        currentFocusedElementIsStructural:
+                            manager.isStructuralSelectionFocus(currentFocusedElement),
+                        focusedWindowMatches: areSameAccessibilityElement(
+                            manager.selectionWindow(for: expectedFocusedElement),
+                            manager.selectionWindow(for: currentFocusedElement)
+                        ),
+                        expectedWindowID: expectedWindowID,
+                        currentWindowID: TextSelectionMonitor.currentFrontmostWindowSnapshot(
+                            frontmostProcessID: currentProcessIdentifier,
+                            matching: expectedWindowID
+                        )?.windowID
+                    )
+                    : nil
                 return (
-                    NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                    currentProcessIdentifier,
                     manager.shouldSuppressCopyFallback(
                         allowMissingFocusedElement: allowMissingFocusedElement
                     ),
@@ -936,9 +1010,10 @@ final class AccessibilityManager {
                         expectedFocusedElementAvailable: expectedFocusedElement != nil,
                         focusedElementMatches: areSameAccessibilityElement(
                             expectedFocusedElement,
-                            manager.getFocusedElement()
+                            currentFocusedElement
                         ),
-                        allowMissingFocusedElement: allowMissingFocusedElement
+                        allowMissingFocusedElement: allowMissingFocusedElement,
+                        acquiredSelectionContextMatches: acquiredSelectionContextMatches
                     )
                 )
             }
@@ -1750,6 +1825,54 @@ final class AccessibilityManager {
             return !allowMissingFocusedElement
         }
         return focusedElementAssessment != .unprotected
+    }
+
+    nonisolated static func isStructuralSelectionFocusRole(_ role: String?) -> Bool {
+        role == kAXWindowRole
+    }
+
+    func isStructuralSelectionFocus(_ element: AXUIElement?) -> Bool {
+        guard let element else { return false }
+
+        var roleValue: AnyObject?
+        let roleResult = AXUIElementCopyAttributeValue(
+            element,
+            kAXRoleAttribute as CFString,
+            &roleValue
+        )
+        guard roleResult == .success, let role = roleValue as? String else {
+            return false
+        }
+
+        return Self.isStructuralSelectionFocusRole(role)
+    }
+
+    func selectionWindow(for element: AXUIElement?) -> AXUIElement? {
+        guard let element else { return nil }
+
+        var roleValue: AnyObject?
+        if AXUIElementCopyAttributeValue(
+            element,
+            kAXRoleAttribute as CFString,
+            &roleValue
+        ) == .success,
+           let role = roleValue as? String,
+           role == kAXWindowRole {
+            return element
+        }
+
+        var windowValue: AnyObject?
+        guard AXUIElementCopyAttributeValue(
+            element,
+            kAXWindowAttribute as CFString,
+            &windowValue
+        ) == .success,
+              let windowValue,
+              CFGetTypeID(windowValue) == AXUIElementGetTypeID() else {
+            return nil
+        }
+
+        return unsafeBitCast(windowValue, to: AXUIElement.self)
     }
 
     func focusedElementRoleDescription() -> String? {

@@ -15,7 +15,8 @@ final class TextSelectionMonitorTests: XCTestCase {
             text: "selected",
             location: location,
             processIdentifier: 42,
-            focusedElement: focusedElement
+            focusedElement: focusedElement,
+            windowID: 7
         )
         let emptyInputUserInfo = TextSelectionMonitor.emptyTextInputClickedNotificationUserInfo(
             location: location,
@@ -24,6 +25,7 @@ final class TextSelectionMonitorTests: XCTestCase {
         )
 
         XCTAssertEqual(textSelectedUserInfo["text"] as? String, "selected")
+        XCTAssertEqual(textSelectedUserInfo["windowID"] as? NSNumber, NSNumber(value: 7))
         for userInfo in [textSelectedUserInfo, emptyInputUserInfo] {
             XCTAssertEqual(userInfo["processIdentifier"] as? NSNumber, NSNumber(value: 42))
             let deliveredElement = try XCTUnwrap(userInfo["focusedElement"])
@@ -484,6 +486,181 @@ final class TextSelectionMonitorTests: XCTestCase {
             expectedFocusedElementAvailable: false,
             currentFocusedElementAvailable: false,
             focusedElementMatches: false
+        ))
+    }
+
+    func testSelectionContextKeepsCapturedFocusStrictBeforeCopyFallback() {
+        XCTAssertTrue(TextSelectionMonitor.shouldContinueSelectionContext(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: true,
+            focusedElementMatches: true
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueSelectionContext(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: true,
+            focusedElementMatches: false
+        ))
+    }
+
+    func testAcquiredSelectionPresentationPreservesTelegramWindowTargetIdentity() {
+        XCTAssertTrue(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: true,
+            focusedElementMatches: true,
+            currentFocusedElementIsStructural: true,
+            focusedWindowMatches: true,
+            expectedWindowID: 7,
+            currentWindowID: 7
+        ))
+    }
+
+    func testAcquiredSelectionPresentationAllowsTelegramStructuralFocusDriftInSameWindow() {
+        XCTAssertTrue(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: true,
+            focusedElementMatches: false,
+            currentFocusedElementIsStructural: true,
+            focusedWindowMatches: true,
+            expectedWindowID: 7,
+            currentWindowID: 7
+        ))
+    }
+
+    func testAcquiredSelectionPresentationPreservesExactAndContextlessFocusPaths() {
+        XCTAssertTrue(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "com.example.app",
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: true,
+            focusedElementMatches: true,
+            currentFocusedElementIsStructural: false,
+            focusedWindowMatches: false,
+            expectedWindowID: nil,
+            currentWindowID: nil
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: false,
+            currentFocusedElementAvailable: false,
+            focusedElementMatches: false,
+            currentFocusedElementIsStructural: false,
+            focusedWindowMatches: false,
+            expectedWindowID: nil,
+            currentWindowID: nil
+        ))
+    }
+
+    func testAcquiredSelectionPresentationRejectsUnsafeFocusDrift() {
+        let baseArguments = (
+            expectedProcessIdentifier: pid_t(42),
+            currentProcessIdentifier: pid_t(42),
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: true,
+            focusedElementMatches: false,
+            currentFocusedElementIsStructural: true,
+            focusedWindowMatches: true,
+            expectedWindowID: CGWindowID(7),
+            currentWindowID: CGWindowID(7)
+        )
+
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: baseArguments.expectedProcessIdentifier,
+            currentProcessIdentifier: baseArguments.currentProcessIdentifier,
+            bundleID: "com.example.app",
+            expectedFocusedElementAvailable: baseArguments.expectedFocusedElementAvailable,
+            currentFocusedElementAvailable: baseArguments.currentFocusedElementAvailable,
+            focusedElementMatches: baseArguments.focusedElementMatches,
+            currentFocusedElementIsStructural: baseArguments.currentFocusedElementIsStructural,
+            focusedWindowMatches: baseArguments.focusedWindowMatches,
+            expectedWindowID: baseArguments.expectedWindowID,
+            currentWindowID: baseArguments.currentWindowID
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: baseArguments.expectedProcessIdentifier,
+            currentProcessIdentifier: baseArguments.currentProcessIdentifier,
+            bundleID: "com.example.telegram",
+            expectedFocusedElementAvailable: baseArguments.expectedFocusedElementAvailable,
+            currentFocusedElementAvailable: baseArguments.currentFocusedElementAvailable,
+            focusedElementMatches: baseArguments.focusedElementMatches,
+            currentFocusedElementIsStructural: baseArguments.currentFocusedElementIsStructural,
+            focusedWindowMatches: baseArguments.focusedWindowMatches,
+            expectedWindowID: baseArguments.expectedWindowID,
+            currentWindowID: baseArguments.currentWindowID
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: true,
+            focusedElementMatches: false,
+            currentFocusedElementIsStructural: true,
+            focusedWindowMatches: false,
+            expectedWindowID: 7,
+            currentWindowID: 7
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: false,
+            focusedElementMatches: false,
+            currentFocusedElementIsStructural: false,
+            focusedWindowMatches: false,
+            expectedWindowID: 7,
+            currentWindowID: 7
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: true,
+            focusedElementMatches: false,
+            currentFocusedElementIsStructural: false,
+            focusedWindowMatches: true,
+            expectedWindowID: 7,
+            currentWindowID: 7
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: true,
+            focusedElementMatches: false,
+            currentFocusedElementIsStructural: true,
+            focusedWindowMatches: true,
+            expectedWindowID: 7,
+            currentWindowID: 8
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 99,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: true,
+            focusedElementMatches: false,
+            currentFocusedElementIsStructural: true,
+            focusedWindowMatches: true,
+            expectedWindowID: 7,
+            currentWindowID: 7
         ))
     }
 

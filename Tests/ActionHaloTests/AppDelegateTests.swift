@@ -398,6 +398,36 @@ final class AppDelegateTests: XCTestCase {
         )
     }
 
+    func testMenuDisablesFocusBoundPluginsAfterAcquiredSelectionFocusDrifts() throws {
+        let keyCombo = try makePlugin(
+            name: "Command Palette",
+            identifier: "com.example.command-palette",
+            actionType: "key-combo",
+            actionContent: "\"key\":\"p\",\"modifiers\":[\"command\",\"shift\"]"
+        )
+        let search = try makePlugin(
+            name: "Search in Telegram",
+            identifier: "com.actionhalo.plugin.search-telegram",
+            actionType: "applescript",
+            actionContent: "\"script\":\"script.applescript\""
+        )
+
+        XCTAssertFalse(AppDelegate.isPluginExecutableInMenu(
+            keyCombo,
+            text: "selected",
+            appBundleID: "ru.keepcoder.Telegram",
+            isSelectionEditable: false,
+            focusedElementMatches: false
+        ))
+        XCTAssertTrue(AppDelegate.isPluginExecutableInMenu(
+            search,
+            text: "selected",
+            appBundleID: "ru.keepcoder.Telegram",
+            isSelectionEditable: false,
+            focusedElementMatches: false
+        ))
+    }
+
     func testNotificationAccessibilityElementExtractionRejectsWrongTypes() {
         let element = AXUIElementCreateApplication(42)
 

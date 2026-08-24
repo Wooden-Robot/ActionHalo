@@ -46,10 +46,19 @@ private final class MenuDismissalBarrier {
 private final class MenuTargetContext {
     let processIdentifier: pid_t?
     let focusedElement: AXUIElement?
+    let windowID: CGWindowID?
+    let allowsAcquiredSelectionFocusFallback: Bool
 
-    init(processIdentifier: pid_t?, focusedElement: AXUIElement?) {
+    init(
+        processIdentifier: pid_t?,
+        focusedElement: AXUIElement?,
+        windowID: CGWindowID?,
+        allowsAcquiredSelectionFocusFallback: Bool
+    ) {
         self.processIdentifier = processIdentifier
         self.focusedElement = focusedElement
+        self.windowID = windowID
+        self.allowsAcquiredSelectionFocusFallback = allowsAcquiredSelectionFocusFallback
     }
 }
 
@@ -406,6 +415,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let frontmostApplication = NSWorkspace.shared.frontmostApplication
         let expectedProcessIdentifier = frontmostApplication?.processIdentifier
         let expectedBundleID = frontmostApplication?.bundleIdentifier
+        let expectedWindowID = TextSelectionMonitor.currentFrontmostWindowSnapshot(
+            frontmostApplication: frontmostApplication
+        )?.windowID
         guard currentContextAllowsMenuPresentation(
             expectedProcessIdentifier: expectedProcessIdentifier
         ) else {
@@ -425,7 +437,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 at: mouseLocation,
                 text: text,
                 targetProcessIdentifier: expectedProcessIdentifier,
-                targetFocusedElement: expectedFocusedElement
+                targetFocusedElement: expectedFocusedElement,
+                targetWindowID: expectedWindowID,
+                allowsAcquiredSelectionFocusFallback: true
             )
             return
         }
@@ -438,7 +452,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             allowMissingFocusedElement:
                 AccessibilityManager.shouldAllowContextlessBlindCopyFallback(
                     bundleID: expectedBundleID
-                )
+                ),
+            expectedBundleID: expectedBundleID,
+            expectedWindowID: expectedWindowID,
+            allowsAcquiredSelectionFocusFallback: true
         ) { [weak self] copiedText in
             guard AccessibilityManager.isExpectedCopyFallbackProcess(
                 expectedProcessIdentifier: expectedProcessIdentifier,
@@ -452,7 +469,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             guard self.currentContextAllowsMenuPresentation(
                 expectedProcessIdentifier: expectedProcessIdentifier,
-                expectedFocusedElement: expectedFocusedElement
+                expectedFocusedElement: expectedFocusedElement,
+                expectedWindowID: expectedWindowID,
+                allowsAcquiredSelectionFocusFallback: true
             ) else {
                 return
             }
@@ -463,7 +482,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 at: mouseLocation,
                 text: text,
                 targetProcessIdentifier: expectedProcessIdentifier,
-                targetFocusedElement: expectedFocusedElement
+                targetFocusedElement: expectedFocusedElement,
+                targetWindowID: expectedWindowID,
+                allowsAcquiredSelectionFocusFallback: true
             )
         }
     }
@@ -849,6 +870,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let focusedElement = Self.accessibilityElement(from: userInfo["focusedElement"])
+        let windowID = (userInfo["windowID"] as? NSNumber).map {
+            CGWindowID($0.uint32Value)
+        }
         let processIdentifier = pid_t(processNumber.int32Value)
         guard AccessibilityManager.isExpectedCopyFallbackProcess(
             expectedProcessIdentifier: processIdentifier,
@@ -864,7 +888,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             at: mouseLocation,
             text: text,
             targetProcessIdentifier: processIdentifier,
-            targetFocusedElement: focusedElement
+            targetFocusedElement: focusedElement,
+            targetWindowID: windowID,
+            allowsAcquiredSelectionFocusFallback: true
         )
     }
     
@@ -922,11 +948,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         at point: NSPoint,
         text: String,
         targetProcessIdentifier: pid_t?,
-        targetFocusedElement: AXUIElement?
+        targetFocusedElement: AXUIElement?,
+        targetWindowID: CGWindowID?,
+        allowsAcquiredSelectionFocusFallback: Bool
     ) {
         guard currentContextAllowsMenuPresentation(
             expectedProcessIdentifier: targetProcessIdentifier,
-            expectedFocusedElement: targetFocusedElement
+            expectedFocusedElement: targetFocusedElement,
+            expectedWindowID: targetWindowID,
+            allowsAcquiredSelectionFocusFallback:
+                allowsAcquiredSelectionFocusFallback
         ) else {
             return
         }
@@ -938,35 +969,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             plugins: Self.radialMenuPlugins(from: presentationPlugins),
             selectedText: text,
             targetProcessIdentifier: targetProcessIdentifier,
-            targetFocusedElement: targetFocusedElement
+            targetFocusedElement: targetFocusedElement,
+            targetWindowID: targetWindowID,
+            allowsAcquiredSelectionFocusFallback:
+                allowsAcquiredSelectionFocusFallback
         )
     }
 
     private func currentContextAllowsMenuPresentation(
         expectedProcessIdentifier: pid_t? = nil,
-        expectedFocusedElement: AXUIElement? = nil
+        expectedFocusedElement: AXUIElement? = nil,
+        expectedWindowID: CGWindowID? = nil,
+        allowsAcquiredSelectionFocusFallback: Bool = false
     ) -> Bool {
         let frontmostApp = NSWorkspace.shared.frontmostApplication
-        if expectedProcessIdentifier != nil,
-           !AccessibilityManager.isExpectedCopyFallbackProcess(
-            expectedProcessIdentifier: expectedProcessIdentifier,
-            currentProcessIdentifier: frontmostApp?.processIdentifier
-           ) {
-            return false
-        }
-        if let expectedFocusedElement {
-            guard AccessibilityManager.areSameAccessibilityElement(
-                expectedFocusedElement,
-                AccessibilityManager.shared.getFocusedElement()
+        let currentProcessIdentifier = frontmostApp?.processIdentifier
+        let currentFocusedElement = AccessibilityManager.shared.getFocusedElement()
+
+        if allowsAcquiredSelectionFocusFallback {
+            let currentWindowID = TextSelectionMonitor.currentFrontmostWindowSnapshot(
+                frontmostProcessID: currentProcessIdentifier,
+                matching: expectedWindowID
+            )?.windowID
+            let expectedSelectionWindow = AccessibilityManager.shared.selectionWindow(
+                for: expectedFocusedElement
+            )
+            let currentSelectionWindow = AccessibilityManager.shared.selectionWindow(
+                for: currentFocusedElement
+            )
+            guard TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+                expectedProcessIdentifier: expectedProcessIdentifier,
+                currentProcessIdentifier: currentProcessIdentifier,
+                bundleID: frontmostApp?.bundleIdentifier,
+                expectedFocusedElementAvailable: expectedFocusedElement != nil,
+                currentFocusedElementAvailable: currentFocusedElement != nil,
+                focusedElementMatches: AccessibilityManager.areSameAccessibilityElement(
+                    expectedFocusedElement,
+                    currentFocusedElement
+                ),
+                currentFocusedElementIsStructural:
+                    AccessibilityManager.shared.isStructuralSelectionFocus(
+                        currentFocusedElement
+                    ),
+                focusedWindowMatches: AccessibilityManager.areSameAccessibilityElement(
+                    expectedSelectionWindow,
+                    currentSelectionWindow
+                ),
+                expectedWindowID: expectedWindowID,
+                currentWindowID: currentWindowID
             ) else {
                 return false
             }
+            guard !AccessibilityManager.shared.shouldSuppressSelectionPresentation(
+                allowMissingFocusedElement:
+                    AccessibilityManager.shouldAllowContextlessBlindCopyFallback(
+                        bundleID: frontmostApp?.bundleIdentifier
+                    )
+            ) else {
+                return false
+            }
+        } else {
+            if expectedProcessIdentifier != nil,
+               !AccessibilityManager.isExpectedCopyFallbackProcess(
+                expectedProcessIdentifier: expectedProcessIdentifier,
+                currentProcessIdentifier: currentProcessIdentifier
+               ) {
+                return false
+            }
+            if let expectedFocusedElement,
+               !AccessibilityManager.areSameAccessibilityElement(
+                    expectedFocusedElement,
+                    currentFocusedElement
+               ) {
+                return false
+            }
         }
+
         return Self.shouldAllowMenuPresentation(
             isEnabled: isEnabled,
             frontmostBundleID: frontmostApp?.bundleIdentifier,
             frontmostLocalizedName: frontmostApp?.localizedName,
-            isFocusedSelectionEditable: AccessibilityManager.shared.isFocusedSelectionEditable()
+            isFocusedSelectionEditable: currentFocusedElement.map {
+                AccessibilityManager.shared.isSelectionEditable($0)
+            } ?? false
         )
     }
 
@@ -997,6 +1082,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    static func isPluginExecutableInMenu(
+        _ plugin: Plugin,
+        text: String,
+        appBundleID: String?,
+        isSelectionEditable: Bool,
+        focusedElementMatches: Bool
+    ) -> Bool {
+        isPluginExecutable(
+            plugin,
+            text: text,
+            appBundleID: appBundleID,
+            isSelectionEditable: isSelectionEditable
+        ) && (
+            !pluginRequiresOriginalFocusedElement(plugin) || focusedElementMatches
+        )
+    }
+
     func beginMenuDismiss(completion: (() -> Void)? = nil) -> Bool {
         guard !isDismissingMenus else { return false }
         isDismissingMenus = true
@@ -1020,42 +1122,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         plugins: [Plugin],
         selectedText: String,
         targetProcessIdentifier: pid_t?,
-        targetFocusedElement: AXUIElement?
+        targetFocusedElement: AXUIElement?,
+        targetWindowID: CGWindowID?,
+        allowsAcquiredSelectionFocusFallback: Bool
     ) {
-        var items: [RadialMenuItem] = []
-        let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
-        let isSelectionEditable = AccessibilityManager.shared.isFocusedSelectionEditable()
-        
-        for plugin in plugins {
-            items.append(RadialMenuItem(
-                title: plugin.name,
-                iconName: plugin.iconName,
-                action: .plugin(plugin),
-                customIcon: plugin.customIcon,
-                isExecutable: Self.isPluginExecutable(
-                    plugin,
-                    text: selectedText,
-                    appBundleID: appBundleID,
-                    isSelectionEditable: isSelectionEditable
-                )
-            ))
-        }
-        
-        // Don't show if no items available
-        guard !items.isEmpty else { return }
+        guard !plugins.isEmpty else { return }
 
         let targetContext = MenuTargetContext(
             processIdentifier: targetProcessIdentifier,
-            focusedElement: targetFocusedElement
+            focusedElement: targetFocusedElement,
+            windowID: targetWindowID,
+            allowsAcquiredSelectionFocusFallback:
+                allowsAcquiredSelectionFocusFallback
         )
 
         scheduleMenuPresentation { [weak self] in
             guard let self else { return }
             guard self.currentContextAllowsMenuPresentation(
                 expectedProcessIdentifier: targetContext.processIdentifier,
-                expectedFocusedElement: targetContext.focusedElement
+                expectedFocusedElement: targetContext.focusedElement,
+                expectedWindowID: targetContext.windowID,
+                allowsAcquiredSelectionFocusFallback:
+                    targetContext.allowsAcquiredSelectionFocusFallback
             ) else {
                 return
+            }
+
+            // A previous menu may still be fading out while Telegram changes
+            // its AX focus. Calculate action availability only after the final
+            // context check so the visible state matches the execution gate.
+            let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
+            let currentFocusedElement = AccessibilityManager.shared.getFocusedElement()
+            let isSelectionEditable = currentFocusedElement.map {
+                AccessibilityManager.shared.isSelectionEditable($0)
+            } ?? false
+            let focusedElementMatches = AccessibilityManager.areSameAccessibilityElement(
+                targetContext.focusedElement,
+                currentFocusedElement
+            )
+            let items = plugins.map { plugin in
+                RadialMenuItem(
+                    title: plugin.name,
+                    iconName: plugin.iconName,
+                    action: .plugin(plugin),
+                    customIcon: plugin.customIcon,
+                    isExecutable: Self.isPluginExecutableInMenu(
+                        plugin,
+                        text: selectedText,
+                        appBundleID: appBundleID,
+                        isSelectionEditable: isSelectionEditable,
+                        focusedElementMatches: focusedElementMatches
+                    )
+                )
             }
 
             let window = RadialMenuWindow()
@@ -1087,7 +1205,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ) {
         let targetContext = MenuTargetContext(
             processIdentifier: targetProcessIdentifier,
-            focusedElement: targetFocusedElement
+            focusedElement: targetFocusedElement,
+            windowID: nil,
+            allowsAcquiredSelectionFocusFallback: false
         )
 
         scheduleMenuPresentation { [weak self] in

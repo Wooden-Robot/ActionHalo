@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.3.32
+
+- 修复 macOS 12.7.6 上 Telegram 选中文本后辅助功能焦点退化为 `AXWindow`，导致圆环菜单被上下文门禁阻止、Search in Telegram 无法触发的问题。
+- 兼容范围严格限制在已取得新鲜选中文本后的同一 Telegram 进程、同一辅助功能窗口和同一 Core Graphics 窗口；`Cmd+C` 发送前仍保持原焦点校验，剪切、粘贴、删除和快捷键动作在焦点漂移后继续失败关闭。新增焦点漂移、复制回退、多窗口及菜单动作状态回归测试。
+
+- Fixed the radial menu and Search in Telegram being blocked on macOS 12.7.6 when Telegram degrades its Accessibility focus from the selected text element to `AXWindow`.
+- The compatibility path is limited to fresh selected text in the same Telegram process, Accessibility window, and Core Graphics window. Pre-`Cmd+C` target validation remains strict, while cut, paste, delete, and key-combo actions continue to fail closed after focus drift. Added regression coverage for focus drift, copy fallback, multiple windows, and menu action state.
+
 ## v0.3.31
 
 - 修复 “Search in Telegram” 点击后无响应的问题：AppleScriptObjC 插件现在通过隔离的 UTF-8 文件读取器接收选中文字，避免 `read` 被错误解析到 `current application`；新增中文、emoji、多行文本及特殊路径的运行时回归测试。

@@ -227,6 +227,14 @@ final class AccessibilityManagerTests: XCTestCase {
         XCTAssertFalse(AccessibilityManager.shouldAllowContextlessBlindCopyFallback(bundleID: "com.example.browser"))
     }
 
+    func testStructuralSelectionFocusRolesExcludeTelegramTextGroups() {
+        XCTAssertTrue(AccessibilityManager.isStructuralSelectionFocusRole(kAXWindowRole))
+        XCTAssertFalse(AccessibilityManager.isStructuralSelectionFocusRole(kAXApplicationRole))
+        XCTAssertFalse(AccessibilityManager.isStructuralSelectionFocusRole("AXGroup"))
+        XCTAssertFalse(AccessibilityManager.isStructuralSelectionFocusRole(kAXTextAreaRole))
+        XCTAssertFalse(AccessibilityManager.isStructuralSelectionFocusRole(nil))
+    }
+
     func testShouldTreatFocusedRoleAsTextSelectionContextRejectsBroadCodeHeuristicMatches() {
         let result = AccessibilityManager.shouldTreatFocusedRoleAsTextSelectionContext(
             role: "AXGroup",
@@ -583,6 +591,26 @@ final class AccessibilityManagerTests: XCTestCase {
             expectedFocusedElementAvailable: true,
             focusedElementMatches: false,
             allowMissingFocusedElement: true
+        ))
+    }
+
+    func testCopyFallbackRelaxesFocusOnlyForVerifiedAcquiredSelectionContext() {
+        XCTAssertFalse(AccessibilityManager.copyFallbackFocusedElementMatches(
+            expectedFocusedElementAvailable: true,
+            focusedElementMatches: false,
+            allowMissingFocusedElement: false
+        ))
+        XCTAssertTrue(AccessibilityManager.copyFallbackFocusedElementMatches(
+            expectedFocusedElementAvailable: true,
+            focusedElementMatches: false,
+            allowMissingFocusedElement: false,
+            acquiredSelectionContextMatches: true
+        ))
+        XCTAssertFalse(AccessibilityManager.copyFallbackFocusedElementMatches(
+            expectedFocusedElementAvailable: true,
+            focusedElementMatches: true,
+            allowMissingFocusedElement: false,
+            acquiredSelectionContextMatches: false
         ))
     }
 
