@@ -1,10 +1,10 @@
-# OpenFire 诊断文档
+# ActionHalo 诊断文档
 
-这份文档说明如何阅读 OpenFire 内置的 `Diagnostics` 窗口，以及 `v0.3.15` 当前的选中文本触发链路。
+这份文档说明如何阅读 ActionHalo 内置的 `Diagnostics` 窗口，以及 `v0.3.15` 当前的选中文本触发链路。
 
 ## 如何打开 Diagnostics
 
-1. 点击菜单栏里的 OpenFire 图标。
+1. 点击菜单栏里的 ActionHalo 图标。
 2. 选择 `诊断信息...` / `Diagnostics...`。
 3. 先复现一次问题，再点击 `Refresh`。
 4. 如果要发给别人排查，可以点 `Copy Report` 复制当前报告。
@@ -17,7 +17,7 @@ Diagnostics 面板本质上是一个“当前上下文快照”，实现位置�
 
 - `Frontmost app`：当前前台应用名称。
 - `Bundle ID`：当前前台应用 bundle id。
-- `Accessibility`：OpenFire 当前是否拥有辅助功能权限。
+- `Accessibility`：ActionHalo 当前是否拥有辅助功能权限。
 - `App exclusion`：当前应用是否被加入了黑名单。
 - `Focused element`：当前焦点元素的 Accessibility role / subrole。
 - `Selected text length`：通过 Accessibility 读到的选中文本长度。
@@ -33,7 +33,7 @@ Diagnostics 面板本质上是一个“当前上下文快照”，实现位置�
   - `observerSetupFailed`
   - `observerTimedOut`
   - `noFocusedApplication`
-- `Menu readiness`：OpenFire 当前是否认为圆环可以弹出。
+- `Menu readiness`：ActionHalo 当前是否认为圆环可以弹出。
 
 ### 插件可见性区域
 
@@ -67,7 +67,7 @@ Diagnostics 面板本质上是一个“当前上下文快照”，实现位置�
 
 - 这次手势里的 drag pasteboard 变成了文件拖拽类型，比如 `public.file-url`
 - 当前前台应用属于抑制名单：
-  - OpenFire 自己
+  - ActionHalo 自己
   - Finder
   - Dock
   - Desktop / WindowManager
@@ -77,7 +77,7 @@ Diagnostics 面板本质上是一个“当前上下文快照”，实现位置�
 `v0.3.15` 里最重要的变化就是最后这一条：  
 拖拽窗口不再靠脆弱的 AX 文本命中来判断，而是直接比较手势前后前台窗口的 frame 有没有变化。
 
-### OpenFire 怎么判断“这次像在选文本”
+### ActionHalo 怎么判断“这次像在选文本”
 
 当前会综合记录这些信号：
 
@@ -94,7 +94,7 @@ Diagnostics 面板本质上是一个“当前上下文快照”，实现位置�
 
 ## 首选路径：Accessibility
 
-OpenFire 会优先走原生 Accessibility 选区获取。
+ActionHalo 会优先走原生 Accessibility 选区获取。
 
 这条路径成功的条件是：
 
@@ -108,7 +108,7 @@ OpenFire 会优先走原生 Accessibility 选区获取。
 
 ## 回退路径：Cmd+C
 
-如果原生 Accessibility 没能及时拿到文本，OpenFire 会回退到模拟一次 `Cmd+C`。
+如果原生 Accessibility 没能及时拿到文本，ActionHalo 会回退到模拟一次 `Cmd+C`。
 
 这条路径会：
 
@@ -123,7 +123,7 @@ OpenFire 会优先走原生 Accessibility 选区获取。
 
 ## 浏览器 / WebView / Telegram 的差异
 
-不同类型的应用，AX 质量差异很大，所以 OpenFire 会做不同程度的兼容。
+不同类型的应用，AX 质量差异很大，所以 ActionHalo 会做不同程度的兼容。
 
 ### 原生编辑器
 

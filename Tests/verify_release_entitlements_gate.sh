@@ -4,12 +4,12 @@ set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 gate_script="$project_root/Tools/verify_release_entitlements.sh"
-fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/openfire-entitlements-gate.XXXXXX")"
+fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/actionhalo-entitlements-gate.XXXXXX")"
 trap 'rm -rf "$fixture_dir"' EXIT
 
-source_entitlements="$fixture_dir/OpenFire.entitlements"
+source_entitlements="$fixture_dir/ActionHalo.entitlements"
 source_info_plist="$fixture_dir/Info.plist"
-cp "$project_root/OpenFire.entitlements" "$source_entitlements"
+cp "$project_root/ActionHalo.entitlements" "$source_entitlements"
 cp "$project_root/Sources/App/Resources/Info.plist" "$source_info_plist"
 
 expect_success() {
@@ -45,7 +45,7 @@ expect_failure \
     --entitlements "$source_entitlements" \
     --info-plist "$source_info_plist"
 
-cp "$project_root/OpenFire.entitlements" "$source_entitlements"
+cp "$project_root/ActionHalo.entitlements" "$source_entitlements"
 /usr/libexec/PlistBuddy -c "Delete :NSAppleEventsUsageDescription" "$source_info_plist"
 expect_failure \
     "a missing Apple Events usage description" \
@@ -60,12 +60,12 @@ expect_failure \
     --info-plist "$source_info_plist"
 
 cp "$project_root/Sources/App/Resources/Info.plist" "$source_info_plist"
-artifact_app="$fixture_dir/OpenFire.app"
+artifact_app="$fixture_dir/ActionHalo.app"
 mkdir -p "$artifact_app/Contents/MacOS"
-cp /bin/echo "$artifact_app/Contents/MacOS/OpenFire"
+cp /bin/echo "$artifact_app/Contents/MacOS/ActionHalo"
 cp "$source_info_plist" "$artifact_app/Contents/Info.plist"
 /usr/libexec/PlistBuddy \
-    -c "Add :CFBundleExecutable string OpenFire" \
+    -c "Set :CFBundleExecutable ActionHalo" \
     "$artifact_app/Contents/Info.plist"
 codesign --force --sign - \
     --entitlements "$source_entitlements" \

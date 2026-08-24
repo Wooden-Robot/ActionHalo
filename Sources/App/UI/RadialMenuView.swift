@@ -103,7 +103,7 @@ final class RadialMenuView: NSView {
     private var visualEffectMaskLayer = CAShapeLayer()
     private var lastGeometrySignature: GeometrySignature?
     private let hoverGlowRadius: CGFloat = 12
-    private var centerLabelText: String = "OpenFire"
+    private var centerLabelText: String = "ActionHalo"
     private var centerLabelColor: NSColor = .white
     private var centerSubtitleText: String = "HOLD AND RELEASE"
     private var centerSubtitleColor: NSColor = NSColor(white: 1.0, alpha: 0.42)
@@ -241,7 +241,7 @@ final class RadialMenuView: NSView {
             centerCircleLayer?.isHidden = true
             centerLabel?.isHidden = true
             centerSubtitleLabel?.isHidden = true
-            centerLabelText = "OpenFire"
+            centerLabelText = "ActionHalo"
             centerLabelColor = .white
             centerSubtitleText = "HOLD AND RELEASE"
             centerSubtitleColor = NSColor(white: 1.0, alpha: 0.42)
@@ -559,10 +559,10 @@ final class RadialMenuView: NSView {
                 height: 14
             )
         }
-        centerLabel?.string = "OpenFire"
+        centerLabel?.string = "ActionHalo"
         centerLabel?.foregroundColor = NSColor.white.cgColor
         centerLabel?.opacity = centerTextOpacity
-        centerLabelText = "OpenFire"
+        centerLabelText = "ActionHalo"
         centerLabelColor = .white
         centerSubtitleLabel?.string = isGTAModeEnabled ? "HOLD AND RELEASE" : ""
         centerSubtitleLabel?.foregroundColor = NSColor(white: 1.0, alpha: isGTAModeEnabled ? 0.42 : 0.0).cgColor
@@ -636,7 +636,7 @@ final class RadialMenuView: NSView {
                 hoverSector(at: newIndex)
             } else {
                 // Reset center label when not hovering any sector
-                updateCenterLabel(text: "OpenFire", color: .white)
+                updateCenterLabel(text: "ActionHalo", color: .white)
                 updateCenterSubtitle(text: isGTAModeEnabled ? "HOLD AND RELEASE" : "", color: NSColor(white: 1.0, alpha: isGTAModeEnabled ? 0.42 : 0.0))
             }
             
@@ -651,7 +651,7 @@ final class RadialMenuView: NSView {
             unhoverSector(at: hoveredIndex)
         }
         hoveredIndex = -1
-        updateCenterLabel(text: "OpenFire", color: .white)
+        updateCenterLabel(text: "ActionHalo", color: .white)
         updateCenterSubtitle(text: isGTAModeEnabled ? "HOLD AND RELEASE" : "", color: NSColor(white: 1.0, alpha: isGTAModeEnabled ? 0.42 : 0.0))
     }
     

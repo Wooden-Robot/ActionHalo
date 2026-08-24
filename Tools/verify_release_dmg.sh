@@ -13,7 +13,7 @@ dmg=""
 version=""
 info_plist="$project_root/Sources/App/Resources/Info.plist"
 package_resolved="$project_root/Package.resolved"
-entitlements="$project_root/OpenFire.entitlements"
+entitlements="$project_root/ActionHalo.entitlements"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -54,7 +54,7 @@ done
 hdiutil verify "$dmg" >/dev/null \
     || fail "Community release DMG filesystem verification failed."
 
-mount_dir="$(mktemp -d "${TMPDIR:-/tmp}/openfire-release-dmg.XXXXXX")"
+mount_dir="$(mktemp -d "${TMPDIR:-/tmp}/actionhalo-release-dmg.XXXXXX")"
 mounted=false
 cleanup() {
     if [[ "$mounted" == true ]]; then
@@ -69,9 +69,9 @@ trap cleanup EXIT
 mounted=true
 hdiutil attach "$dmg" -readonly -nobrowse -mountpoint "$mount_dir" >/dev/null \
     || fail "Could not mount release DMG read-only."
-mounted_app="$mount_dir/OpenFire.app"
-[[ -d "$mounted_app" ]] || fail "Release DMG does not contain OpenFire.app at its root."
-[[ ! -L "$mounted_app" ]] || fail "Release DMG OpenFire.app must not be a symbolic link."
+mounted_app="$mount_dir/ActionHalo.app"
+[[ -d "$mounted_app" ]] || fail "Release DMG does not contain ActionHalo.app at its root."
+[[ ! -L "$mounted_app" ]] || fail "Release DMG ActionHalo.app must not be a symbolic link."
 
 bash "$script_dir/verify_release_version.sh" \
     --version "$version" \
@@ -87,4 +87,4 @@ bash "$script_dir/verify_release_entitlements.sh" \
     --info-plist "$info_plist" \
     --app "$mounted_app" >/dev/null
 
-echo "✅ Ad-hoc community DMG and contained OpenFire.app verified for $version."
+echo "✅ Ad-hoc community DMG and contained ActionHalo.app verified for $version."

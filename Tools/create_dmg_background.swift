@@ -95,7 +95,7 @@ NSColor(calibratedRed: 1.0, green: 0.43, blue: 0.20, alpha: 0.055).setFill()
 glow.fill()
 
 drawCentered(
-    "把 OpenFire 拖到 Applications 里",
+    "把 ActionHalo 拖到 Applications 里",
     y: size.height - 62,
     font: .systemFont(ofSize: 19, weight: .semibold),
     color: NSColor(calibratedWhite: 0.18, alpha: 1)
@@ -110,7 +110,7 @@ drawCentered(
 )
 
 drawCentered(
-    "Drag OpenFire into Applications to install",
+    "Drag ActionHalo into Applications to install",
     y: size.height - 112,
     font: .systemFont(ofSize: 12, weight: .regular),
     color: NSColor(calibratedWhite: 0.52, alpha: 1),

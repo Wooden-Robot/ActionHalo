@@ -2,13 +2,13 @@
 import PackageDescription
 
 let package = Package(
-    name: "OpenFire",
+    name: "ActionHalo",
     defaultLocalization: "en",
     platforms: [
         .macOS(.v12)
     ],
     products: [
-        .executable(name: "OpenFire", targets: ["OpenFire"])
+        .executable(name: "ActionHalo", targets: ["ActionHalo"])
     ],
     dependencies: [
         .package(
@@ -18,7 +18,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "OpenFire",
+            name: "ActionHalo",
             dependencies: [
                 .product(name: "Sparkle", package: "Sparkle")
             ],
@@ -34,9 +34,9 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "OpenFireTests",
-            dependencies: ["OpenFire"],
-            path: "Tests/OpenFireTests"
+            name: "ActionHaloTests",
+            dependencies: ["ActionHalo"],
+            path: "Tests/ActionHaloTests"
         )
     ]
 )

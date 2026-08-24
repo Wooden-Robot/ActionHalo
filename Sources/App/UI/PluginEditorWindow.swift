@@ -223,7 +223,7 @@ struct PluginEditorDirtyState: Equatable, Sendable {
     }
 }
 
-/// A visual editor window for creating and modifying OpenFire plugins
+/// A visual editor window for creating and modifying ActionHalo plugins
 final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegate {
     static let maximumEditableScriptBytes = 1 * 1024 * 1024
 
@@ -741,7 +741,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             contentViewMinHeightConstraint?.constant = 220
             contentTextView.isEditable = true
         case 1: // Shell
-            infoLabel.stringValue = "Write Shell script\nSelected text is available via $OPENFIRE_TEXT".localized
+            infoLabel.stringValue = "Write Shell script\nSelected text is available via $ACTIONHALO_TEXT".localized
             riskLabel.stringValue = scriptRiskMessage
             riskLabel.isHidden = false
             riskLabelHeightConstraint?.constant = 34
@@ -753,7 +753,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             contentViewMinHeightConstraint?.constant = 250
             contentTextView.isEditable = true
         case 2: // AppleScript
-            infoLabel.stringValue = "Write AppleScript code snippet\nSelected text is available via system attribute \"OPENFIRE_TEXT\"".localized
+            infoLabel.stringValue = "Write AppleScript code snippet\nSelected text is available via system attribute \"ACTIONHALO_TEXT\"".localized
             riskLabel.stringValue = scriptRiskMessage
             riskLabel.isHidden = false
             riskLabelHeightConstraint?.constant = 34

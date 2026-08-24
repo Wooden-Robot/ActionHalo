@@ -95,7 +95,7 @@ if [[ -n "$artifact_app" ]]; then
     codesign --verify --deep --strict "$artifact_app" >/dev/null 2>&1 \
         || fail "Packaged app signature is invalid: $artifact_app"
 
-    artifact_temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/openfire-entitlements.XXXXXX")"
+    artifact_temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/actionhalo-entitlements.XXXXXX")"
     trap 'rm -rf "$artifact_temp_dir"' EXIT
     artifact_entitlements="$artifact_temp_dir/entitlements.plist"
     if ! codesign --display --xml --entitlements - "$artifact_app" \

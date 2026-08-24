@@ -1,0 +1,21 @@
+{
+    "name": "词典",
+    "localizedNames": {
+        "en": "Dictionary"
+    },
+    "icon": "book",
+    "identifier": "com.actionhalo.dictionary",
+    "description": "在 macOS 词典中查看选中文本",
+    "localizedDescriptions": {
+        "en": "Look up selected text in macOS Dictionary"
+    },
+    "order": 50,
+    "action": {
+        "type": "url",
+        "url": "dict://{text}"
+    },
+    "filter": {
+        "minLength": 1,
+        "maxLength": 100
+    }
+}

@@ -26,9 +26,9 @@
 "Cancel" = "取消";
 "Install Succeeded" = "安装成功";
 "Install Failed" = "安装失败";
-"Warning: this plugin can perform protected actions on your Mac. OpenFire will require explicit trust before the first run, and again after plugin changes." = "警告：这个插件可以在你的 Mac 上执行受保护操作。OpenFire 会在首次运行前要求明确授权，并在插件内容变更后再次确认。";
+"Warning: this plugin can perform protected actions on your Mac. ActionHalo will require explicit trust before the first run, and again after plugin changes." = "警告：这个插件可以在你的 Mac 上执行受保护操作。ActionHalo 会在首次运行前要求明确授权，并在插件内容变更后再次确认。";
 "Trust Plugin Before Running" = "运行前信任插件";
-"Plugin '%@' can perform protected actions on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes." = "插件“%@”可以在你的 Mac 上执行受保护操作。\n\n类型：%@\n位置：%@\n\n只有在你信任该插件来源时才允许执行。插件发生变更后，OpenFire 会再次请求确认。";
+"Plugin '%@' can perform protected actions on your Mac.\n\nType: %@\nLocation: %@\n\nOnly allow this if you trust the plugin source. You will be asked again if the plugin changes." = "插件“%@”可以在你的 Mac 上执行受保护操作。\n\n类型：%@\n位置：%@\n\n只有在你信任该插件来源时才允许执行。插件发生变更后，ActionHalo 会再次请求确认。";
 "Trust and Run" = "信任并运行";
 "Open Menu Hotkey and Auto Trigger Toggle Hotkey cannot use the same shortcut." = "呼出菜单快捷键和自动触发开关快捷键不能使用同一个快捷键。";
 "Failed to register Open Menu Hotkey (%@). It may conflict with another shortcut." = "呼出菜单快捷键（%@）注册失败，可能与其他快捷键冲突。";
@@ -37,24 +37,24 @@
 "Auto Trigger Toggle Hotkey must include Command, Option, or Control." = "自动触发开关快捷键必须包含 Command、Option 或 Control。";
 "Hotkey Registration Failed" = "热键注册失败";
 "Plugin '%@' installed successfully." = "插件「%@」已成功安装并启用。";
-"Invalid plugin package. Make sure the .openfireext folder contains a valid Config.json." = "插件包无效。请确认 .openfireext 文件夹里包含有效的 Config.json。";
+"Invalid plugin package. Make sure the .actionhaloext folder contains a valid Config.json." = "插件包无效。请确认 .actionhaloext 文件夹里包含有效的 Config.json。";
 "Plugin identifier is invalid: %@" = "插件标识符无效：%@";
 "Installing this plugin would replace a different plugin (%@). Rename one of the plugins and try again." = "安装这个插件会替换另一个插件（%@）。请重命名其中一个插件后再试。";
 "The plugin changed after the install confirmation was shown. Review it and try again." = "显示安装确认后插件已发生变化，请重新检查后再试。";
 "Plugin validation failed after copying. The package may have changed during installation." = "复制后插件校验失败。插件包可能在安装过程中发生了变化。";
 "Failed to copy plugin to installation directory. Check permissions.\n(%@)\n%@" = "无法复制插件文件到安装目录，请检查权限。\n(%@)\n%@";
 "Accessibility Permission Lost" = "辅助功能权限已失效";
-"OpenFire relies on Accessibility to detect text selection. Please re-check OpenFire in 'System Settings -> Privacy & Security -> Accessibility'." = "OpenFire 依赖辅助功能来检测文本选择。请在「系统设置 -> 隐私与安全性 -> 辅助功能」中重新勾选 OpenFire。";
+"ActionHalo relies on Accessibility to detect text selection. Please re-check ActionHalo in 'System Settings -> Privacy & Security -> Accessibility'." = "ActionHalo 依赖辅助功能来检测文本选择。请在「系统设置 -> 隐私与安全性 -> 辅助功能」中重新勾选 ActionHalo。";
 "Text Selection Monitor Failed to Start" = "文本选择监听启动失败";
-"OpenFire does not currently have Accessibility permission. Please re-check OpenFire in System Settings." = "OpenFire 当前没有辅助功能权限，请在系统设置里重新勾选 OpenFire。";
-"OpenFire could not start the text selection monitor. If Accessibility is already enabled but OpenFire still does not respond, reset the permission record and re-check OpenFire in System Settings." = "OpenFire 未能启动文本选择监听。如果辅助功能里已经勾选了 OpenFire 但仍然没有反应，请重置权限记录后再重新勾选。";
+"ActionHalo does not currently have Accessibility permission. Please re-check ActionHalo in System Settings." = "ActionHalo 当前没有辅助功能权限，请在系统设置里重新勾选 ActionHalo。";
+"ActionHalo could not start the text selection monitor. If Accessibility is already enabled but ActionHalo still does not respond, reset the permission record and re-check ActionHalo in System Settings." = "ActionHalo 未能启动文本选择监听。如果辅助功能里已经勾选了 ActionHalo 但仍然没有反应，请重置权限记录后再重新勾选。";
 "Open System Settings" = "打开系统设置";
 "Reset Permission" = "重置权限";
 "Quit" = "退出应用";
 "Permission Restored" = "权限已恢复";
-"OpenFire has resumed working." = "OpenFire 已重新开始工作。";
+"ActionHalo has resumed working." = "ActionHalo 已重新开始工作。";
 "Unsaved Plugin Changes" = "插件修改尚未保存";
-"One or more plugin editors have unsaved changes. Save them before quitting or restarting OpenFire." = "一个或多个插件编辑器中有尚未保存的修改。请先保存，再退出或重启 OpenFire。";
+"One or more plugin editors have unsaved changes. Save them before quitting or restarting ActionHalo." = "一个或多个插件编辑器中有尚未保存的修改。请先保存，再退出或重启 ActionHalo。";
 "Cancel Quit" = "取消退出";
 "Discard Changes and Quit" = "丢弃修改并退出";
 "OK" = "确定";
@@ -104,7 +104,7 @@
 "✓ GTA Mode" = "✓ GTA 氛围";
 "Open Menu Hotkey: %@" = "呼出菜单快捷键: %@";
 "Auto Trigger Toggle Hotkey: %@" = "自动触发开关快捷键: %@";
-"Quit OpenFire" = "退出 OpenFire";
+"Quit ActionHalo" = "退出 ActionHalo";
 "Failed to Set Launch at Login" = "开机启动设置失败";
 "Set Open Menu Hotkey" = "设置呼出菜单快捷键";
 "Set Auto Trigger Toggle Hotkey" = "设置自动触发开关快捷键";
@@ -162,9 +162,9 @@
 "Edit" = "编辑";
 "Custom Image" = "自定义图片";
 "Enter a complete URL\nUse {text} as a placeholder for selected text" = "输入完整的 URL\n使用 {text} 作为选中文本的占位符";
-"Write Shell script\nSelected text is available via $OPENFIRE_TEXT" = "编写 Shell 脚本\n选中文本可通过 $OPENFIRE_TEXT 获取";
+"Write Shell script\nSelected text is available via $ACTIONHALO_TEXT" = "编写 Shell 脚本\n选中文本可通过 $ACTIONHALO_TEXT 获取";
 "Write AppleScript code snippet" = "编写 AppleScript 脚本代码片段";
-"Write AppleScript code snippet\nSelected text is available via system attribute \"OPENFIRE_TEXT\"" = "编写 AppleScript 脚本代码片段\n选中文本可通过 system attribute \"OPENFIRE_TEXT\" 获取";
+"Write AppleScript code snippet\nSelected text is available via system attribute \"ACTIONHALO_TEXT\"" = "编写 AppleScript 脚本代码片段\n选中文本可通过 system attribute \"ACTIONHALO_TEXT\" 获取";
 "Scripts can run commands on your Mac. Only create or install them if you trust their source." = "脚本可以在你的 Mac 上执行命令。只有在你信任来源时，才应创建或安装这类插件。";
 "Scripts can run commands on your Mac. Only keep this plugin if you trust its source. Saving changes will require trust again on next run." = "脚本可以在你的 Mac 上执行命令。只有在你信任这个插件来源时，才应继续保留它。保存修改后，下次运行会重新要求信任确认。";
 "Key combos can control the current app. Only create or install them if you trust their source." = "快捷键组合可以控制当前应用。只有在你信任来源时，才应创建或安装这类插件。";
@@ -205,7 +205,7 @@
 "The saved plugin configuration failed final validation." = "已保存的插件配置未通过最终校验。";
 "The plugin destination is outside the managed plugin directory." = "插件目标位置超出受管理的插件目录。";
 
-/* OpenFire UI / Other */
+/* ActionHalo UI / Other */
 "App Blacklist" = "已禁用的应用 (App Blacklist)";
 "Plugins in %@" = "%@ 中的插件";
 "Disable specific plugins only in %@. Global disabled plugins stay unavailable here." = "只在 %@ 中禁用特定插件。全局已禁用的插件在这里仍不可用。";
@@ -214,18 +214,18 @@
 "Enabled in this app" = "在此应用中启用";
 "Disabled in this app" = "在此应用中禁用";
 "Globally disabled" = "全局已禁用";
-"The OpenFire radial menu will not appear when selecting text in the following apps:" = "以下应用中框选文字时，OpenFire 圆环菜单将不会弹出：";
-"Please select the application to disable OpenFire in" = "请选择你要禁用 OpenFire 的应用程序";
+"The ActionHalo radial menu will not appear when selecting text in the following apps:" = "以下应用中框选文字时，ActionHalo 圆环菜单将不会弹出：";
+"Please select the application to disable ActionHalo in" = "请选择你要禁用 ActionHalo 的应用程序";
 "Clear" = "清除";
 "Diagnostics" = "诊断信息";
-"Current OpenFire context and plugin visibility report." = "当前 OpenFire 上下文与插件可见性报告。";
+"Current ActionHalo context and plugin visibility report." = "当前 ActionHalo 上下文与插件可见性报告。";
 "Refresh" = "刷新";
 "Copy Report" = "复制报告";
 "Unable to capture diagnostics context." = "无法获取诊断上下文。";
 "Empty-input probe point" = "空输入检测点";
 "Visible plugins: %d / %d" = "可见插件：%d / %d";
 "Shown plugins: %d / %d" = "已显示插件：%d / %d";
-"OpenFire Diagnostics" = "OpenFire 诊断";
+"ActionHalo Diagnostics" = "ActionHalo 诊断";
 "Frontmost app" = "前台应用";
 "Bundle ID" = "Bundle ID";
 "Accessibility" = "辅助功能";
@@ -266,8 +266,8 @@
 "%@ · %@ · %d chars" = "%@ · %@ · %d 个字符";
 "%@ · %@" = "%@ · %@";
 "Accessibility permission is missing" = "辅助功能权限缺失";
-"OpenFire is disabled in the current app" = "OpenFire 在当前应用中已被禁用";
-"OpenFire is intentionally suppressed for the current frontmost app" = "OpenFire 已针对当前前台应用主动抑制";
+"ActionHalo is disabled in the current app" = "ActionHalo 在当前应用中已被禁用";
+"ActionHalo is intentionally suppressed for the current frontmost app" = "ActionHalo 已针对当前前台应用主动抑制";
 "No selected text was detected via Accessibility" = "辅助功能未检测到选中文本";
 "No active selected text or empty-input shortcut is currently available" = "当前没有活动选中文本，空输入框快捷入口也不可用";
 "Empty-input Paste / Clear shortcut is currently available" = "空输入框的“粘贴 / 清空”快捷入口当前可用";

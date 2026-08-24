@@ -4,12 +4,13 @@ import Cocoa
 @MainActor
 final class StatusBarController: NSObject {
     private static let wheelBackdropEnabledKey = "WheelBackdropEnabled"
-    private static let enabledKey = "OpenFireEnabled"
+    private static let enabledKey = "ActionHaloEnabled"
+    private static let legacyEnabledKey = "OpenFireEnabled"
     private static let launchAgentLabel = "com.openfire.app"
     
     private var statusItem: NSStatusItem?
     private var mainMenu: NSMenu?
-    private var isEnabled = UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true
+    private var isEnabled: Bool
     private var hotkeyRecorderWindow: HotkeyRecorderWindow?
     private var pluginListView: PluginListMenuView?
     private var excludeAppItem: NSMenuItem?
@@ -25,6 +26,31 @@ final class StatusBarController: NSObject {
     
     var onEnabledChanged: ((Bool) -> Void)?
     var currentEnabledState: Bool { isEnabled }
+
+    override init() {
+        isEnabled = Self.migratedEnabledState()
+        super.init()
+    }
+
+    static func migratedEnabledState(userDefaults: UserDefaults = .standard) -> Bool {
+        if let currentValue = userDefaults.object(forKey: enabledKey) as? Bool {
+            return currentValue
+        }
+        if let legacyValue = userDefaults.object(forKey: legacyEnabledKey) as? Bool {
+            userDefaults.set(legacyValue, forKey: enabledKey)
+            return legacyValue
+        }
+        return true
+    }
+
+    static func persistEnabledState(
+        _ isEnabled: Bool,
+        userDefaults: UserDefaults = .standard
+    ) {
+        userDefaults.set(isEnabled, forKey: enabledKey)
+        // Keep rollback compatibility with releases that still read the old key.
+        userDefaults.set(isEnabled, forKey: legacyEnabledKey)
+    }
 
     static func baseStatusIconSymbolName(isEnabled: Bool) -> String {
         isEnabled ? "flame.fill" : "flame"
@@ -111,7 +137,7 @@ final class StatusBarController: NSObject {
         menu.delegate = self
         
         // Title
-        let titleItem = NSMenuItem(title: "OpenFire 🔥", action: nil, keyEquivalent: "")
+        let titleItem = NSMenuItem(title: "ActionHalo 🔥", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
         menu.addItem(NSMenuItem.separator())
@@ -301,7 +327,7 @@ final class StatusBarController: NSObject {
         menu.addItem(NSMenuItem.separator())
         
         // Quit
-        let quitItem = NSMenuItem(title: "Quit OpenFire".localized, action: #selector(quitApp), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit ActionHalo".localized, action: #selector(quitApp), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
         
@@ -312,7 +338,7 @@ final class StatusBarController: NSObject {
     
     @objc func toggleEnabled() {
         isEnabled.toggle()
-        UserDefaults.standard.set(isEnabled, forKey: Self.enabledKey)
+        Self.persistEnabledState(isEnabled)
         onEnabledChanged?(isEnabled)
         rebuildMenu()
         
@@ -325,7 +351,7 @@ final class StatusBarController: NSObject {
         guard statusFeedbackTimer == nil else { return }
         button.image = NSImage(
             systemSymbolName: Self.baseStatusIconSymbolName(isEnabled: isEnabled),
-            accessibilityDescription: "OpenFire"
+            accessibilityDescription: "ActionHalo"
         )
         button.image?.size = NSSize(width: 18, height: 18)
         button.image?.isTemplate = true
@@ -391,7 +417,7 @@ final class StatusBarController: NSObject {
             }
             rebuildMenu()
         } catch {
-            NSLog("[OpenFire] Failed to toggle launch at login: \(error)")
+            NSLog("[ActionHalo] Failed to toggle launch at login: \(error)")
             let alert = NSAlert()
             alert.messageText = "Failed to Set Launch at Login".localized
             alert.informativeText = error.localizedDescription
@@ -476,7 +502,7 @@ final class StatusBarController: NSObject {
         do {
             try task.run()
         } catch {
-            NSLog("[OpenFire] Failed to relaunch app: \(error.localizedDescription)")
+            NSLog("[ActionHalo] Failed to relaunch app: \(error.localizedDescription)")
         }
 
         NSApplication.shared.terminate(nil)

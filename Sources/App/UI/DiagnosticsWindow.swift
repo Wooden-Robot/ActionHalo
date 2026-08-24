@@ -55,7 +55,7 @@ final class DiagnosticsWindow: NSWindowController {
     }
 
     override func showWindow(_ sender: Any?) {
-        // Capture before showing/activating OpenFire so refreshes keep diagnosing
+        // Capture before showing/activating ActionHalo so refreshes keep diagnosing
         // the application and focused element the user actually invoked us from.
         if window?.isVisible != true {
             capturedContext = captureCurrentContext()
@@ -72,7 +72,7 @@ final class DiagnosticsWindow: NSWindowController {
     private func setupUI() {
         guard let contentView = window?.contentView else { return }
 
-        let titleLabel = NSTextField(labelWithString: "Current OpenFire context and plugin visibility report.".localized)
+        let titleLabel = NSTextField(labelWithString: "Current ActionHalo context and plugin visibility report.".localized)
         titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         titleLabel.textColor = .secondaryLabelColor
         titleLabel.frame = NSRect(x: 20, y: 462, width: 420, height: 18)
@@ -279,7 +279,7 @@ final class DiagnosticsWindow: NSWindowController {
         let visibleCount = shownPluginIDs.count
 
         var lines: [String] = []
-        lines.append("OpenFire Diagnostics".localized)
+        lines.append("ActionHalo Diagnostics".localized)
         lines.append(String(repeating: "=", count: 20))
         lines.append("")
         lines.append("\("Frontmost app".localized): \(frontAppName)")
@@ -402,9 +402,9 @@ final class DiagnosticsWindow: NSWindowController {
         case .missingAccessibilityPermission:
             return "Accessibility permission is missing".localized
         case .appExcluded:
-            return "OpenFire is disabled in the current app".localized
+            return "ActionHalo is disabled in the current app".localized
         case .frontmostAppSuppressed:
-            return "OpenFire is intentionally suppressed for the current frontmost app".localized
+            return "ActionHalo is intentionally suppressed for the current frontmost app".localized
         case .noSelectionContext:
             return "No active selected text or empty-input shortcut is currently available".localized
         }

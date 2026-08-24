@@ -63,12 +63,12 @@ jobs:
       - name: Smoke-test local package
         run: |
           make package
-          test "$(lipo -archs .build/OpenFire)" = "x86_64 arm64"
-          codesign --verify --deep --strict --verbose=2 .build/OpenFire.app
-          hdiutil verify .build/OpenFire.dmg
+          test "$(lipo -archs .build/ActionHalo)" = "x86_64 arm64"
+          codesign --verify --deep --strict --verbose=2 .build/ActionHalo.app
+          hdiutil verify .build/ActionHalo.dmg
           VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Sources/App/Resources/Info.plist)"
           bash Tools/verify_release_dmg.sh \
-            --dmg .build/OpenFire.dmg \
+            --dmg .build/ActionHalo.dmg \
             --version "$VERSION" \
             --info-plist Sources/App/Resources/Info.plist \
             --package-resolved Package.resolved

@@ -5,14 +5,14 @@ set -euo pipefail
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 gate_script="$project_root/Tools/verify_github_draft_release.sh"
 fake_gh_dir="$project_root/Tests/fixtures/fake-gh-release-gate"
-fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/openfire-github-release-gate.XXXXXX")"
+fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/actionhalo-github-release-gate.XXXXXX")"
 trap 'rm -rf "$fixture_dir"' EXIT
 
 repository="$fixture_dir/repository"
 mkdir -p "$repository"
 git -C "$repository" init -q
-git -C "$repository" config user.name "OpenFire Tests"
-git -C "$repository" config user.email "openfire-tests@example.invalid"
+git -C "$repository" config user.name "ActionHalo Tests"
+git -C "$repository" config user.email "actionhalo-tests@example.invalid"
 printf 'release fixture\n' >"$repository/release.txt"
 git -C "$repository" add release.txt
 git -C "$repository" commit -q -m "release fixture"
@@ -24,7 +24,7 @@ expect_success() {
     shift
     if ! env \
         PATH="$fake_gh_dir:$PATH" \
-        GH_REPO="SomeFork/OpenFire" \
+        GH_REPO="SomeFork/ActionHalo" \
         GH_HOST="example.invalid" \
         FAKE_GH_REF_SHA="$local_head" \
         "$@" \
@@ -41,7 +41,7 @@ expect_failure() {
     shift
     if env \
         PATH="$fake_gh_dir:$PATH" \
-        GH_REPO="SomeFork/OpenFire" \
+        GH_REPO="SomeFork/ActionHalo" \
         GH_HOST="example.invalid" \
         FAKE_GH_REF_SHA="$local_head" \
         "$@" \
@@ -93,12 +93,12 @@ edit_line="$(printf '%s\n' "$publish_recipe" | grep 'gh release edit')"
     echo "FAIL: publish-release-assets must verify the GitHub draft before upload and again before publication"
     exit 1
 }
-printf '%s\n' "$upload_line" | grep -F -- '--repo "github.com/Wooden-Robot/OpenFire"' >/dev/null || {
-    echo "FAIL: gh release upload must pin Wooden-Robot/OpenFire with --repo"
+printf '%s\n' "$upload_line" | grep -F -- '--repo "github.com/Wooden-Robot/ActionHalo"' >/dev/null || {
+    echo "FAIL: gh release upload must pin Wooden-Robot/ActionHalo with --repo"
     exit 1
 }
-printf '%s\n' "$edit_line" | grep -F -- '--repo "github.com/Wooden-Robot/OpenFire"' >/dev/null || {
-    echo "FAIL: gh release edit must pin Wooden-Robot/OpenFire with --repo"
+printf '%s\n' "$edit_line" | grep -F -- '--repo "github.com/Wooden-Robot/ActionHalo"' >/dev/null || {
+    echo "FAIL: gh release edit must pin Wooden-Robot/ActionHalo with --repo"
     exit 1
 }
 

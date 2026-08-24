@@ -56,7 +56,7 @@ final class UpdateChecker {
     init(driver: UpdateDriving, defaults: UserDefaults) {
         self.driver = driver
 
-        // Versions before Sparkle stored this preference under an OpenFire key.
+        // Versions before Sparkle stored this preference under an ActionHalo key.
         // Move an explicit user choice into Sparkle's own preference once, then
         // let Sparkle remain the single source of truth from this point forward.
         if let legacyPreference = defaults.object(
@@ -84,7 +84,7 @@ final class UpdateChecker {
     @discardableResult
     func checkForUpdates() -> Bool {
         guard driver.canCheckForUpdates else {
-            NSLog("[OpenFire] Skipping update check because Sparkle already has a session in progress.")
+            NSLog("[ActionHalo] Skipping update check because Sparkle already has a session in progress.")
             return false
         }
 

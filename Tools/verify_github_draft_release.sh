@@ -3,7 +3,7 @@
 set -euo pipefail
 
 readonly github_host="github.com"
-readonly github_repository="Wooden-Robot/OpenFire"
+readonly github_repository="Wooden-Robot/ActionHalo"
 
 fail() {
     echo "❌ $*" >&2

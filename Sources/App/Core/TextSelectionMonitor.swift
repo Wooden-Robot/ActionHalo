@@ -21,12 +21,14 @@ final class TextSelectionMonitor {
     }
 
     nonisolated private static let suppressedFrontmostBundleIDs: Set<String> = [
+        "comactionhaloapp",
         "comopenfireapp",
         "comappledock",
         "comapplefinder",
         "comapplewindowmanager"
     ]
     nonisolated private static let suppressedFrontmostNames: Set<String> = [
+        "actionhalo",
         "openfire",
         "finder",
         "dock",
@@ -54,7 +56,7 @@ final class TextSelectionMonitor {
     
     /// Notification posted when text is selected. UserInfo contains the text,
     /// location, target PID, and the focused element verified for this selection.
-    nonisolated static let textSelectedNotification = Notification.Name("OpenFireTextSelected")
+    nonisolated static let textSelectedNotification = Notification.Name("ActionHaloTextSelected")
 
     nonisolated static func hasUsableClipboardText(_ text: String?) -> Bool {
         guard let text else { return false }
@@ -123,7 +125,10 @@ final class TextSelectionMonitor {
     ) -> Bool {
         let normalizedBundleID = normalizeFrontmostAppIdentifier(bundleID)
         let normalizedName = normalizeFrontmostAppIdentifier(localizedName)
-        if normalizedBundleID == "comopenfireapp" || normalizedName == "openfire" {
+        if normalizedBundleID == "comactionhaloapp" ||
+            normalizedBundleID == "comopenfireapp" ||
+            normalizedName == "actionhalo" ||
+            normalizedName == "openfire" {
             return true
         }
 
@@ -346,7 +351,7 @@ final class TextSelectionMonitor {
         }
         guard AccessibilityManager.shared.isAccessibilityEnabled else {
             lastMonitoringStartFailure = .accessibilityPermissionMissing
-            NSLog("[OpenFire] Cannot start monitoring: accessibility permission not granted")
+            NSLog("[ActionHalo] Cannot start monitoring: accessibility permission not granted")
             return false
         }
         
@@ -412,7 +417,7 @@ final class TextSelectionMonitor {
         
         guard let eventTap = eventTap else {
             lastMonitoringStartFailure = .eventTapCreationFailed
-            NSLog("[OpenFire] Failed to create event tap. Ensure accessibility permission is granted.")
+            NSLog("[ActionHalo] Failed to create event tap. Ensure accessibility permission is granted.")
             return false
         }
         
@@ -422,7 +427,7 @@ final class TextSelectionMonitor {
         
         isMonitoring = true
         lastMonitoringStartFailure = nil
-        NSLog("[OpenFire] Text selection monitoring started")
+        NSLog("[ActionHalo] Text selection monitoring started")
         return true
     }
     
@@ -454,14 +459,14 @@ final class TextSelectionMonitor {
         pendingSelectionBundleID = nil
         pendingEmptyInputCheckID = nil
         
-        NSLog("[OpenFire] Text selection monitoring stopped")
+        NSLog("[ActionHalo] Text selection monitoring stopped")
     }
     
     // MARK: - Event Handling
     
     /// Notification posted when an empty text input is clicked
     nonisolated static let emptyTextInputClickedNotification =
-        Notification.Name("OpenFireEmptyTextInputClicked")
+        Notification.Name("ActionHaloEmptyTextInputClicked")
 
     nonisolated static func shouldTreatMouseInteractionAsSelectionTrigger(
         distance: CGFloat,

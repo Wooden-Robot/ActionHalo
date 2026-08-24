@@ -1,0 +1,21 @@
+{
+    "name": "搜索",
+    "localizedNames": {
+        "en": "Search"
+    },
+    "icon": "magnifyingglass",
+    "identifier": "com.actionhalo.search",
+    "description": "用 Google 搜索选中文本",
+    "localizedDescriptions": {
+        "en": "Use Google to search selected text"
+    },
+    "order": 30,
+    "action": {
+        "type": "url",
+        "url": "https://www.google.com/search?q={text}"
+    },
+    "filter": {
+        "minLength": 1,
+        "maxLength": 500
+    }
+}

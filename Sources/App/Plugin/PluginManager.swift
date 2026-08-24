@@ -67,6 +67,13 @@ final class PluginManager: Sendable {
         }
     }
 
+    struct LegacyPluginMigrationResult: Equatable, Sendable {
+        var copiedPackages = 0
+        var skippedPackages = 0
+        var failedPackages = 0
+        var processedPluginIDs: Set<String> = []
+    }
+
     enum PluginScriptSource: Equatable, Sendable {
         case bundledFile(URL)
         case inline(String)
@@ -89,7 +96,7 @@ final class PluginManager: Sendable {
         func localizedMessage(sourcePath: String) -> String {
             switch self {
             case .invalidPackage:
-                return "Invalid plugin package. Make sure the .openfireext folder contains a valid Config.json.".localized
+                return "Invalid plugin package. Make sure the .actionhaloext folder contains a valid Config.json.".localized
             case .invalidIdentifier(let message):
                 return String(format: "Plugin identifier is invalid: %@".localized, message)
             case .destinationIdentifierConflict(let existingIdentifier):
@@ -126,15 +133,18 @@ final class PluginManager: Sendable {
     static let shared = PluginManager()
     
     /// Notification posted when plugins are reloaded
-    static let pluginsReloadedNotification = Notification.Name("OpenFirePluginsReloaded")
+    static let pluginsReloadedNotification = Notification.Name("ActionHaloPluginsReloaded")
     static let trustedPluginFingerprintsKey = "trustedPluginFingerprints"
     static let perAppDisabledPluginsKey = "perAppDisabledPlugins"
+    static let legacyPluginMigrationProcessedIDsKey = "ActionHaloLegacyPluginMigrationProcessedIDs"
     static let verbosePluginLoggingKey = "VerbosePluginLoggingEnabled"
     static let maxPluginProcessStderrBytes = 64 * 1024
     static let maximumInstallPackageFileCount = Plugin.maximumTrustedPackageFileCount
     static let maximumInstallPackageBytes = Plugin.maximumTrustedPackageBytes
     static let maximumPluginEnvironmentTextBytes = 32 * 1024
     static let pendingOperationRecoveryMinimumAge: TimeInterval = 30
+    static let legacyPluginIdentifierPrefix = "com.openfire."
+    static let pluginIdentifierPrefix = "com.actionhalo."
     static let allowedPluginURLSchemes: Set<String> = [
         "http",
         "https",
@@ -144,16 +154,66 @@ final class PluginManager: Sendable {
     
     /// Core default plugins that can never be deleted
     static let coreDefaultPluginIDs: Set<String> = [
-        "com.openfire.copy",
-        "com.openfire.builtin.paste",
-        "com.openfire.cut",
-        "com.openfire.delete",
-        "com.openfire.translate",
-        "com.openfire.search", 
-        "com.openfire.dictionary",
-        "com.openfire.open-url",
-        "com.openfire.reveal-path"
+        "com.actionhalo.copy",
+        "com.actionhalo.builtin.paste",
+        "com.actionhalo.cut",
+        "com.actionhalo.delete",
+        "com.actionhalo.translate",
+        "com.actionhalo.search",
+        "com.actionhalo.dictionary",
+        "com.actionhalo.open-url",
+        "com.actionhalo.reveal-path"
     ]
+
+    static func canonicalPluginIdentifier(_ identifier: String) -> String {
+        let lowercased = identifier.lowercased()
+        guard lowercased.hasPrefix(legacyPluginIdentifierPrefix) else {
+            return identifier
+        }
+        return pluginIdentifierPrefix + String(identifier.dropFirst(legacyPluginIdentifierPrefix.count))
+    }
+
+    static func canonicalPluginIdentifiers(_ identifiers: [String]) -> [String] {
+        var seen: Set<String> = []
+        return identifiers.compactMap { identifier in
+            let canonical = canonicalPluginIdentifier(identifier)
+            return seen.insert(canonical).inserted ? canonical : nil
+        }
+    }
+
+    static func migrateLegacyPluginState(userDefaults: UserDefaults = .standard) {
+        for key in ["deletedBuiltInPlugins", "disabledPlugins", "userEnabledPlugins", "pluginOrder"] {
+            guard let stored = userDefaults.stringArray(forKey: key) else { continue }
+            let migrated = canonicalPluginIdentifiers(stored)
+            if migrated != stored {
+                userDefaults.set(migrated, forKey: key)
+            }
+        }
+
+        if let storedOverrides = userDefaults.dictionary(forKey: perAppDisabledPluginsKey) as? [String: [String]] {
+            let migratedOverrides = storedOverrides.mapValues(canonicalPluginIdentifiers)
+            if migratedOverrides != storedOverrides {
+                userDefaults.set(migratedOverrides, forKey: perAppDisabledPluginsKey)
+            }
+        }
+
+        if let storedTrust = userDefaults.dictionary(forKey: trustedPluginFingerprintsKey) as? [String: String] {
+            var migratedTrust: [String: String] = [:]
+            for (identifier, fingerprint) in storedTrust
+            where canonicalPluginIdentifier(identifier) == identifier {
+                migratedTrust[identifier] = fingerprint
+            }
+            for (identifier, fingerprint) in storedTrust {
+                let canonical = canonicalPluginIdentifier(identifier)
+                if migratedTrust[canonical] == nil {
+                    migratedTrust[canonical] = fingerprint
+                }
+            }
+            if migratedTrust != storedTrust {
+                userDefaults.set(migratedTrust, forKey: trustedPluginFingerprintsKey)
+            }
+        }
+    }
     
     private struct State: Sendable {
         var plugins: [Plugin] = []
@@ -180,7 +240,7 @@ final class PluginManager: Sendable {
         set { state.withLock { $0.plugins = newValue } }
     }
 
-    private let trustStateQueue = DispatchQueue(label: "com.openfire.plugin-trust-state")
+    private let trustStateQueue = DispatchQueue(label: "com.actionhalo.plugin-trust-state")
     var userPluginsDirectoryOverride: URL? {
         get { state.withLock { $0.userPluginsDirectoryOverride } }
         set { state.withLock { $0.userPluginsDirectoryOverride = newValue } }
@@ -191,6 +251,11 @@ final class PluginManager: Sendable {
         if let userPluginsDirectoryOverride {
             return userPluginsDirectoryOverride
         }
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("ActionHalo/Plugins")
+    }
+
+    var legacyUserPluginsURL: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return appSupport.appendingPathComponent("OpenFire/Plugins")
     }
@@ -209,7 +274,9 @@ final class PluginManager: Sendable {
         return executableURL.deletingLastPathComponent().appendingPathComponent("Plugins")
     }
     
-    private init() {}
+    private init() {
+        Self.migrateLegacyPluginState()
+    }
 
     static func mergePluginsPreservingExisting(user: [Plugin], builtIn: [Plugin]) -> [Plugin] {
         var merged: [Plugin] = []
@@ -239,7 +306,7 @@ final class PluginManager: Sendable {
 
     private static func verboseLog(_ message: @autoclosure () -> String) {
         guard isVerbosePluginLoggingEnabled() else { return }
-        NSLog("[OpenFire-Debug] %@", message())
+        NSLog("[ActionHalo-Debug] %@", message())
     }
 
     static func pluginProcessEnvironment(
@@ -248,22 +315,48 @@ final class PluginManager: Sendable {
         baseEnvironment: [String: String] = ProcessInfo.processInfo.environment
     ) -> [String: String] {
         var environment = baseEnvironment
+        environment.removeValue(forKey: "ACTIONHALO_TEXT")
         environment.removeValue(forKey: "OPENFIRE_TEXT")
+        environment["ACTIONHALO_TEXT_FILE"] = textFilePath
         environment["OPENFIRE_TEXT_FILE"] = textFilePath
 
         if !text.contains("\0"),
            text.utf8.count <= maximumPluginEnvironmentTextBytes {
+            environment["ACTIONHALO_TEXT"] = text
             environment["OPENFIRE_TEXT"] = text
         }
 
         return environment
     }
 
+    static func replacingPluginTextEnvironmentReferences(
+        in source: String,
+        with fileReadExpression: String
+    ) -> String {
+        source
+            .replacingOccurrences(
+                of: "(system attribute \"ACTIONHALO_TEXT\")",
+                with: "(\(fileReadExpression))"
+            )
+            .replacingOccurrences(
+                of: "system attribute \"ACTIONHALO_TEXT\"",
+                with: fileReadExpression
+            )
+            .replacingOccurrences(
+                of: "(system attribute \"OPENFIRE_TEXT\")",
+                with: "(\(fileReadExpression))"
+            )
+            .replacingOccurrences(
+                of: "system attribute \"OPENFIRE_TEXT\"",
+                with: fileReadExpression
+            )
+    }
+
     static func isAllowedPluginURLTemplate(_ template: String) -> Bool {
         let trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
 
-        let sample = renderedURLString(template: trimmed, text: "openfire")
+        let sample = renderedURLString(template: trimmed, text: "actionhalo")
         guard let components = URLComponents(string: sample),
               let scheme = components.scheme?.lowercased(),
               allowedPluginURLSchemes.contains(scheme) else {
@@ -333,6 +426,125 @@ final class PluginManager: Sendable {
         isPluginDirectory(pluginURL, inside: builtInPluginsURL)
     }
 
+    @discardableResult
+    static func migrateLegacyUserPlugins(
+        from legacyPluginsURL: URL,
+        to userPluginsURL: URL,
+        processedPluginIDs: Set<String> = [],
+        fileManager: FileManager = .default
+    ) -> LegacyPluginMigrationResult {
+        var result = LegacyPluginMigrationResult()
+        guard !sameFileURL(legacyPluginsURL, userPluginsURL),
+              fileManager.fileExists(atPath: legacyPluginsURL.path) else {
+            return result
+        }
+
+        do {
+            try fileManager.createDirectory(at: userPluginsURL, withIntermediateDirectories: true)
+            let currentPackages = try fileManager.contentsOfDirectory(
+                at: userPluginsURL,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            )
+            var currentPluginIDs = Set(
+                currentPackages
+                    .filter(PluginLoader.isSupportedPackageURL)
+                    .compactMap { PluginLoader.load(from: $0)?.id }
+            )
+            let packages = try fileManager.contentsOfDirectory(
+                at: legacyPluginsURL,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            ).filter(PluginLoader.isSupportedPackageURL)
+
+            for packageURL in packages {
+                guard isPluginDirectory(packageURL, inside: legacyPluginsURL),
+                      let values = try? packageURL.resourceValues(
+                        forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+                      ),
+                      values.isDirectory == true,
+                      values.isSymbolicLink != true,
+                      let plugin = PluginLoader.load(from: packageURL) else {
+                    result.failedPackages += 1
+                    continue
+                }
+
+                guard !processedPluginIDs.contains(plugin.id) else {
+                    result.skippedPackages += 1
+                    continue
+                }
+                guard !currentPluginIDs.contains(plugin.id) else {
+                    result.skippedPackages += 1
+                    result.processedPluginIDs.insert(plugin.id)
+                    continue
+                }
+
+                let destinationURL = userPluginsURL.appendingPathComponent(
+                    visibleUserPluginFileName(for: plugin.id),
+                    isDirectory: true
+                )
+                guard isPluginDirectory(destinationURL, inside: userPluginsURL) else {
+                    result.failedPackages += 1
+                    continue
+                }
+                guard !fileManager.fileExists(atPath: destinationURL.path) else {
+                    result.skippedPackages += 1
+                    result.processedPluginIDs.insert(plugin.id)
+                    continue
+                }
+
+                do {
+                    try fileManager.copyItem(at: packageURL, to: destinationURL)
+                    result.copiedPackages += 1
+                    result.processedPluginIDs.insert(plugin.id)
+                    currentPluginIDs.insert(plugin.id)
+                } catch {
+                    result.failedPackages += 1
+                }
+            }
+        } catch {
+            result.failedPackages += 1
+        }
+
+        return result
+    }
+
+    @discardableResult
+    func migrateLegacyUserPluginsIfNeeded(
+        fileManager: FileManager = .default,
+        userDefaults: UserDefaults = .standard
+    ) -> LegacyPluginMigrationResult {
+        guard userPluginsDirectoryOverride == nil else {
+            return LegacyPluginMigrationResult()
+        }
+        let processedPluginIDs = Set(
+            userDefaults.stringArray(forKey: Self.legacyPluginMigrationProcessedIDsKey) ?? []
+        )
+        let result = Self.migrateLegacyUserPlugins(
+            from: legacyUserPluginsURL,
+            to: userPluginsURL,
+            processedPluginIDs: processedPluginIDs,
+            fileManager: fileManager
+        )
+        let updatedProcessedPluginIDs = processedPluginIDs.union(result.processedPluginIDs)
+        if updatedProcessedPluginIDs != processedPluginIDs {
+            userDefaults.set(
+                updatedProcessedPluginIDs.sorted(),
+                forKey: Self.legacyPluginMigrationProcessedIDsKey
+            )
+        }
+        if result.copiedPackages > 0 {
+            NSLog("[ActionHalo] Migrated \(result.copiedPackages) legacy plugin package(s).")
+        }
+        if result.skippedPackages > 0 {
+            NSLog("[ActionHalo] Skipped \(result.skippedPackages) previously migrated or conflicting legacy plugin package(s); ActionHalo packages take precedence.")
+        }
+        if result.failedPackages > 0 {
+            NSLog("[ActionHalo] Failed to migrate \(result.failedPackages) legacy plugin package(s).")
+        }
+        return result
+    }
+
     static func pluginPackageDirectories(
         in directoryURL: URL,
         fileManager: FileManager = .default
@@ -345,7 +557,7 @@ final class PluginManager: Sendable {
 
         return contents
             .filter { url in
-                guard url.pathExtension == "openfireext" else { return false }
+                guard PluginLoader.isSupportedPackageURL(url) else { return false }
                 guard let values = try? url.resourceValues(
                     forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
                 ) else {
@@ -427,7 +639,10 @@ final class PluginManager: Sendable {
     }
 
     static func isReservedCorePluginIdentifier(_ identifier: String) -> Bool {
-        coreDefaultPluginIDs.contains(identifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        let canonical = canonicalPluginIdentifier(
+            identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        ).lowercased()
+        return coreDefaultPluginIDs.contains(canonical)
     }
 
     static func pluginIdentifierValidationMessage(
@@ -472,7 +687,7 @@ final class PluginManager: Sendable {
             .trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
             .isEmpty ? "custom-plugin" : sanitized.trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
 
-        return "\(visibleBase).openfireext"
+        return "\(visibleBase).actionhaloext"
     }
 
     static func pendingPluginPackageURL(
@@ -481,7 +696,7 @@ final class PluginManager: Sendable {
     ) -> URL {
         let timestamp = Int(Date().timeIntervalSince1970)
         return directoryURL.appendingPathComponent(
-            ".\(prefix)-t\(timestamp)-\(UUID().uuidString).openfireext.pending"
+            ".\(prefix)-t\(timestamp)-\(UUID().uuidString).actionhaloext.pending"
         )
     }
 
@@ -492,7 +707,8 @@ final class PluginManager: Sendable {
             options: []
         )) ?? []
 
-        for packageURL in contents where packageURL.lastPathComponent.hasPrefix(".") && packageURL.pathExtension == "openfireext" {
+        for packageURL in contents
+        where packageURL.lastPathComponent.hasPrefix(".") && PluginLoader.isSupportedPackageURL(packageURL) {
             guard (try? packageURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
                   let plugin = PluginLoader.load(from: packageURL) else {
                 continue
@@ -506,9 +722,9 @@ final class PluginManager: Sendable {
 
             do {
                 try fileManager.moveItem(at: packageURL, to: visibleURL)
-                NSLog("[OpenFire] Repaired hidden plugin package: \(packageURL.lastPathComponent) -> \(visibleURL.lastPathComponent)")
+                NSLog("[ActionHalo] Repaired hidden plugin package: \(packageURL.lastPathComponent) -> \(visibleURL.lastPathComponent)")
             } catch {
-                NSLog("[OpenFire] Failed to repair hidden plugin package \(packageURL.path): \(error.localizedDescription)")
+                NSLog("[ActionHalo] Failed to repair hidden plugin package \(packageURL.path): \(error.localizedDescription)")
             }
         }
     }
@@ -531,8 +747,10 @@ final class PluginManager: Sendable {
             let name = pendingURL.lastPathComponent
             let isStaging = name.hasPrefix(".install-") || name.hasPrefix(".save-")
             let isBackup = name.hasPrefix(".backup-")
-            guard (isStaging || isBackup),
-                  name.hasSuffix(".openfireext.pending") else {
+            let hasSupportedPendingSuffix = PluginLoader.supportedPackageExtensions.contains {
+                name.hasSuffix(".\($0).pending")
+            }
+            guard (isStaging || isBackup), hasSupportedPendingSuffix else {
                 continue
             }
 
@@ -656,7 +874,7 @@ final class PluginManager: Sendable {
             
             DispatchQueue.main.async {
                 guard self.shouldApplyPluginLoadResult(loadID) else {
-                    NSLog("[OpenFire] Discarding stale plugin load result #\(loadID)")
+                    NSLog("[ActionHalo] Discarding stale plugin load result #\(loadID)")
                     return
                 }
 
@@ -675,7 +893,7 @@ final class PluginManager: Sendable {
                     self.scheduleUserPluginPackageWatcherRefresh()
                 }
                 
-                NSLog("[OpenFire] Loaded \(self.plugins.count) plugins total (\(builtIn.count) built-in, \(user.count) user)")
+                NSLog("[ActionHalo] Loaded \(self.plugins.count) plugins total (\(builtIn.count) built-in, \(user.count) user)")
                 
                 NotificationCenter.default.post(name: PluginManager.pluginsReloadedNotification, object: self)
             }
@@ -833,7 +1051,7 @@ final class PluginManager: Sendable {
         do {
             try FileManager.default.removeItem(at: snapshot.containerURL)
         } catch {
-            NSLog("[OpenFire] Failed to remove trusted plugin execution snapshot: \(error.localizedDescription)")
+            NSLog("[ActionHalo] Failed to remove trusted plugin execution snapshot: \(error.localizedDescription)")
         }
     }
 
@@ -849,7 +1067,7 @@ final class PluginManager: Sendable {
         }
 
         let containerURL = fileManager.temporaryDirectory
-            .appendingPathComponent("OpenFire-Trusted-Execution-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("ActionHalo-Trusted-Execution-\(UUID().uuidString)", isDirectory: true)
         let packageURL = containerURL.appendingPathComponent(
             plugin.directoryURL.lastPathComponent,
             isDirectory: true
@@ -879,7 +1097,7 @@ final class PluginManager: Sendable {
             )
         } catch {
             try? fileManager.removeItem(at: containerURL)
-            NSLog("[OpenFire] Failed to create trusted plugin execution snapshot: \(error.localizedDescription)")
+            NSLog("[ActionHalo] Failed to create trusted plugin execution snapshot: \(error.localizedDescription)")
             return nil
         }
     }
@@ -1034,7 +1252,7 @@ final class PluginManager: Sendable {
         )) ?? []
 
         var matches: [URL] = []
-        for itemURL in contents where itemURL.pathExtension == "openfireext" {
+        for itemURL in contents where PluginLoader.isSupportedPackageURL(itemURL) {
             guard Self.isPluginDirectory(itemURL, inside: userPluginsURL),
                   let values = try? itemURL.resourceValues(
                     forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
@@ -1193,7 +1411,7 @@ final class PluginManager: Sendable {
         
         let fd = open(url.path, O_EVTONLY)
         guard fd >= 0 else {
-            NSLog("[OpenFire] Failed to watch directory: \(url.path)")
+            NSLog("[ActionHalo] Failed to watch directory: \(url.path)")
             return
         }
         
@@ -1211,7 +1429,7 @@ final class PluginManager: Sendable {
                       self.pathWatchers[watchPath]?.id == watcherID else {
                     return
                 }
-                NSLog("[OpenFire] Plugin package changed, reloading...")
+                NSLog("[ActionHalo] Plugin package changed, reloading...")
                 if events.contains(.delete) || events.contains(.rename) {
                     self.pathWatchers[watchPath]?.source.cancel()
                     self.pathWatchers.removeValue(forKey: watchPath)
@@ -1235,7 +1453,7 @@ final class PluginManager: Sendable {
             source: source
         )
         
-        NSLog("[OpenFire] Watching plugin path: \(url.path)")
+        NSLog("[ActionHalo] Watching plugin path: \(url.path)")
     }
     
     // MARK: - Plugin Execution
@@ -1294,7 +1512,7 @@ final class PluginManager: Sendable {
                     expectedFocusedElement: targetFocusedElement,
                     currentFocusedElement: AccessibilityManager.shared.getFocusedElement()
                   ) else {
-                NSLog("[OpenFire] Refusing key combo '%@': the original focused target changed.", plugin.id)
+                NSLog("[ActionHalo] Refusing key combo '%@': the original focused target changed.", plugin.id)
                 return
             }
             executeKeyCombo(
@@ -1351,7 +1569,7 @@ final class PluginManager: Sendable {
             guard let self else { return }
             guard let snapshot = self.makeProtectedExecutionSnapshot(for: plugin) else {
                 self.discardPendingKeyComboTarget(keyComboTargetID)
-                NSLog("[OpenFire] Refusing to execute plugin '%@': could not create a verified snapshot.", pluginID)
+                NSLog("[ActionHalo] Refusing to execute plugin '%@': could not create a verified snapshot.", pluginID)
                 return
             }
 
@@ -1461,7 +1679,7 @@ final class PluginManager: Sendable {
     private func executeURLAction(_ action: PluginActionConfig, text: String) {
         guard var urlTemplate = action.url else { return }
         guard Self.isAllowedPluginURLTemplate(urlTemplate) else {
-            NSLog("[OpenFire] Refusing URL action with unsupported scheme.")
+            NSLog("[ActionHalo] Refusing URL action with unsupported scheme.")
             return
         }
 
@@ -1522,7 +1740,7 @@ final class PluginManager: Sendable {
                 scriptContent = inline
                 Self.verboseLog("Using legacy inline shell script from the script field")
             case nil:
-                NSLog("[OpenFire] Refusing shell script outside the verified plugin package: \(scriptName)")
+                NSLog("[ActionHalo] Refusing shell script outside the verified plugin package: \(scriptName)")
                 scriptContent = nil
             }
         } else if let inline = action.inline {
@@ -1549,7 +1767,7 @@ final class PluginManager: Sendable {
             do {
                 try text.write(to: textFile, atomically: true, encoding: .utf8)
             } catch {
-                NSLog("[OpenFire] Failed to prepare selected text for shell script: \(error.localizedDescription)")
+                NSLog("[ActionHalo] Failed to prepare selected text for shell script: \(error.localizedDescription)")
                 return
             }
             defer { try? FileManager.default.removeItem(at: textFile) }
@@ -1558,7 +1776,7 @@ final class PluginManager: Sendable {
             do {
                 try content.write(to: scriptFile, atomically: true, encoding: .utf8)
             } catch {
-                NSLog("[OpenFire] Failed to prepare shell script: \(error.localizedDescription)")
+                NSLog("[ActionHalo] Failed to prepare shell script: \(error.localizedDescription)")
                 return
             }
             defer { try? FileManager.default.removeItem(at: scriptFile) }
@@ -1606,7 +1824,7 @@ final class PluginManager: Sendable {
                 source = Self.renderedAppleScriptSource(inline, text: text)
                 Self.verboseLog("Using legacy inline AppleScript from the script field")
             case nil:
-                NSLog("[OpenFire] Refusing AppleScript outside the verified plugin package: \(scriptName)")
+                NSLog("[ActionHalo] Refusing AppleScript outside the verified plugin package: \(scriptName)")
                 source = nil
             }
         } else if let inline = action.inline {
@@ -1640,12 +1858,14 @@ final class PluginManager: Sendable {
             do {
                 try text.write(to: textFile, atomically: true, encoding: .utf8)
                 
-                // Transparently replace `system attribute "OPENFIRE_TEXT"` with file-based UTF-8 read
+                // Transparently replace both the current and legacy text variables
+                // with a file-based UTF-8 read.
                 // so that CJK characters are handled correctly without users needing to know about the file
                 let fileReadExpr = "read (POSIX file \"\(textFile.path)\") as \u{00AB}class utf8\u{00BB}"
-                let finalSource = appleScriptSource
-                    .replacingOccurrences(of: "(system attribute \"OPENFIRE_TEXT\")", with: "(\(fileReadExpr))")
-                    .replacingOccurrences(of: "system attribute \"OPENFIRE_TEXT\"", with: fileReadExpr)
+                let finalSource = Self.replacingPluginTextEnvironmentReferences(
+                    in: appleScriptSource,
+                    with: fileReadExpr
+                )
                 
                 try finalSource.write(to: tempFile, atomically: true, encoding: .utf8)
                 Self.verboseLog("Wrote temp AppleScript file to \(tempFile.path)")
@@ -1666,7 +1886,7 @@ final class PluginManager: Sendable {
                     logPrefix: "AppleScript"
                 )
             } catch {
-                NSLog("[OpenFire] Failed to execute AppleScript via osascript: \(error.localizedDescription)")
+                NSLog("[ActionHalo] Failed to execute AppleScript via osascript: \(error.localizedDescription)")
             }
         }
     }
@@ -1872,13 +2092,13 @@ final class PluginManager: Sendable {
             return code
         }
         
-        NSLog("[OpenFire] Warning: Could not find virtual key code mapping for string '\(key)'")
+        NSLog("[ActionHalo] Warning: Could not find virtual key code mapping for string '\(key)'")
         return nil
     }
     
     // MARK: - Plugin Installation
     
-    /// Install a plugin from a given URL (e.g., when user double-clicks a .openfireext file)
+    /// Install a plugin from a given URL (e.g., when user double-clicks a .actionhaloext file)
     func installPlugin(from sourceURL: URL) -> Bool {
         installPluginDetailed(from: sourceURL).isSuccess
     }
@@ -1908,11 +2128,11 @@ final class PluginManager: Sendable {
 
         let fileManager = FileManager.default
         let snapshotContainerURL = fileManager.temporaryDirectory.appendingPathComponent(
-            "openfire-install-preview-\(UUID().uuidString)",
+            "actionhalo-install-preview-\(UUID().uuidString)",
             isDirectory: true
         )
         let snapshotPackageURL = snapshotContainerURL.appendingPathComponent(
-            "Package.openfireext",
+            "Package.actionhaloext",
             isDirectory: true
         )
         defer {
@@ -1926,7 +2146,7 @@ final class PluginManager: Sendable {
             )
             try snapshotCopy(sourceURL, snapshotPackageURL)
         } catch {
-            NSLog("[OpenFire] Failed to prepare plugin install snapshot: \(error.localizedDescription)")
+            NSLog("[ActionHalo] Failed to prepare plugin install snapshot: \(error.localizedDescription)")
             return nil
         }
 
@@ -1939,7 +2159,7 @@ final class PluginManager: Sendable {
               let sourceFingerprintAfterCopy = sourcePluginAfterCopy.packageFingerprint,
               sourceFingerprintBeforeCopy == snapshotFingerprint,
               sourceFingerprintAfterCopy == snapshotFingerprint else {
-            NSLog("[OpenFire] Plugin changed while preparing the install confirmation: \(sourceURL.path)")
+            NSLog("[ActionHalo] Plugin changed while preparing the install confirmation: \(sourceURL.path)")
             return nil
         }
 
@@ -1968,31 +2188,31 @@ final class PluginManager: Sendable {
         let fileManager = FileManager.default
 
         guard Self.isInstallPackageWithinLimits(sourceURL, fileManager: fileManager) else {
-            NSLog("[OpenFire] Refusing to install unsafe or oversized plugin package: \(sourceURL.path)")
+            NSLog("[ActionHalo] Refusing to install unsafe or oversized plugin package: \(sourceURL.path)")
             return .failed(.invalidPackage)
         }
         
         do {
             try fileManager.createDirectory(at: userPluginsURL, withIntermediateDirectories: true)
         } catch {
-            NSLog("[OpenFire] Failed to create plugin directory: \(error.localizedDescription)")
+            NSLog("[ActionHalo] Failed to create plugin directory: \(error.localizedDescription)")
             return .failed(.fileOperationFailed(error.localizedDescription))
         }
 
         guard let sourcePlugin = PluginLoader.load(from: sourceURL),
               let sourceFingerprint = sourcePlugin.packageFingerprint else {
-            NSLog("[OpenFire] Refusing to install invalid plugin package: \(sourceURL.path)")
+            NSLog("[ActionHalo] Refusing to install invalid plugin package: \(sourceURL.path)")
             return .failed(.invalidPackage)
         }
 
         if let expectedPreviewFingerprint,
            expectedPreviewFingerprint != sourceFingerprint {
-            NSLog("[OpenFire] Refusing plugin that changed after install confirmation: \(sourceURL.path)")
+            NSLog("[ActionHalo] Refusing plugin that changed after install confirmation: \(sourceURL.path)")
             return .failed(.sourceChangedSinceConfirmation)
         }
 
         if let validationMessage = Self.pluginIdentifierValidationMessage(sourcePlugin.id) {
-            NSLog("[OpenFire] Refusing to install plugin with invalid identifier '\(sourcePlugin.id)': \(validationMessage)")
+            NSLog("[ActionHalo] Refusing to install plugin with invalid identifier '\(sourcePlugin.id)': \(validationMessage)")
             return .failed(.invalidIdentifier(validationMessage))
         }
 
@@ -2007,7 +2227,7 @@ final class PluginManager: Sendable {
         if fileManager.fileExists(atPath: destinationURL.path),
            let existingPlugin = PluginLoader.load(from: destinationURL),
            existingPlugin.id != sourcePlugin.id {
-            NSLog("[OpenFire] Refusing to install plugin '\(sourcePlugin.id)' because it would replace plugin '\(existingPlugin.id)'")
+            NSLog("[ActionHalo] Refusing to install plugin '\(sourcePlugin.id)' because it would replace plugin '\(existingPlugin.id)'")
             return .failed(.destinationIdentifierConflict(existingIdentifier: existingPlugin.id))
         }
 
@@ -2043,7 +2263,7 @@ final class PluginManager: Sendable {
                   stagedPlugin.packageFingerprint == sourceFingerprint,
                   expectedPreviewFingerprint == nil ||
                     stagedPlugin.packageFingerprint == expectedPreviewFingerprint else {
-                NSLog("[OpenFire] Refusing staged plugin because validation failed after copy: \(sourceURL.path)")
+                NSLog("[ActionHalo] Refusing staged plugin because validation failed after copy: \(sourceURL.path)")
                 return .failed(.stagedValidationFailed)
             }
 
@@ -2066,11 +2286,11 @@ final class PluginManager: Sendable {
             }
 
             removeDuplicateUserPlugins(for: sourcePlugin.id, keeping: destinationURL)
-            NSLog("[OpenFire] Plugin installed: \(sourceURL.lastPathComponent)")
+            NSLog("[ActionHalo] Plugin installed: \(sourceURL.lastPathComponent)")
             reloadPlugins()
             return .installed
         } catch {
-            NSLog("[OpenFire] Failed to install plugin: \(error.localizedDescription)")
+            NSLog("[ActionHalo] Failed to install plugin: \(error.localizedDescription)")
             return .failed(.fileOperationFailed(error.localizedDescription))
         }
     }
@@ -2103,7 +2323,7 @@ final class PluginManager: Sendable {
             options: [],
             errorHandler: { url, error in
                 enumerationFailed = true
-                NSLog("[OpenFire] Failed to inspect plugin package at \(url.path): \(error.localizedDescription)")
+                NSLog("[ActionHalo] Failed to inspect plugin package at \(url.path): \(error.localizedDescription)")
                 return false
             }
         ) else {
@@ -2156,7 +2376,7 @@ final class PluginManager: Sendable {
         guard didMoveDestinationToBackup else { return true }
 
         guard !fileManager.fileExists(atPath: destinationURL.path) else {
-            NSLog("[OpenFire] \(logPrefix) failed after destination was recreated. Preserving backup at \(backupURL.path).")
+            NSLog("[ActionHalo] \(logPrefix) failed after destination was recreated. Preserving backup at \(backupURL.path).")
             return false
         }
 
@@ -2164,7 +2384,7 @@ final class PluginManager: Sendable {
             try fileManager.moveItem(at: backupURL, to: destinationURL)
             return true
         } catch {
-            NSLog("[OpenFire] \(logPrefix) could not restore backup at \(backupURL.path): \(error.localizedDescription)")
+            NSLog("[ActionHalo] \(logPrefix) could not restore backup at \(backupURL.path): \(error.localizedDescription)")
             return false
         }
     }
@@ -2221,7 +2441,7 @@ final class PluginManager: Sendable {
             errorPipe.fileHandleForReading.readabilityHandler = nil
             try? errorPipe.fileHandleForWriting.close()
             try? errorPipe.fileHandleForReading.close()
-            NSLog("[OpenFire] Failed to launch \(logPrefix): \(error.localizedDescription)")
+            NSLog("[ActionHalo] Failed to launch \(logPrefix): \(error.localizedDescription)")
             return nil
         }
         try? errorPipe.fileHandleForWriting.close()
@@ -2236,7 +2456,7 @@ final class PluginManager: Sendable {
             rawWaitStatus = status
             Self.terminateRemainingProcessGroup(rootPID)
         case .timedOut:
-            NSLog("[OpenFire] \(logPrefix) timed out after \(Int(timeout))s, terminating process.")
+            NSLog("[ActionHalo] \(logPrefix) timed out after \(Int(timeout))s, terminating process.")
             Self.signalProcessGroup(rootPID, signal: SIGTERM)
             switch Self.waitForChildProcess(rootPID, timeout: 2) {
             case .exited(let status):
@@ -2261,7 +2481,7 @@ final class PluginManager: Sendable {
         if let terminationStatus, Self.isVerbosePluginLoggingEnabled() {
             Self.verboseLog("\(logPrefix) process finished with exit code: \(terminationStatus)")
         } else if terminationStatus == nil {
-            NSLog("[OpenFire] \(logPrefix) did not exit after termination escalation.")
+            NSLog("[ActionHalo] \(logPrefix) did not exit after termination escalation.")
         }
 
         // A descendant can deliberately detach and keep stderr open. Never use
@@ -2278,14 +2498,14 @@ final class PluginManager: Sendable {
             logPrefix: logPrefix,
             stderr: {
                 if wasStderrTruncated {
-                    errorStr += "\n[OpenFire] stderr truncated after \(Self.maxPluginProcessStderrBytes) bytes."
+                    errorStr += "\n[ActionHalo] stderr truncated after \(Self.maxPluginProcessStderrBytes) bytes."
                 }
                 return errorStr
             }(),
             terminationStatus: terminationStatus,
             verboseLoggingEnabled: Self.isVerbosePluginLoggingEnabled()
            ) {
-            NSLog("[OpenFire] %@", message)
+            NSLog("[ActionHalo] %@", message)
         }
         return terminationStatus
     }
@@ -2365,7 +2585,7 @@ final class PluginManager: Sendable {
                 "sh",
                 "-c",
                 "cd \"$1\" || exit 126\nshift\nexec \"$@\"",
-                "openfire-plugin-runner",
+                "actionhalo-plugin-runner",
                 currentDirectory,
                 targetExecutable
             ] + targetArguments

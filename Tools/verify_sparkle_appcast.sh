@@ -62,8 +62,8 @@ done
 [[ -f "$archive" ]] || fail "Update archive does not exist: $archive"
 [[ -x "$sign_update" ]] || fail "Sparkle sign_update is missing or not executable: $sign_update"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Version must use X.Y.Z format."
-[[ "$download_url" == https://github.com/Wooden-Robot/OpenFire/releases/download/v"$version"/OpenFire.dmg ]] \
-    || fail "Unexpected OpenFire update URL: $download_url"
+[[ "$download_url" == https://github.com/Wooden-Robot/ActionHalo/releases/download/v"$version"/ActionHalo.dmg ]] \
+    || fail "Unexpected ActionHalo update URL: $download_url"
 [[ -z "$account" || -z "$ed_key_file" ]] \
     || fail "Use either --account or --ed-key-file, not both."
 [[ -n "$account" || -n "$ed_key_file" ]] \
