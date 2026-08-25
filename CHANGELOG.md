@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.3.33
+
+- 修复 macOS 12 上 Search in Telegram 已跳转到 Telegram、但选中文字未进入搜索框的问题：将临时剪贴板保留到粘贴消费完成后再恢复，同时继续保护期间产生的用户新复制内容。
+- 对完整包指纹精确匹配的 v0.3.32 官方旧副本自动改用 App 内置新版；旧文件不会被删除或覆盖，任何脚本、配置、额外文件或权限改动都会继续保留用户版本。
+
+- Fixed Search in Telegram opening Telegram without inserting the selected text on macOS 12 by keeping the temporary clipboard alive until the paste is consumed, while continuing to preserve any newer user copy.
+- Exact v0.3.32 official package copies now defer to the updated bundled plugin without deleting or overwriting the old file; any script, configuration, extra-file, or permission change keeps the user's version in control.
+
 ## v0.3.32
 
 - 修复 macOS 12.7.6 上 Telegram 选中文本后辅助功能焦点退化为 `AXWindow`，导致圆环菜单被上下文门禁阻止、Search in Telegram 无法触发的问题。

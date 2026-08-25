@@ -135,6 +135,13 @@ final class PluginManager: Sendable {
     static let maximumInstallPackageBytes = Plugin.maximumTrustedPackageBytes
     static let maximumPluginEnvironmentTextBytes = 32 * 1024
     static let pendingOperationRecoveryMinimumAge: TimeInterval = 30
+    private static let telegramPluginIdentifier = "com.actionhalo.plugin.search-telegram"
+    // Exact v0.3.32 package fingerprints: bundled bytes, then the same package
+    // saved without edits by ActionHalo's plugin editor.
+    private static let legacyBundledTelegramPackageFingerprints: Set<String> = [
+        "5e555dfd46ce2366c04029b90c62cbd09dcafe22f2f5888bcdb7db1f0ab76978",
+        "e618036b5338937144d882f00d2a38bc7224a06a9fe3e485c9b17a8a8070f405",
+    ]
     private static let appleScriptUTF8FileReaderSource = """
     on run argv
         return read (POSIX file (item 1 of argv)) as «class utf8»
@@ -218,7 +225,16 @@ final class PluginManager: Sendable {
     
     private init() {}
 
-    static func mergePluginsPreservingExisting(user: [Plugin], builtIn: [Plugin]) -> [Plugin] {
+    static func mergePluginsPreservingExisting(
+        user: [Plugin],
+        builtIn: [Plugin],
+        builtInPluginsURL: URL = PluginManager.shared.builtInPluginsURL
+    ) -> [Plugin] {
+        var builtInByID: [String: Plugin] = [:]
+        for plugin in builtIn where builtInByID[plugin.id] == nil {
+            builtInByID[plugin.id] = plugin
+        }
+
         var merged: [Plugin] = []
         var seenIDs: Set<String> = []
 
@@ -228,6 +244,15 @@ final class PluginManager: Sendable {
         }
 
         for plugin in user where !coreDefaultPluginIDs.contains(plugin.id) && !seenIDs.contains(plugin.id) {
+            if let replacement = builtInByID[plugin.id],
+               shouldPreferBundledTelegramPlugin(
+                   user: plugin,
+                   replacement: replacement,
+                   builtInPluginsURL: builtInPluginsURL
+               ) {
+                continue
+            }
+
             merged.append(plugin)
             seenIDs.insert(plugin.id)
         }
@@ -238,6 +263,24 @@ final class PluginManager: Sendable {
         }
 
         return merged
+    }
+
+    private static func shouldPreferBundledTelegramPlugin(
+        user: Plugin,
+        replacement: Plugin,
+        builtInPluginsURL: URL
+    ) -> Bool {
+        guard user.id == telegramPluginIdentifier,
+              replacement.id == telegramPluginIdentifier,
+              isBuiltInPluginDirectory(
+                replacement.directoryURL,
+                builtInPluginsURL: builtInPluginsURL
+              ),
+              let fingerprint = user.packageFingerprint else {
+            return false
+        }
+
+        return legacyBundledTelegramPackageFingerprints.contains(fingerprint)
     }
 
     static func isVerbosePluginLoggingEnabled(userDefaults: UserDefaults = .standard) -> Bool {
@@ -690,7 +733,11 @@ final class PluginManager: Sendable {
             Self.repairHiddenUserPluginPackages(in: self.userPluginsURL)
             let user = PluginLoader.scanDirectory(self.userPluginsURL)
             
-            let mergedPlugins = Self.mergePluginsPreservingExisting(user: user, builtIn: builtIn)
+            let mergedPlugins = Self.mergePluginsPreservingExisting(
+                user: user,
+                builtIn: builtIn,
+                builtInPluginsURL: self.builtInPluginsURL
+            )
             let deletedBuiltIns = UserDefaults.standard.stringArray(forKey: "deletedBuiltInPlugins") ?? []
             let newPlugins = Self.filterSoftDeletedBuiltIns(
                 mergedPlugins,

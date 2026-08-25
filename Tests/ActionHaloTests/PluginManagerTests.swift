@@ -235,6 +235,158 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertEqual(merged.first?.directoryURL.path, "/tmp/user")
     }
 
+    func testMergePluginsUsesBundledTelegramUpdateForUnmodifiedLegacyCopy() throws {
+        let legacyURL = try makeTelegramPluginBundle(
+            scriptContent: legacyTelegramScriptSource()
+        )
+        let bundledURL = try makeTelegramPluginBundle(
+            scriptContent: currentTelegramScriptSource()
+        )
+        let legacyPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
+        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
+
+        XCTAssertEqual(
+            legacyPlugin.packageFingerprint,
+            "5e555dfd46ce2366c04029b90c62cbd09dcafe22f2f5888bcdb7db1f0ab76978"
+        )
+        let merged = PluginManager.mergePluginsPreservingExisting(
+            user: [legacyPlugin],
+            builtIn: [bundledPlugin],
+            builtInPluginsURL: bundledURL.deletingLastPathComponent()
+        )
+
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.directoryURL.path, bundledURL.path)
+    }
+
+    func testMergePluginsUsesBundledTelegramUpdateForEditorSavedLegacyCopy() throws {
+        let legacyURL = try makeTelegramPluginBundle(
+            scriptContent: legacyTelegramScriptSource().trimmingCharacters(in: .newlines),
+            editorSavedConfig: true
+        )
+        let bundledURL = try makeTelegramPluginBundle(
+            scriptContent: currentTelegramScriptSource()
+        )
+        let legacyPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
+        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
+
+        XCTAssertEqual(
+            legacyPlugin.packageFingerprint,
+            "e618036b5338937144d882f00d2a38bc7224a06a9fe3e485c9b17a8a8070f405"
+        )
+        let merged = PluginManager.mergePluginsPreservingExisting(
+            user: [legacyPlugin],
+            builtIn: [bundledPlugin],
+            builtInPluginsURL: bundledURL.deletingLastPathComponent()
+        )
+
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.directoryURL.path, bundledURL.path)
+    }
+
+    func testMergePluginsPreservesTelegramOverrideWithAdditionalFile() throws {
+        let legacyURL = try makeTelegramPluginBundle(
+            scriptContent: legacyTelegramScriptSource()
+        )
+        try Data("user notes".utf8).write(
+            to: legacyURL.appendingPathComponent("Notes.txt")
+        )
+        let bundledURL = try makeTelegramPluginBundle(
+            scriptContent: currentTelegramScriptSource()
+        )
+        let customizedPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
+        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
+
+        let merged = PluginManager.mergePluginsPreservingExisting(
+            user: [customizedPlugin],
+            builtIn: [bundledPlugin],
+            builtInPluginsURL: bundledURL.deletingLastPathComponent()
+        )
+
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.directoryURL.path, legacyURL.path)
+    }
+
+    func testMergePluginsPreservesTelegramOverrideWithUnknownConfigField() throws {
+        let legacyURL = try makeTelegramPluginBundle(
+            scriptContent: legacyTelegramScriptSource()
+        )
+        let configURL = legacyURL.appendingPathComponent("Config.json")
+        var config = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: configURL))
+                as? [String: Any]
+        )
+        config["author"] = "User"
+        try JSONSerialization.data(
+            withJSONObject: config,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        ).write(to: configURL, options: .atomic)
+
+        let bundledURL = try makeTelegramPluginBundle(
+            scriptContent: currentTelegramScriptSource()
+        )
+        let customizedPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
+        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
+
+        let merged = PluginManager.mergePluginsPreservingExisting(
+            user: [customizedPlugin],
+            builtIn: [bundledPlugin],
+            builtInPluginsURL: bundledURL.deletingLastPathComponent()
+        )
+
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.directoryURL.path, legacyURL.path)
+    }
+
+    func testMergePluginsRequiresTelegramReplacementToBeInBuiltInDirectory() throws {
+        let legacyURL = try makeTelegramPluginBundle(
+            scriptContent: legacyTelegramScriptSource()
+        )
+        let replacementURL = try makeTelegramPluginBundle(
+            scriptContent: currentTelegramScriptSource()
+        )
+        let unrelatedBuiltInRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        temporaryDirectories.append(unrelatedBuiltInRoot)
+        try FileManager.default.createDirectory(
+            at: unrelatedBuiltInRoot,
+            withIntermediateDirectories: true
+        )
+
+        let legacyPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
+        let replacementPlugin = try XCTUnwrap(
+            PluginLoader.load(from: replacementURL)
+        )
+        let merged = PluginManager.mergePluginsPreservingExisting(
+            user: [legacyPlugin],
+            builtIn: [replacementPlugin],
+            builtInPluginsURL: unrelatedBuiltInRoot
+        )
+
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.directoryURL.path, legacyURL.path)
+    }
+
+    func testMergePluginsPreservesCustomizedTelegramOverride() throws {
+        let legacyURL = try makeTelegramPluginBundle(
+            scriptContent: legacyTelegramScriptSource() + "\n-- User customization"
+        )
+        let bundledURL = try makeTelegramPluginBundle(
+            scriptContent: currentTelegramScriptSource()
+        )
+        let customizedPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
+        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
+
+        let merged = PluginManager.mergePluginsPreservingExisting(
+            user: [customizedPlugin],
+            builtIn: [bundledPlugin],
+            builtInPluginsURL: bundledURL.deletingLastPathComponent()
+        )
+
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.directoryURL.path, legacyURL.path)
+    }
+
     func testMergePluginsPreservingExistingKeepsBuiltInCorePluginWhenUserUsesCoreIdentifier() {
         let userOverride = makePlugin(
             name: "Fake Copy",
@@ -1730,6 +1882,42 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: compiledURL.path))
     }
 
+    func testTelegramScriptWaitsForPasteConsumptionBeforeRestoringClipboard() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let scriptURL = repositoryRoot.appendingPathComponent(
+            "Plugins/Search Telegram.actionhaloext/script.applescript"
+        )
+        let source = try String(contentsOf: scriptURL, encoding: .utf8)
+
+        let propertyPrefix = "property pasteSettlementDelay : "
+        let propertyRange = try XCTUnwrap(source.range(of: propertyPrefix))
+        let valueStart = propertyRange.upperBound
+        let valueEnd = source[valueStart...].firstIndex(of: "\n") ?? source.endIndex
+        let delayValue = try XCTUnwrap(Double(source[valueStart..<valueEnd]))
+        XCTAssertGreaterThanOrEqual(delayValue, 1.0)
+
+        let pasteCommand = try XCTUnwrap(
+            source.range(of: "keystroke \"v\" using {command down}")
+        )
+        let settlementDelay = try XCTUnwrap(
+            source.range(
+                of: "delay pasteSettlementDelay",
+                range: pasteCommand.upperBound..<source.endIndex
+            )
+        )
+        let normalRestore = try XCTUnwrap(
+            source.range(
+                of: "\nif clipboardWasCaptured and clipboardWasReplaced then",
+                range: settlementDelay.upperBound..<source.endIndex
+            )
+        )
+        XCTAssertLessThan(pasteCommand.lowerBound, settlementDelay.lowerBound)
+        XCTAssertLessThan(settlementDelay.lowerBound, normalRestore.lowerBound)
+    }
+
     func testDeletePluginUsesActualContainedDirectoryInsteadOfIdentifierPath() throws {
         let manager = PluginManager.shared
         try FileManager.default.createDirectory(
@@ -1839,5 +2027,87 @@ final class PluginManagerTests: GlobalStateTestCase {
         try config.write(to: bundleURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
         try scriptContent.write(to: bundleURL.appendingPathComponent("script.sh"), atomically: true, encoding: .utf8)
         return bundleURL
+    }
+
+    private func makeTelegramPluginBundle(
+        scriptContent: String,
+        editorSavedConfig: Bool = false
+    ) throws -> URL {
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".actionhaloext")
+        temporaryDirectories.append(bundleURL)
+        try FileManager.default.createDirectory(
+            at: bundleURL,
+            withIntermediateDirectories: true
+        )
+
+        let bundledConfig = try Data(
+            contentsOf: currentTelegramPluginURL().appendingPathComponent("Config.json")
+        )
+        let configData = if editorSavedConfig {
+            try JSONSerialization.data(
+                withJSONObject: JSONSerialization.jsonObject(with: bundledConfig),
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            )
+        } else {
+            bundledConfig
+        }
+        try configData.write(
+            to: bundleURL.appendingPathComponent("Config.json"),
+            options: .atomic
+        )
+        try scriptContent.write(
+            to: bundleURL.appendingPathComponent("script.applescript"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: bundleURL.path
+        )
+        for fileName in ["Config.json", "script.applescript"] {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o644],
+                ofItemAtPath: bundleURL.appendingPathComponent(fileName).path
+            )
+        }
+        return bundleURL
+    }
+
+    private func currentTelegramPluginURL() -> URL {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return repositoryRoot.appendingPathComponent(
+            "Plugins/Search Telegram.actionhaloext"
+        )
+    }
+
+    private func currentTelegramScriptSource() throws -> String {
+        try String(
+            contentsOf: currentTelegramPluginURL().appendingPathComponent(
+                "script.applescript"
+            ),
+            encoding: .utf8
+        )
+    }
+
+    private func legacyTelegramScriptSource() throws -> String {
+        let currentSource = try currentTelegramScriptSource()
+        let settlementProperty = "property pasteSettlementDelay : 1.0\n"
+        let settlementBlock = """
+            -- Telegram consumes Command-V asynchronously on macOS 12. Keep the
+            -- transaction clipboard alive until the application has read its contents.
+            -- The ownership check below still preserves any newer user copy.
+            delay pasteSettlementDelay
+        """
+        guard currentSource.contains(settlementProperty),
+              currentSource.contains(settlementBlock) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return currentSource
+            .replacingOccurrences(of: settlementProperty, with: "")
+            .replacingOccurrences(of: settlementBlock, with: "    delay 0.2")
     }
 }
