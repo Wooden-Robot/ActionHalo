@@ -10,6 +10,7 @@ enum PluginActionType: String, Codable, Sendable {
     case copy = "copy"
     case paste = "paste"
     case revealPath = "reveal-path"
+    case telegramSearch = "telegram-search"
 }
 
 struct PluginActionConfig: Codable, Equatable, Sendable {

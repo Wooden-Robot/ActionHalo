@@ -239,9 +239,7 @@ final class PluginManagerTests: GlobalStateTestCase {
         let legacyURL = try makeTelegramPluginBundle(
             scriptContent: legacyTelegramScriptSource()
         )
-        let bundledURL = try makeTelegramPluginBundle(
-            scriptContent: currentTelegramScriptSource()
-        )
+        let bundledURL = try makeNativeTelegramPluginBundle()
         let legacyPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
         let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
 
@@ -264,9 +262,7 @@ final class PluginManagerTests: GlobalStateTestCase {
             scriptContent: legacyTelegramScriptSource().trimmingCharacters(in: .newlines),
             editorSavedConfig: true
         )
-        let bundledURL = try makeTelegramPluginBundle(
-            scriptContent: currentTelegramScriptSource()
-        )
+        let bundledURL = try makeNativeTelegramPluginBundle()
         let legacyPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
         let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
 
@@ -291,9 +287,7 @@ final class PluginManagerTests: GlobalStateTestCase {
         try Data("user notes".utf8).write(
             to: legacyURL.appendingPathComponent("Notes.txt")
         )
-        let bundledURL = try makeTelegramPluginBundle(
-            scriptContent: currentTelegramScriptSource()
-        )
+        let bundledURL = try makeNativeTelegramPluginBundle()
         let customizedPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
         let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
 
@@ -322,9 +316,7 @@ final class PluginManagerTests: GlobalStateTestCase {
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         ).write(to: configURL, options: .atomic)
 
-        let bundledURL = try makeTelegramPluginBundle(
-            scriptContent: currentTelegramScriptSource()
-        )
+        let bundledURL = try makeNativeTelegramPluginBundle()
         let customizedPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
         let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
 
@@ -342,9 +334,7 @@ final class PluginManagerTests: GlobalStateTestCase {
         let legacyURL = try makeTelegramPluginBundle(
             scriptContent: legacyTelegramScriptSource()
         )
-        let replacementURL = try makeTelegramPluginBundle(
-            scriptContent: currentTelegramScriptSource()
-        )
+        let replacementURL = try makeNativeTelegramPluginBundle()
         let unrelatedBuiltInRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         temporaryDirectories.append(unrelatedBuiltInRoot)
@@ -371,9 +361,7 @@ final class PluginManagerTests: GlobalStateTestCase {
         let legacyURL = try makeTelegramPluginBundle(
             scriptContent: legacyTelegramScriptSource() + "\n-- User customization"
         )
-        let bundledURL = try makeTelegramPluginBundle(
-            scriptContent: currentTelegramScriptSource()
-        )
+        let bundledURL = try makeNativeTelegramPluginBundle()
         let customizedPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
         let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
 
@@ -1767,157 +1755,6 @@ final class PluginManagerTests: GlobalStateTestCase {
         )
     }
 
-    func testTelegramScriptCompilesWithTransactionalClipboardHandlers() throws {
-        let temporaryDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-        temporaryDirectories.append(temporaryDirectory)
-        try FileManager.default.createDirectory(
-            at: temporaryDirectory,
-            withIntermediateDirectories: true
-        )
-        let repositoryRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let scriptURL = repositoryRoot.appendingPathComponent(
-            "Plugins/Search Telegram.actionhaloext/script.applescript"
-        )
-        let source = try String(contentsOf: scriptURL, encoding: .utf8)
-            .replacingOccurrences(
-                of: "(system attribute \"ACTIONHALO_TEXT\")",
-                with: "\"test\""
-            )
-        XCTAssertTrue(source.contains("transactionMarkerType"))
-        XCTAssertTrue(source.contains("pasteboardItems is missing value"))
-
-        let replaceHandler = try XCTUnwrap(
-            source.range(of: "on replaceClipboardWithText")
-        )
-        let replaceHandlerEnd = try XCTUnwrap(
-            source.range(
-                of: "end replaceClipboardWithText",
-                range: replaceHandler.lowerBound..<source.endIndex
-            )
-        )
-        let replaceSource = String(
-            source[replaceHandler.lowerBound..<replaceHandlerEnd.upperBound]
-        )
-        let preparedTemporaryItems = try XCTUnwrap(
-            replaceSource.range(of: "temporaryItems's addObject:temporaryItem")
-        )
-        let guardedTemporaryCommit = try XCTUnwrap(
-            replaceSource.range(
-                of: "set commitChangeCount to (pasteboard's changeCount()) as integer"
-            )
-        )
-        let clearedTemporaryClipboard = try XCTUnwrap(
-            replaceSource.range(
-                of: "set clearedChangeCount to (pasteboard's clearContents()) as integer"
-            )
-        )
-        XCTAssertLessThan(
-            preparedTemporaryItems.lowerBound,
-            guardedTemporaryCommit.lowerBound
-        )
-        XCTAssertLessThan(
-            guardedTemporaryCommit.lowerBound,
-            clearedTemporaryClipboard.lowerBound
-        )
-
-        let restoreHandler = try XCTUnwrap(
-            source.range(of: "on restoreClipboardSnapshotIfOwned")
-        )
-        let restoreHandlerEnd = try XCTUnwrap(
-            source.range(
-                of: "end restoreClipboardSnapshotIfOwned",
-                range: restoreHandler.lowerBound..<source.endIndex
-            )
-        )
-        let restoreSource = String(
-            source[restoreHandler.lowerBound..<restoreHandlerEnd.upperBound]
-        )
-        let preparedRestoredItems = try XCTUnwrap(
-            restoreSource.range(
-                of: "set restoredItems to materializeClipboardSnapshot"
-            )
-        )
-        let checkedTransactionMarker = try XCTUnwrap(
-            restoreSource.range(of: "set currentMarker to")
-        )
-        let guardedRestoreCommit = try XCTUnwrap(
-            restoreSource.range(
-                of: "set commitChangeCount to (pasteboard's changeCount()) as integer"
-            )
-        )
-        let clearedOwnedClipboard = try XCTUnwrap(
-            restoreSource.range(of: "pasteboard's clearContents()")
-        )
-        XCTAssertLessThan(
-            preparedRestoredItems.lowerBound,
-            checkedTransactionMarker.lowerBound
-        )
-        XCTAssertLessThan(
-            checkedTransactionMarker.lowerBound,
-            guardedRestoreCommit.lowerBound
-        )
-        XCTAssertLessThan(
-            guardedRestoreCommit.lowerBound,
-            clearedOwnedClipboard.lowerBound
-        )
-
-        let sourceURL = temporaryDirectory.appendingPathComponent("telegram.applescript")
-        let compiledURL = temporaryDirectory.appendingPathComponent("telegram.scpt")
-        try source.write(to: sourceURL, atomically: true, encoding: .utf8)
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osacompile")
-        process.arguments = ["-o", compiledURL.path, sourceURL.path]
-
-        let status = PluginManager.shared.runProcessWithTimeout(
-            process,
-            timeout: 5,
-            logPrefix: "Telegram AppleScript compile"
-        )
-
-        XCTAssertEqual(status, 0)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: compiledURL.path))
-    }
-
-    func testTelegramScriptWaitsForPasteConsumptionBeforeRestoringClipboard() throws {
-        let repositoryRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let scriptURL = repositoryRoot.appendingPathComponent(
-            "Plugins/Search Telegram.actionhaloext/script.applescript"
-        )
-        let source = try String(contentsOf: scriptURL, encoding: .utf8)
-
-        let propertyPrefix = "property pasteSettlementDelay : "
-        let propertyRange = try XCTUnwrap(source.range(of: propertyPrefix))
-        let valueStart = propertyRange.upperBound
-        let valueEnd = source[valueStart...].firstIndex(of: "\n") ?? source.endIndex
-        let delayValue = try XCTUnwrap(Double(source[valueStart..<valueEnd]))
-        XCTAssertGreaterThanOrEqual(delayValue, 1.0)
-
-        let pasteCommand = try XCTUnwrap(
-            source.range(of: "keystroke \"v\" using {command down}")
-        )
-        let settlementDelay = try XCTUnwrap(
-            source.range(
-                of: "delay pasteSettlementDelay",
-                range: pasteCommand.upperBound..<source.endIndex
-            )
-        )
-        let normalRestore = try XCTUnwrap(
-            source.range(
-                of: "\nif clipboardWasCaptured and clipboardWasReplaced then",
-                range: settlementDelay.upperBound..<source.endIndex
-            )
-        )
-        XCTAssertLessThan(pasteCommand.lowerBound, settlementDelay.lowerBound)
-        XCTAssertLessThan(settlementDelay.lowerBound, normalRestore.lowerBound)
-    }
-
     func testDeletePluginUsesActualContainedDirectoryInsteadOfIdentifierPath() throws {
         let manager = PluginManager.shared
         try FileManager.default.createDirectory(
@@ -2041,9 +1878,7 @@ final class PluginManagerTests: GlobalStateTestCase {
             withIntermediateDirectories: true
         )
 
-        let bundledConfig = try Data(
-            contentsOf: currentTelegramPluginURL().appendingPathComponent("Config.json")
-        )
+        let bundledConfig = legacyTelegramConfigData()
         let configData = if editorSavedConfig {
             try JSONSerialization.data(
                 withJSONObject: JSONSerialization.jsonObject(with: bundledConfig),
@@ -2074,6 +1909,48 @@ final class PluginManagerTests: GlobalStateTestCase {
         return bundleURL
     }
 
+    private func makeNativeTelegramPluginBundle() throws -> URL {
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".actionhaloext")
+        temporaryDirectories.append(bundleURL)
+        try FileManager.default.createDirectory(
+            at: bundleURL,
+            withIntermediateDirectories: true
+        )
+        try Data(
+            contentsOf: currentTelegramPluginURL().appendingPathComponent("Config.json")
+        ).write(
+            to: bundleURL.appendingPathComponent("Config.json"),
+            options: .atomic
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: bundleURL.path
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: bundleURL.appendingPathComponent("Config.json").path
+        )
+        return bundleURL
+    }
+
+    private func legacyTelegramConfigData() -> Data {
+        let source = """
+        {
+          "identifier": "com.actionhalo.plugin.search-telegram",
+          "name": "Search in Telegram",
+          "description": "Search the selected text in Telegram",
+          "icon": "paperplane",
+          "isDefaultDisabled": true,
+          "action": {
+            "type": "applescript",
+            "script": "script.applescript"
+          }
+        }
+        """
+        return Data(source.utf8)
+    }
+
     private func currentTelegramPluginURL() -> URL {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -2084,17 +1961,21 @@ final class PluginManagerTests: GlobalStateTestCase {
         )
     }
 
-    private func currentTelegramScriptSource() throws -> String {
-        try String(
-            contentsOf: currentTelegramPluginURL().appendingPathComponent(
-                "script.applescript"
+    private func historicalTelegramScriptSource() throws -> String {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Tests/fixtures/Search Telegram v0.3.33.actionhaloext/script.applescript"
             ),
             encoding: .utf8
         )
     }
 
     private func legacyTelegramScriptSource() throws -> String {
-        let currentSource = try currentTelegramScriptSource()
+        let currentSource = try historicalTelegramScriptSource()
         let settlementProperty = "property pasteSettlementDelay : 1.0\n"
         let settlementBlock = """
             -- Telegram consumes Command-V asynchronously on macOS 12. Keep the

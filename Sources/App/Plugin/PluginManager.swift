@@ -1424,6 +1424,17 @@ final class PluginManager: Sendable {
             )
         case .revealPath:
             ActionExecutor.revealPathInFinder(text)
+        case .telegramSearch:
+            Task { @MainActor in
+                if case .failure(let failure) = await TelegramSearch.shared.search(text) {
+                    NSLog(
+                        "[ActionHalo] Telegram search failed (stage=%@, reason=%@, effect=%@).",
+                        String(describing: failure.stage),
+                        String(describing: failure.reason),
+                        String(describing: failure.effect)
+                    )
+                }
+            }
         case .shellScript, .applescript, .keyCombo:
             assertionFailure("Protected and direct key-combo actions must be routed before standard execution.")
         }

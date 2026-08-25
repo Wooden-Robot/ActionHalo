@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.3.34
+
+- Search in Telegram 从内置 AppleScript 改为原生、可验证的 Telegram 搜索动作：通过官方深链接进入全局搜索，再按辅助功能直接写入、定向 Unicode 事件、受保护剪贴板依次降级；只有从 Telegram 搜索框读回完全一致的文本才报告成功。
+- 发布插件不再包含 Telegram AppleScript；通用 AppleScript 插件类型继续保留，现有“在 iTerm2 中执行”和用户自定义 AppleScript 插件不受影响。
+
+- Replaced Search in Telegram's bundled AppleScript with a native, verified Telegram search action. It opens global search through the official deep link, then falls back through direct Accessibility input, targeted Unicode events, and protected clipboard input; success is reported only after an exact query readback.
+- The release plugin no longer ships a Telegram AppleScript. The general AppleScript plugin type remains available, so Run in iTerm2 and user-authored AppleScript plugins are unaffected.
+
 ## v0.3.33
 
 - 修复 macOS 12 上 Search in Telegram 已跳转到 Telegram、但选中文字未进入搜索框的问题：将临时剪贴板保留到粘贴消费完成后再恢复，同时继续保护期间产生的用户新复制内容。

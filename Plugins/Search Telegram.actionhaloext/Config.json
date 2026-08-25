@@ -5,7 +5,6 @@
   "icon": "paperplane",
   "isDefaultDisabled": true,
   "action": {
-    "type": "applescript",
-    "script": "script.applescript"
+    "type": "telegram-search"
   }
 }
