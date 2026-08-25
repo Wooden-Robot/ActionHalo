@@ -156,6 +156,7 @@
 "Built-in: Copy" = "Built-in: Copy";
 "Built-in: Paste" = "Built-in: Paste";
 "Built-in: Reveal in Finder" = "Built-in: Reveal in Finder";
+"Built-in: Telegram Search" = "Built-in: Telegram Search";
 "Action Content:" = "Action Content:";
 "Save" = "Save";
 "Restore Default" = "Restore Default";
@@ -174,6 +175,7 @@
 "Built-in: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)" = "Built-in: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)";
 "Built-in: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)" = "Built-in: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)";
 "Built-in: Reveal in Finder\nOpens the selected file path in Finder\n(Supports /, ~, and file:// paths)" = "Built-in: Reveal in Finder\nOpens the selected file path in Finder\n(Supports /, ~, and file:// paths)";
+"Built-in: Telegram Search\nOpens Telegram global search with the selected text\n(No content configuration needed)" = "Built-in: Telegram Search\nOpens Telegram global search with the selected text\n(No content configuration needed)";
 "Save Failed" = "Save Failed";
 "Name and Identifier cannot be empty." = "Name and Identifier cannot be empty.";
 "Identifier must use only letters, numbers, dots, and hyphens." = "Identifier must use only letters, numbers, dots, and hyphens.";

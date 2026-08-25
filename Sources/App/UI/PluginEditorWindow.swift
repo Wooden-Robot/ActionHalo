@@ -436,7 +436,8 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             "Simulate Key Combo".localized,
             "Built-in: Copy".localized,
             "Built-in: Paste".localized,
-            "Built-in: Reveal in Finder".localized
+            "Built-in: Reveal in Finder".localized,
+            "Built-in: Telegram Search".localized
         ])
         typePopUp.target = self
         typePopUp.action = #selector(typeChanged)
@@ -686,6 +687,9 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         case .revealPath:
             typePopUp.selectItem(at: 6)
             contentTextView.string = ""
+        case .telegramSearch:
+            typePopUp.selectItem(at: 7)
+            contentTextView.string = ""
         }
         refreshTypePresentation()
         updateSaveAvailability()
@@ -791,6 +795,12 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             contentViewScroll.isHidden = true
         case 6: // Reveal in Finder
             infoLabel.stringValue = "Built-in: Reveal in Finder\nOpens the selected file path in Finder\n(Supports /, ~, and file:// paths)".localized
+            contentViewMinHeightConstraint?.constant = 44
+            contentTextView.isEditable = false
+            contentTextView.string = ""
+            contentViewScroll.isHidden = true
+        case 7: // Telegram Search
+            infoLabel.stringValue = "Built-in: Telegram Search\nOpens Telegram global search with the selected text\n(No content configuration needed)".localized
             contentViewMinHeightConstraint?.constant = 44
             contentTextView.isEditable = false
             contentTextView.string = ""
@@ -1002,6 +1012,8 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             actionUpdates["type"] = "paste"
         case 6: // Reveal in Finder
             actionUpdates["type"] = "reveal-path"
+        case 7: // Telegram Search
+            actionUpdates["type"] = "telegram-search"
         default:
             return showError("Unsupported plugin type for saving".localized)
         }
