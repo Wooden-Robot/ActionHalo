@@ -7,6 +7,7 @@ property NSPasteboardTypeString : a reference to current application's NSPastebo
 property NSMutableArray : a reference to current application's NSMutableArray
 property NSUUID : a reference to current application's NSUUID
 property transactionMarkerType : "com.actionhalo.private.clipboard-transaction"
+property pasteSettlementDelay : 1.0
 
 set envText to (system attribute "ACTIONHALO_TEXT")
 
@@ -98,7 +99,10 @@ try
         end tell
     end tell
 
-    delay 0.2
+    -- Telegram consumes Command-V asynchronously on macOS 12. Keep the
+    -- transaction clipboard alive until the application has read its contents.
+    -- The ownership check below still preserves any newer user copy.
+    delay pasteSettlementDelay
 on error errorMessage number errorNumber
     if clipboardWasCaptured and clipboardWasReplaced then
         try
