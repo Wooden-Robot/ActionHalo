@@ -234,6 +234,8 @@ final class AccessibilityManager {
     nonisolated static let maximumPasteboardSnapshotTypes = 128
     nonisolated static let pasteboardStableReadAttempts = 3
     nonisolated static let accessibilityMessagingTimeout: Float = 0.25
+    nonisolated static let focusedElementRetryDelays: [TimeInterval] = [0.05, 0.1]
+    nonisolated static let focusedElementRecoveryRetryDelays: [TimeInterval] = [0.05, 0.1]
     nonisolated static let copyFallbackWorstCaseDuration =
         copyFallbackPreflightDelay +
         copyFallbackKeyGap +
@@ -300,7 +302,7 @@ final class AccessibilityManager {
         "AXSecure"
     ]
 
-    enum ProtectedTextAssessment: Equatable {
+    enum ProtectedTextAssessment: Equatable, Sendable {
         case protectedContent
         case unprotected
         case indeterminate
@@ -340,14 +342,224 @@ final class AccessibilityManager {
                 AccessibilityManager.copyFallbackStableObservationSamples
         }
     }
+
+    enum RetryDisposition: Equatable, Sendable {
+        case accept
+        case retry
+        case retryLookup
+        case reject
+    }
+
+    struct FocusedWindowConstraint {
+        let windowID: CGWindowID
+        let ownerPID: pid_t
+        let bounds: CGRect
+        let expectedSelectionWindow: AXUIElement?
+
+        init(
+            windowID: CGWindowID,
+            ownerPID: pid_t,
+            bounds: CGRect,
+            expectedSelectionWindow: AXUIElement? = nil
+        ) {
+            self.windowID = windowID
+            self.ownerPID = ownerPID
+            self.bounds = bounds
+            self.expectedSelectionWindow = expectedSelectionWindow
+        }
+    }
+
+    /// AXUIElement is an immutable Core Foundation proxy but is not declared
+    /// Sendable by the SDK. Keep the unchecked boundary private and use it only
+    /// for a one-way ownership handoff between the AX worker and MainActor.
+    private struct TransferredAXElement: @unchecked Sendable {
+        let value: AXUIElement
+    }
+
+    private struct TransferredAssessedFocusedElement: @unchecked Sendable {
+        let selectionWindow: AXUIElement?
+        let assessment: FocusedElementAssessment
+    }
+
+    /// AX attributes can briefly time out even after focus itself has resolved.
+    /// Keep those reads on a per-request worker and retry the whole assessment
+    /// without blocking MainActor or asking it to touch the AX proxy again.
+    private actor ElementAssessmentSession {
+        private let focusedElement: AXUIElement
+        private let systemWideElement: AXUIElement
+
+        init(focusedElement: TransferredAXElement) {
+            self.focusedElement = focusedElement.value
+            systemWideElement = AXUIElementCreateSystemWide()
+            _ = AXUIElementSetMessagingTimeout(
+                systemWideElement,
+                AccessibilityManager.accessibilityMessagingTimeout
+            )
+        }
+
+        func resolve(
+            bundleID: String?,
+            accessibilityPoints: [CGPoint],
+            requireUsableSelection: Bool,
+            retryDelays: [TimeInterval]
+        ) async -> TransferredAssessedFocusedElement? {
+            var latestAssessment: FocusedElementAssessment?
+
+            for attemptIndex in 0...retryDelays.count {
+                guard !Task.isCancelled else { return nil }
+                let assessment = AccessibilityManager.focusedElementAssessment(
+                    for: focusedElement,
+                    systemWideElement: systemWideElement,
+                    bundleID: bundleID,
+                    accessibilityPoints: accessibilityPoints
+                )
+                latestAssessment = assessment
+
+                if assessment.protection == .protectedContent ||
+                    (assessment.protection == .unprotected &&
+                        assessment.pointAssessments.allSatisfy(\.isResolved) &&
+                        (!requireUsableSelection ||
+                            assessment.selectionSnapshot?.usableText != nil)) {
+                    break
+                }
+
+                guard attemptIndex < retryDelays.count else { break }
+                do {
+                    try await Task<Never, Never>.sleep(
+                        nanoseconds: UInt64(
+                            max(0, retryDelays[attemptIndex]) * 1_000_000_000
+                        )
+                    )
+                } catch {
+                    return nil
+                }
+            }
+
+            guard !Task.isCancelled, let latestAssessment else { return nil }
+            return TransferredAssessedFocusedElement(
+                selectionWindow: AccessibilityManager.selectionWindowElement(
+                    for: focusedElement
+                ),
+                assessment: latestAssessment
+            )
+        }
+    }
+
+    /// One resolver is created per trigger request. A cancelled, uninterruptible
+    /// AX IPC can therefore finish on its own executor without serializing a
+    /// newer mouse or hotkey request behind it.
+    private actor FocusResolutionSession {
+        private var systemWideElement: AXUIElement?
+        private var focusedElement: AXUIElement?
+        private let expectedSelectionWindow: AXUIElement?
+        private let capturedWindowBounds: CGRect?
+
+        init(
+            expectedSelectionWindow: TransferredAXElement?,
+            capturedWindowBounds: CGRect?
+        ) {
+            self.expectedSelectionWindow = expectedSelectionWindow?.value
+            self.capturedWindowBounds = capturedWindowBounds
+        }
+
+        func resolveFocus(processIdentifier: pid_t) -> Bool {
+            guard !Task.isCancelled else { return false }
+            if focusedElement == nil {
+                focusedElement = lookupFocusedElement(
+                    processIdentifier: processIdentifier
+                )
+            }
+            return focusedElement != nil && !Task.isCancelled
+        }
+
+        /// nil means the AX window attributes are not published yet and may be
+        /// retried. false is an explicit cross-window mismatch and must stop.
+        func accessibilityWindowMatchesConstraint() -> Bool? {
+            guard !Task.isCancelled, let focusedElement else { return nil }
+            guard expectedSelectionWindow != nil || capturedWindowBounds != nil else {
+                return true
+            }
+            guard let selectionWindow = AccessibilityManager.selectionWindowElement(
+                for: focusedElement
+            ) else {
+                return nil
+            }
+
+            if let expectedSelectionWindow {
+                return CFEqual(expectedSelectionWindow, selectionWindow)
+            }
+
+            guard let frame = AccessibilityManager.frameOfElement(selectionWindow),
+                  let capturedWindowBounds else {
+                return nil
+            }
+            return TextSelectionMonitor.accessibilityWindowFrameMatchesCapturedWindow(
+                frame,
+                capturedBounds: capturedWindowBounds
+            )
+        }
+
+        func discardFocusedElement() {
+            focusedElement = nil
+        }
+
+        func takeFocusedElement() -> TransferredAXElement? {
+            guard !Task.isCancelled, let focusedElement else { return nil }
+            self.focusedElement = nil
+            return TransferredAXElement(value: focusedElement)
+        }
+
+        private func lookupFocusedElement(
+            processIdentifier: pid_t
+        ) -> AXUIElement? {
+            // The PID-specific application query avoids the system-wide focus
+            // publication gap seen in Notes on macOS 15.x and is also cheaper.
+            let application = AXUIElementCreateApplication(processIdentifier)
+            _ = AXUIElementSetMessagingTimeout(
+                application,
+                AccessibilityManager.accessibilityMessagingTimeout
+            )
+            if let candidate = AccessibilityManager.focusedElement(
+                fromApplication: application,
+                expectedProcessIdentifier: processIdentifier
+            ), AccessibilityManager.element(
+                candidate,
+                belongsTo: processIdentifier
+            ) {
+                return candidate
+            }
+
+            guard !Task.isCancelled else { return nil }
+            let systemWide: AXUIElement
+            if let systemWideElement {
+                systemWide = systemWideElement
+            } else {
+                let newSystemWideElement = AXUIElementCreateSystemWide()
+                _ = AXUIElementSetMessagingTimeout(
+                    newSystemWideElement,
+                    AccessibilityManager.accessibilityMessagingTimeout
+                )
+                systemWideElement = newSystemWideElement
+                systemWide = newSystemWideElement
+            }
+            guard let candidate = AccessibilityManager.focusedElement(
+                fromSystemWideElement: systemWide,
+                expectedProcessIdentifier: processIdentifier
+            ), AccessibilityManager.element(
+                candidate,
+                belongsTo: processIdentifier
+            ) else {
+                return nil
+            }
+            return candidate
+        }
+    }
     
     static let shared = AccessibilityManager()
     
     private let systemWideElement: AXUIElement
     private let copyFallbackQueue = DispatchQueue(label: "com.actionhalo.copy-fallback", qos: .userInitiated)
     private let copyFallbackCoordinator = CopyFallbackRequestCoordinator()
-    private var copyFallbackExpectedFocusedElements: [UUID: AXUIElement] = [:]
-    private var copyFallbackAllowsMissingFocusedElement: Set<UUID> = []
 
     enum SelectionAcquisitionSource {
         case accessibility
@@ -369,7 +581,7 @@ final class AccessibilityManager {
         let textLength: Int
     }
 
-    struct SelectionSnapshot: Equatable {
+    struct SelectionSnapshot: Equatable, Sendable {
         let text: String?
         let rangeLocation: Int?
         let rangeLength: Int?
@@ -413,6 +625,25 @@ final class AccessibilityManager {
         var canReadSelectedTextViaAccessibility: Bool {
             hasReadableSelectedTextAttribute
         }
+    }
+
+    struct PointSelectionAssessment: Equatable, Sendable {
+        let isTextSelectionContext: Bool
+        let isInsideFocusedElementBounds: Bool
+        let isResolved: Bool
+    }
+
+    struct FocusedElementAssessment: Equatable, Sendable {
+        let protection: ProtectedTextAssessment
+        let isSelectionEditable: Bool
+        let selectionSnapshot: SelectionSnapshot?
+        let pointAssessments: [PointSelectionAssessment]
+    }
+
+    struct AssessedFocusedElement {
+        let focusedElement: AXUIElement
+        let selectionWindow: AXUIElement?
+        let assessment: FocusedElementAssessment
     }
 
     enum SelectionAttemptFailure {
@@ -567,6 +798,12 @@ final class AccessibilityManager {
     }
 
     func currentSelectionSnapshot(for element: AXUIElement) -> SelectionSnapshot? {
+        Self.selectionSnapshot(for: element)
+    }
+
+    nonisolated private static func selectionSnapshot(
+        for element: AXUIElement
+    ) -> SelectionSnapshot? {
         guard Self.protectionAssessment(for: element) == .unprotected else { return nil }
 
         var selectedText: String?
@@ -639,6 +876,12 @@ final class AccessibilityManager {
     }
 
     func isSelectionEditable(_ focusedElement: AXUIElement) -> Bool {
+        Self.selectionEditable(focusedElement)
+    }
+
+    nonisolated private static func selectionEditable(
+        _ focusedElement: AXUIElement
+    ) -> Bool {
         guard Self.protectionAssessment(for: focusedElement) == .unprotected else { return false }
 
         var isSettable: DarwinBoolean = false
@@ -718,6 +961,7 @@ final class AccessibilityManager {
     func getSelectedTextViaCopy(
         expectedProcessIdentifier: pid_t? = NSWorkspace.shared.frontmostApplication?.processIdentifier,
         expectedFocusedElement: AXUIElement? = nil,
+        expectedFocusedElementAssessment: ProtectedTextAssessment? = nil,
         allowMissingFocusedElement: Bool = false,
         expectedBundleID: String? = nil,
         expectedWindowID: CGWindowID? = nil,
@@ -726,17 +970,18 @@ final class AccessibilityManager {
     ) -> UUID {
         let requestID = copyFallbackCoordinator.beginRequest()
         let coordinator = copyFallbackCoordinator
-        if let focusedElement = expectedFocusedElement {
-            copyFallbackExpectedFocusedElements[requestID] = focusedElement
-        } else if allowMissingFocusedElement {
-            copyFallbackAllowsMissingFocusedElement.insert(requestID)
-        } else if let focusedElement = getFocusedElement() {
-            copyFallbackExpectedFocusedElements[requestID] = focusedElement
-        }
-
+        let requestExpectedFocusedElement = expectedFocusedElement ??
+            (allowMissingFocusedElement ? nil : getFocusedElement(
+                expectedProcessIdentifier: expectedProcessIdentifier
+            ))
         let requestAllowsMissingFocusedElement =
-            copyFallbackAllowsMissingFocusedElement.contains(requestID)
-        guard !shouldSuppressCopyFallback(
+            requestExpectedFocusedElement == nil && allowMissingFocusedElement
+        let requestFocusedElementAssessment = expectedFocusedElementAssessment ??
+            requestExpectedFocusedElement.map { Self.protectionAssessment(for: $0) }
+        guard !Self.shouldSuppressCopyFallback(
+            focusedElementAssessment: requestFocusedElementAssessment,
+            secureEventInputEnabled: isSecureEventInputEnabled(),
+            accessibilityEnabled: isAccessibilityEnabled,
             allowMissingFocusedElement: requestAllowsMissingFocusedElement
         ) else {
             Self.finishCopyFallbackRequest(
@@ -746,6 +991,9 @@ final class AccessibilityManager {
                 completion: completion
             )
             return requestID
+        }
+        let transferredExpectedFocusedElement = requestExpectedFocusedElement.map {
+            TransferredAXElement(value: $0)
         }
 
         copyFallbackQueue.async {
@@ -757,7 +1005,10 @@ final class AccessibilityManager {
                   Self.copyFallbackContextIsValid(
                 coordinator: coordinator,
                 requestID: requestID,
-                expectedProcessIdentifier: expectedProcessIdentifier
+                expectedProcessIdentifier: expectedProcessIdentifier,
+                expectedFocusedElement: transferredExpectedFocusedElement?.value,
+                allowMissingFocusedElement: requestAllowsMissingFocusedElement,
+                expectedWindowID: expectedWindowID
             ) else {
                 Self.finishCopyFallbackRequest(
                     coordinator: coordinator,
@@ -808,7 +1059,10 @@ final class AccessibilityManager {
             let contextIsValidAfterSnapshot = Self.copyFallbackContextIsValid(
                 coordinator: coordinator,
                 requestID: requestID,
-                expectedProcessIdentifier: expectedProcessIdentifier
+                expectedProcessIdentifier: expectedProcessIdentifier,
+                expectedFocusedElement: transferredExpectedFocusedElement?.value,
+                allowMissingFocusedElement: requestAllowsMissingFocusedElement,
+                expectedWindowID: expectedWindowID
             )
             guard Self.shouldPostCopyFallbackEvents(
                 contextIsValidAfterSnapshot: contextIsValidAfterSnapshot,
@@ -870,6 +1124,8 @@ final class AccessibilityManager {
                 coordinator: coordinator,
                 requestID: requestID,
                 expectedProcessIdentifier: expectedProcessIdentifier,
+                expectedFocusedElement: transferredExpectedFocusedElement?.value,
+                allowMissingFocusedElement: requestAllowsMissingFocusedElement,
                 expectedBundleID: expectedBundleID,
                 expectedWindowID: expectedWindowID,
                 allowsAcquiredSelectionFocusFallback:
@@ -894,138 +1150,185 @@ final class AccessibilityManager {
 
     func cancelSelectedTextViaCopy(_ requestID: UUID) {
         copyFallbackCoordinator.cancelRequest(requestID)
-        copyFallbackExpectedFocusedElements.removeValue(forKey: requestID)
-        copyFallbackAllowsMissingFocusedElement.remove(requestID)
     }
 
     func cancelActiveSelectedTextViaCopy() {
         copyFallbackCoordinator.cancelActiveRequest()
-        copyFallbackExpectedFocusedElements.removeAll()
-        copyFallbackAllowsMissingFocusedElement.removeAll()
     }
 
     nonisolated private static func copyFallbackContextIsValid(
         coordinator: CopyFallbackRequestCoordinator,
         requestID: UUID,
         expectedProcessIdentifier: pid_t?,
+        expectedFocusedElement: AXUIElement?,
+        allowMissingFocusedElement: Bool,
         expectedBundleID: String? = nil,
         expectedWindowID: CGWindowID? = nil,
         allowsAcquiredSelectionFocusFallback: Bool = false
     ) -> Bool {
-        let context: (
-            processIdentifier: pid_t?,
-            isSelectionSuppressed: Bool,
-            focusedElementMatches: Bool
+        guard coordinator.isRequestActive(requestID),
+              let expectedProcessIdentifier else {
+            return false
+        }
+        let currentFocusedElement = focusedElementForCopyFallbackWithRetry(
+            processIdentifier: expectedProcessIdentifier,
+            retryDelays: expectedFocusedElement == nil && allowMissingFocusedElement
+                ? []
+                : focusedElementRetryDelays,
+            isAccepted: { candidate in
+                guard let expectedFocusedElement else {
+                    return allowMissingFocusedElement
+                }
+                if areSameAccessibilityElement(expectedFocusedElement, candidate) {
+                    return protectionAssessment(for: candidate) == .unprotected
+                }
+                guard allowsAcquiredSelectionFocusFallback,
+                      expectedBundleID?.lowercased() == "ru.keepcoder.telegram",
+                      isStructuralSelectionFocusElement(candidate) else {
+                    return false
+                }
+                return areSameAccessibilityElement(
+                    selectionWindowElement(for: expectedFocusedElement),
+                    selectionWindowElement(for: candidate)
+                ) && protectionAssessment(for: candidate) == .unprotected
+            },
+            shouldContinue: {
+                coordinator.isRequestActive(requestID) &&
+                    frontmostProcessIdentifierOnMainActor() ==
+                        expectedProcessIdentifier
+            }
         )
-        if Thread.isMainThread {
-            context = MainActor.assumeIsolated {
-                let manager = AccessibilityManager.shared
-                let expectedFocusedElement = manager.copyFallbackExpectedFocusedElements[requestID]
-                let currentProcessIdentifier =
-                    NSWorkspace.shared.frontmostApplication?.processIdentifier
-                let allowMissingFocusedElement =
-                    manager.copyFallbackAllowsMissingFocusedElement.contains(requestID)
-                let currentFocusedElement = manager.getFocusedElement()
-                let acquiredSelectionContextMatches =
-                    allowsAcquiredSelectionFocusFallback
-                    ? TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
-                        expectedProcessIdentifier: expectedProcessIdentifier,
-                        currentProcessIdentifier: currentProcessIdentifier,
-                        bundleID: expectedBundleID,
-                        expectedFocusedElementAvailable: expectedFocusedElement != nil,
-                        currentFocusedElementAvailable: currentFocusedElement != nil,
-                        focusedElementMatches: areSameAccessibilityElement(
-                            expectedFocusedElement,
-                            currentFocusedElement
-                        ),
-                        currentFocusedElementIsStructural:
-                            manager.isStructuralSelectionFocus(currentFocusedElement),
-                        focusedWindowMatches: areSameAccessibilityElement(
-                            manager.selectionWindow(for: expectedFocusedElement),
-                            manager.selectionWindow(for: currentFocusedElement)
-                        ),
-                        expectedWindowID: expectedWindowID,
-                        currentWindowID: TextSelectionMonitor.currentFrontmostWindowSnapshot(
-                            frontmostProcessID: currentProcessIdentifier,
-                            matching: expectedWindowID
-                        )?.windowID
-                    )
-                    : nil
-                return (
-                    currentProcessIdentifier,
-                    manager.shouldSuppressCopyFallback(
-                        allowMissingFocusedElement: allowMissingFocusedElement
-                    ),
-                    copyFallbackFocusedElementMatches(
-                        expectedFocusedElementAvailable: expectedFocusedElement != nil,
-                        focusedElementMatches: areSameAccessibilityElement(
-                            expectedFocusedElement,
-                            currentFocusedElement
-                        ),
-                        allowMissingFocusedElement: allowMissingFocusedElement,
-                        acquiredSelectionContextMatches: acquiredSelectionContextMatches
-                    )
-                )
-            }
-        } else {
-            context = DispatchQueue.main.sync {
-                let manager = AccessibilityManager.shared
-                let expectedFocusedElement = manager.copyFallbackExpectedFocusedElements[requestID]
-                let currentProcessIdentifier =
-                    NSWorkspace.shared.frontmostApplication?.processIdentifier
-                let allowMissingFocusedElement =
-                    manager.copyFallbackAllowsMissingFocusedElement.contains(requestID)
-                let currentFocusedElement = manager.getFocusedElement()
-                let acquiredSelectionContextMatches =
-                    allowsAcquiredSelectionFocusFallback
-                    ? TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
-                        expectedProcessIdentifier: expectedProcessIdentifier,
-                        currentProcessIdentifier: currentProcessIdentifier,
-                        bundleID: expectedBundleID,
-                        expectedFocusedElementAvailable: expectedFocusedElement != nil,
-                        currentFocusedElementAvailable: currentFocusedElement != nil,
-                        focusedElementMatches: areSameAccessibilityElement(
-                            expectedFocusedElement,
-                            currentFocusedElement
-                        ),
-                        currentFocusedElementIsStructural:
-                            manager.isStructuralSelectionFocus(currentFocusedElement),
-                        focusedWindowMatches: areSameAccessibilityElement(
-                            manager.selectionWindow(for: expectedFocusedElement),
-                            manager.selectionWindow(for: currentFocusedElement)
-                        ),
-                        expectedWindowID: expectedWindowID,
-                        currentWindowID: TextSelectionMonitor.currentFrontmostWindowSnapshot(
-                            frontmostProcessID: currentProcessIdentifier,
-                            matching: expectedWindowID
-                        )?.windowID
-                    )
-                    : nil
-                return (
-                    currentProcessIdentifier,
-                    manager.shouldSuppressCopyFallback(
-                        allowMissingFocusedElement: allowMissingFocusedElement
-                    ),
-                    copyFallbackFocusedElementMatches(
-                        expectedFocusedElementAvailable: expectedFocusedElement != nil,
-                        focusedElementMatches: areSameAccessibilityElement(
-                            expectedFocusedElement,
-                            currentFocusedElement
-                        ),
-                        allowMissingFocusedElement: allowMissingFocusedElement,
-                        acquiredSelectionContextMatches: acquiredSelectionContextMatches
-                    )
-                )
-            }
+        guard coordinator.isRequestActive(requestID) else { return false }
+        let currentProcessIdentifier = frontmostProcessIdentifierOnMainActor()
+        let currentWindowID = TextSelectionMonitor.currentFrontmostWindowSnapshot(
+            frontmostProcessID: currentProcessIdentifier
+        )?.windowID
+        if let expectedWindowID, currentWindowID != expectedWindowID {
+            return false
         }
 
+        let focusedElementMatches = areSameAccessibilityElement(
+            expectedFocusedElement,
+            currentFocusedElement
+        )
+        let needsStructuralFocusFallback =
+            expectedFocusedElement != nil && !focusedElementMatches
+        let acquiredSelectionContextMatches = allowsAcquiredSelectionFocusFallback
+            ? TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+                expectedProcessIdentifier: expectedProcessIdentifier,
+                currentProcessIdentifier: currentProcessIdentifier,
+                bundleID: expectedBundleID,
+                expectedFocusedElementAvailable: expectedFocusedElement != nil,
+                currentFocusedElementAvailable: currentFocusedElement != nil,
+                focusedElementMatches: focusedElementMatches,
+                currentFocusedElementIsStructural:
+                    needsStructuralFocusFallback &&
+                    isStructuralSelectionFocusElement(currentFocusedElement),
+                focusedWindowMatches: needsStructuralFocusFallback &&
+                    areSameAccessibilityElement(
+                        selectionWindowElement(for: expectedFocusedElement),
+                        selectionWindowElement(for: currentFocusedElement)
+                    ),
+                expectedWindowID: expectedWindowID,
+                currentWindowID: currentWindowID
+            )
+            : nil
+        let focusedElementAssessment: ProtectedTextAssessment?
+        if currentFocusedElement != nil, expectedFocusedElement != nil {
+            // The bounded resolver accepts a captured-focus candidate only
+            // after its protection chain reads as unprotected. Re-reading it
+            // here would reintroduce the one-shot AX false negative we just
+            // eliminated.
+            focusedElementAssessment = .unprotected
+        } else {
+            focusedElementAssessment = currentFocusedElement.map {
+                protectionAssessment(for: $0)
+            }
+        }
+        let isSelectionSuppressed = shouldSuppressCopyFallback(
+            focusedElementAssessment: focusedElementAssessment,
+            secureEventInputEnabled: IsSecureEventInputEnabled(),
+            accessibilityEnabled: AXIsProcessTrusted(),
+            allowMissingFocusedElement: allowMissingFocusedElement
+        )
+        let focusedElementContextMatches = copyFallbackFocusedElementMatches(
+            expectedFocusedElementAvailable: expectedFocusedElement != nil,
+            focusedElementMatches: focusedElementMatches,
+            allowMissingFocusedElement: allowMissingFocusedElement,
+            acquiredSelectionContextMatches: acquiredSelectionContextMatches
+        )
         return shouldContinueCopyFallback(
             requestIsActive: coordinator.isRequestActive(requestID),
             expectedProcessIdentifier: expectedProcessIdentifier,
-            currentProcessIdentifier: context.processIdentifier,
-            isSelectionSuppressed: context.isSelectionSuppressed,
-            focusedElementMatches: context.focusedElementMatches
+            currentProcessIdentifier: currentProcessIdentifier,
+            isSelectionSuppressed: isSelectionSuppressed,
+            focusedElementMatches: focusedElementContextMatches
         )
+    }
+
+    nonisolated private static func focusedElementForCopyFallbackWithRetry(
+        processIdentifier: pid_t,
+        retryDelays: [TimeInterval] = focusedElementRetryDelays,
+        isAccepted: (AXUIElement) -> Bool,
+        shouldContinue: () -> Bool
+    ) -> AXUIElement? {
+        resolveSynchronousCandidateWithRetry(
+            retryDelays: retryDelays,
+            lookup: {
+                guard shouldContinue() else { return nil }
+                let application = AXUIElementCreateApplication(processIdentifier)
+                _ = AXUIElementSetMessagingTimeout(
+                    application,
+                    accessibilityMessagingTimeout
+                )
+                guard let focusedElement = focusedElement(
+                    fromApplication: application,
+                    expectedProcessIdentifier: processIdentifier
+                ), element(focusedElement, belongsTo: processIdentifier) else {
+                    return nil
+                }
+                return focusedElement
+            },
+            isAccepted: isAccepted,
+            shouldContinue: shouldContinue,
+            wait: { delay in
+                guard delay >= 0, shouldContinue() else { return false }
+                usleep(useconds_t(delay * 1_000_000))
+                return shouldContinue()
+            }
+        )
+    }
+
+    nonisolated static func resolveSynchronousCandidateWithRetry<Candidate>(
+        retryDelays: [TimeInterval],
+        lookup: () -> Candidate?,
+        isAccepted: (Candidate) -> Bool,
+        shouldContinue: () -> Bool,
+        wait: (TimeInterval) -> Bool
+    ) -> Candidate? {
+        for attemptIndex in 0...retryDelays.count {
+            guard shouldContinue() else { return nil }
+            if let candidate = lookup(), isAccepted(candidate) {
+                return candidate
+            }
+
+            guard attemptIndex < retryDelays.count,
+                  wait(retryDelays[attemptIndex]) else {
+                break
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func frontmostProcessIdentifierOnMainActor() -> pid_t? {
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated {
+                NSWorkspace.shared.frontmostApplication?.processIdentifier
+            }
+        }
+        return DispatchQueue.main.sync {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier
+        }
     }
 
     nonisolated private static func finishCopyFallbackRequest(
@@ -1035,10 +1338,6 @@ final class AccessibilityManager {
         completion: @escaping @MainActor @Sendable (String?) -> Void
     ) {
         Task { @MainActor in
-            AccessibilityManager.shared.copyFallbackExpectedFocusedElements
-                .removeValue(forKey: requestID)
-            AccessibilityManager.shared.copyFallbackAllowsMissingFocusedElement
-                .remove(requestID)
             let isLatestRequest = coordinator.completeRequestIfActive(requestID)
             completion(isLatestRequest ? result : nil)
         }
@@ -1072,24 +1371,33 @@ final class AccessibilityManager {
     }
 
     func shouldSuppressSelectionPresentation(
-        allowMissingFocusedElement: Bool = false
+        allowMissingFocusedElement: Bool = false,
+        expectedProcessIdentifier: pid_t? = nil
     ) -> Bool {
         let accessibilityEnabled = isAccessibilityEnabled
-        let focusedElementAssessment = accessibilityEnabled
-            ? getFocusedElement().map { Self.protectionAssessment(for: $0) }
+        let focusedElement = accessibilityEnabled
+            ? getFocusedElement(expectedProcessIdentifier: expectedProcessIdentifier)
             : nil
+        return shouldSuppressSelectionPresentation(
+            focusedElement: focusedElement,
+            allowMissingFocusedElement: allowMissingFocusedElement,
+            accessibilityEnabled: accessibilityEnabled
+        )
+    }
+
+    func shouldSuppressSelectionPresentation(
+        focusedElement: AXUIElement?,
+        allowMissingFocusedElement: Bool = false,
+        accessibilityEnabled: Bool? = nil
+    ) -> Bool {
+        let accessibilityEnabled = accessibilityEnabled ?? isAccessibilityEnabled
+        let focusedElementAssessment = focusedElement.map {
+            Self.protectionAssessment(for: $0)
+        }
         return Self.shouldSuppressCopyFallback(
             focusedElementAssessment: focusedElementAssessment,
             secureEventInputEnabled: isSecureEventInputEnabled(),
             accessibilityEnabled: accessibilityEnabled,
-            allowMissingFocusedElement: allowMissingFocusedElement
-        )
-    }
-
-    private func shouldSuppressCopyFallback(
-        allowMissingFocusedElement: Bool
-    ) -> Bool {
-        shouldSuppressSelectionPresentation(
             allowMissingFocusedElement: allowMissingFocusedElement
         )
     }
@@ -1499,6 +1807,18 @@ final class AccessibilityManager {
 
     private func isPoint(_ point: NSPoint, inside element: AXUIElement) -> Bool {
         guard let axPoint = accessibilityScreenPoint(for: point) else { return false }
+        guard let frame = frame(of: element) else { return false }
+        return frame.contains(axPoint)
+    }
+
+    func frame(of element: AXUIElement?) -> CGRect? {
+        Self.frameOfElement(element)
+    }
+
+    nonisolated private static func frameOfElement(
+        _ element: AXUIElement?
+    ) -> CGRect? {
+        guard let element else { return nil }
         var positionValue: AnyObject?
         var sizeValue: AnyObject?
         guard AXUIElementCopyAttributeValue(
@@ -1515,7 +1835,7 @@ final class AccessibilityManager {
               let sizeValue,
               CFGetTypeID(positionValue) == AXValueGetTypeID(),
               CFGetTypeID(sizeValue) == AXValueGetTypeID() else {
-            return false
+            return nil
         }
 
         let positionAXValue = unsafeBitCast(positionValue, to: AXValue.self)
@@ -1524,10 +1844,10 @@ final class AccessibilityManager {
         var size = CGSize.zero
         guard AXValueGetValue(positionAXValue, .cgPoint, &position),
               AXValueGetValue(sizeAXValue, .cgSize, &size) else {
-            return false
+            return nil
         }
 
-        return CGRect(origin: position, size: size).contains(axPoint)
+        return CGRect(origin: position, size: size)
     }
     
     /// Check if the element at the specified screen coordinates is a text input field
@@ -1600,25 +1920,41 @@ final class AccessibilityManager {
     /// specifically excluding structural elements like Finder rows, cells, or images that get double-clicked.
     func isTextElement(at point: NSPoint) -> Bool {
         guard isAccessibilityEnabled else { return false }
-
-        // 1. Get the globally focused element or the element exactly under the mouse
-        // We use systemWideElement to hit-test the specific point on screen
         guard let axPoint = accessibilityScreenPoint(for: point) else { return false }
-        
+        return Self.textElementAssessment(
+            atAccessibilityPoint: axPoint,
+            systemWideElement: systemWideElement,
+            bundleID: getFocusedAppBundleID()
+        ) ?? false
+    }
+
+    nonisolated private static func textElementAssessment(
+        atAccessibilityPoint point: CGPoint,
+        systemWideElement: AXUIElement,
+        bundleID: String?
+    ) -> Bool? {
         var hitElementRaw: AXUIElement?
-        let hitResult = AXUIElementCopyElementAtPosition(systemWideElement, Float(axPoint.x), Float(axPoint.y), &hitElementRaw)
-        
-        guard hitResult == .success, let hitElement = hitElementRaw else { return false }
-        guard Self.protectionAssessment(for: hitElement) == .unprotected else { return false }
-        
-        // 2. Identify the role
+        let hitResult = AXUIElementCopyElementAtPosition(
+            systemWideElement,
+            Float(point.x),
+            Float(point.y),
+            &hitElementRaw
+        )
+
+        guard hitResult == .success, let hitElement = hitElementRaw else { return nil }
+        let hitProtection = Self.protectionAssessment(for: hitElement)
+        guard hitProtection != .indeterminate else { return nil }
+        guard hitProtection == .unprotected else { return false }
+
         var roleValue: AnyObject?
-        let roleResult = AXUIElementCopyAttributeValue(hitElement, kAXRoleAttribute as CFString, &roleValue)
-        guard roleResult == .success, let role = roleValue as? String else { return false }
-        let bundleID = getFocusedAppBundleID()
-        let ancestorRoles = ancestorRoles(for: hitElement)
-        
-        // Allowed roles that represent actual selectable text content
+        let roleResult = AXUIElementCopyAttributeValue(
+            hitElement,
+            kAXRoleAttribute as CFString,
+            &roleValue
+        )
+        guard roleResult == .success, let role = roleValue as? String else { return nil }
+        let ancestorRoles = Self.ancestorRoles(for: hitElement)
+
         let allowedRoles = [
             kAXStaticTextRole,
             kAXTextFieldRole,
@@ -1628,8 +1964,6 @@ final class AccessibilityManager {
             "AXParagraph",
             "AXLink"
         ]
-        
-        // Strictly forbidden roles (Finder files, Desktop icons, buttons, table cells)
         let forbiddenRoles = [
             kAXImageRole,
             kAXCellRole,
@@ -1648,19 +1982,523 @@ final class AccessibilityManager {
         ) {
             return true
         }
-        
-        // If it's an unknown group, we default to false to be safe and avoid misfires,
-        // EXCEPT if it's Electron/Chromium (which often wrap text in generic AXGroups).
-        // Let's explicitly check the app ID.
+
         if role == "AXGroup",
            Self.isLikelyRichTextSelectionHost(bundleID: bundleID) {
             return true
         }
-        
+
         return false
     }
+
+    nonisolated private static func focusedElementAssessment(
+        for focusedElement: AXUIElement,
+        systemWideElement: AXUIElement,
+        bundleID: String?,
+        accessibilityPoints: [CGPoint]
+    ) -> FocusedElementAssessment {
+        let protection = protectionAssessment(for: focusedElement)
+        guard protection == .unprotected else {
+            return FocusedElementAssessment(
+                protection: protection,
+                isSelectionEditable: false,
+                selectionSnapshot: nil,
+                pointAssessments: accessibilityPoints.map { _ in
+                    PointSelectionAssessment(
+                        isTextSelectionContext: false,
+                        isInsideFocusedElementBounds: false,
+                        isResolved: protection == .protectedContent
+                    )
+                }
+            )
+        }
+
+        let focusedFrame = frameOfElement(focusedElement)
+        var roleValue: AnyObject?
+        let role = AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXRoleAttribute as CFString,
+            &roleValue
+        ) == .success ? roleValue as? String : nil
+        let ancestorRoles = ancestorRoles(for: focusedElement)
+        let focusedRoleIsTextContext = role.map {
+            shouldTreatFocusedRoleAsTextSelectionContext(
+                role: $0,
+                ancestorRoles: ancestorRoles,
+                bundleID: bundleID
+            )
+        }
+        let pointAssessments = accessibilityPoints.map { point in
+            let isInsideFocusedElementBounds = focusedFrame?.contains(point) ?? false
+            let focusedContextAssessment: Bool?
+            if let focusedRoleIsTextContext {
+                focusedContextAssessment = focusedRoleIsTextContext
+                    ? focusedFrame.map { $0.contains(point) }
+                    : false
+            } else {
+                focusedContextAssessment = nil
+            }
+            let hitContextAssessment = textElementAssessment(
+                atAccessibilityPoint: point,
+                systemWideElement: systemWideElement,
+                bundleID: bundleID
+            )
+            let isTextSelectionContext =
+                hitContextAssessment == true || focusedContextAssessment == true
+            return PointSelectionAssessment(
+                isTextSelectionContext: isTextSelectionContext,
+                isInsideFocusedElementBounds: isInsideFocusedElementBounds,
+                isResolved: isTextSelectionContext ||
+                    (hitContextAssessment != nil && focusedContextAssessment != nil)
+            )
+        }
+
+        return FocusedElementAssessment(
+            protection: protection,
+            isSelectionEditable: selectionEditable(focusedElement),
+            selectionSnapshot: selectionSnapshot(for: focusedElement),
+            pointAssessments: pointAssessments
+        )
+    }
     
-    func getFocusedElement() -> AXUIElement? {
+    nonisolated static func resolveFocusedElement(
+        frontmostProcessIdentifier: pid_t?,
+        systemWideLookup: () -> AXUIElement?,
+        directApplicationLookup: (pid_t) -> AXUIElement?,
+        candidateBelongsToProcess: (AXUIElement, pid_t) -> Bool,
+        isProcessStillFrontmost: (pid_t) -> Bool
+    ) -> AXUIElement? {
+        guard let frontmostProcessIdentifier,
+              isProcessStillFrontmost(frontmostProcessIdentifier) else {
+            return nil
+        }
+
+        let focusedElement: AXUIElement?
+        if let systemWideCandidate = systemWideLookup(),
+           candidateBelongsToProcess(systemWideCandidate, frontmostProcessIdentifier) {
+            focusedElement = systemWideCandidate
+        } else if let directCandidate = directApplicationLookup(frontmostProcessIdentifier),
+                  candidateBelongsToProcess(directCandidate, frontmostProcessIdentifier) {
+            focusedElement = directCandidate
+        } else {
+            focusedElement = nil
+        }
+
+        guard isProcessStillFrontmost(frontmostProcessIdentifier) else { return nil }
+        return focusedElement
+    }
+
+    static func resolveFocusedElementWithRetry(
+        retryDelays: [TimeInterval],
+        lookup: () -> AXUIElement?,
+        wait: (TimeInterval) async -> Bool
+    ) async -> AXUIElement? {
+        guard !Task.isCancelled else { return nil }
+        if let focusedElement = lookup() {
+            return focusedElement
+        }
+
+        for delay in retryDelays {
+            guard !Task.isCancelled else { return nil }
+            guard await wait(delay) else { return nil }
+            guard !Task.isCancelled else { return nil }
+            if let focusedElement = lookup() {
+                return focusedElement
+            }
+        }
+        return nil
+    }
+
+    static func resolveCandidateWithRetry<Candidate: Sendable>(
+        retryDelays: [TimeInterval],
+        lookup: () async -> Candidate?,
+        validate: (Candidate) async -> RetryDisposition,
+        isContextCurrent: () -> Bool = { true },
+        wait: (TimeInterval) async -> Bool
+    ) async -> Candidate? {
+        var candidate: Candidate?
+
+        for attemptIndex in 0...retryDelays.count {
+            guard !Task.isCancelled, isContextCurrent() else { return nil }
+            if candidate == nil {
+                guard !Task.isCancelled else { return nil }
+                candidate = await lookup()
+                guard !Task.isCancelled, isContextCurrent() else { return nil }
+            }
+
+            if let candidateToValidate = candidate {
+                guard !Task.isCancelled else { return nil }
+                let disposition = await validate(candidateToValidate)
+                guard !Task.isCancelled, isContextCurrent() else { return nil }
+                switch disposition {
+                case .accept:
+                    return candidateToValidate
+                case .retry:
+                    break
+                case .retryLookup:
+                    candidate = nil
+                case .reject:
+                    return nil
+                }
+            }
+
+            guard attemptIndex < retryDelays.count else { break }
+            guard !Task.isCancelled else { return nil }
+            guard await wait(retryDelays[attemptIndex]) else { return nil }
+            guard !Task.isCancelled else { return nil }
+        }
+
+        return nil
+    }
+
+    /// Focus and its assessment must come from the same fresh lookup. Always
+    /// consume the final configured attempt so a stale, non-nil AX focus (which
+    /// can even carry an old selection) cannot win before macOS publishes the
+    /// newly focused text element. A protected result is terminal and fails
+    /// closed immediately. Its closures stay on MainActor so generic pairs
+    /// containing AX proxies never cross an executor boundary.
+    static func resolveFreshAssessedCandidateWithRetry<Candidate, Assessment>(
+        retryDelays: [TimeInterval],
+        recoveryRetryDelays: [TimeInterval] = [],
+        attempt: @MainActor () async -> (
+            candidate: Candidate,
+            assessment: Assessment
+        )?,
+        isTerminal: @MainActor (Assessment) -> Bool,
+        isRetryable: @MainActor (Assessment) -> Bool = { _ in false },
+        isContextCurrent: @MainActor () -> Bool = { true },
+        wait: @MainActor (TimeInterval) async -> Bool
+    ) async -> (candidate: Candidate, assessment: Assessment)? {
+        for attemptIndex in 0...retryDelays.count {
+            guard !Task.isCancelled, isContextCurrent() else { return nil }
+            let result = await attempt()
+            guard !Task.isCancelled, isContextCurrent() else { return nil }
+
+            if let result, isTerminal(result.assessment) {
+                return result
+            }
+            guard attemptIndex < retryDelays.count else {
+                if let result, !isRetryable(result.assessment) {
+                    return result
+                }
+                break
+            }
+            guard await wait(retryDelays[attemptIndex]) else { return nil }
+        }
+
+        // The required final sample may itself hit a transient AX timeout.
+        // Give that state a separate bounded recovery budget, but never fall
+        // back to an older pair if all fresh recovery attempts remain unusable.
+        for delay in recoveryRetryDelays {
+            guard !Task.isCancelled, isContextCurrent() else { return nil }
+            guard await wait(delay) else { return nil }
+            guard !Task.isCancelled, isContextCurrent() else { return nil }
+            guard let result = await attempt() else { continue }
+            guard !Task.isCancelled, isContextCurrent() else { return nil }
+            if isTerminal(result.assessment) || !isRetryable(result.assessment) {
+                return result
+            }
+        }
+
+        return nil
+    }
+
+    func assessFocusedElement(
+        _ focusedElement: AXUIElement,
+        expectedProcessIdentifier: pid_t? = nil,
+        bundleID: String? = nil,
+        points: [NSPoint] = [],
+        requireUsableSelection: Bool = false,
+        retryDelays: [TimeInterval] = AccessibilityManager.focusedElementRetryDelays
+    ) async -> AssessedFocusedElement? {
+        guard !Task.isCancelled else { return nil }
+        if let expectedProcessIdentifier,
+           NSWorkspace.shared.frontmostApplication?.processIdentifier !=
+            expectedProcessIdentifier {
+            return nil
+        }
+        let accessibilityPoints = points.compactMap {
+            Self.coreGraphicsScreenPoint(for: $0)
+        }
+        guard accessibilityPoints.count == points.count else { return nil }
+
+        let session = ElementAssessmentSession(
+            focusedElement: TransferredAXElement(value: focusedElement)
+        )
+        guard let transferred = await session.resolve(
+            bundleID: bundleID,
+            accessibilityPoints: accessibilityPoints,
+            requireUsableSelection: requireUsableSelection,
+            retryDelays: retryDelays
+        ), !Task.isCancelled else {
+            return nil
+        }
+        if let expectedProcessIdentifier,
+           NSWorkspace.shared.frontmostApplication?.processIdentifier !=
+            expectedProcessIdentifier {
+            return nil
+        }
+        return AssessedFocusedElement(
+            focusedElement: focusedElement,
+            selectionWindow: transferred.selectionWindow,
+            assessment: transferred.assessment
+        )
+    }
+
+    func resolveAssessedFocusedElementWithRetry(
+        expectedProcessIdentifier: pid_t? = nil,
+        windowConstraint: FocusedWindowConstraint? = nil,
+        bundleID: String? = nil,
+        points: [NSPoint] = [],
+        requireUsableSelection: Bool = false,
+        retryDelays: [TimeInterval] = AccessibilityManager.focusedElementRetryDelays
+    ) async -> AssessedFocusedElement? {
+        let targetProcessIdentifier = expectedProcessIdentifier ??
+            NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard let targetProcessIdentifier else { return nil }
+
+        let result: (
+            candidate: AXUIElement,
+            assessment: AssessedFocusedElement
+        )? = await Self.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: retryDelays,
+            recoveryRetryDelays:
+                AccessibilityManager.focusedElementRecoveryRetryDelays,
+            attempt: {
+                guard let focusedElement = await self.getFocusedElementWithRetry(
+                    expectedProcessIdentifier: targetProcessIdentifier,
+                    windowConstraint: windowConstraint,
+                    retryDelays: []
+                ), let assessedFocusedElement = await self.assessFocusedElement(
+                    focusedElement,
+                    expectedProcessIdentifier: targetProcessIdentifier,
+                    bundleID: bundleID,
+                    points: points,
+                    requireUsableSelection: requireUsableSelection,
+                    retryDelays: []
+                ) else {
+                    return nil
+                }
+                // AX focus can advance while the assessment's attribute IPC is
+                // suspended. Commit the pair only when a second fresh,
+                // window-bound lookup still identifies the assessed element.
+                guard let confirmedFocusedElement = await self
+                    .getFocusedElementWithRetry(
+                        expectedProcessIdentifier: targetProcessIdentifier,
+                        windowConstraint: windowConstraint,
+                        retryDelays: []
+                    ), Self.areSameAccessibilityElement(
+                        focusedElement,
+                        confirmedFocusedElement
+                    ) else {
+                    return nil
+                }
+                return (
+                    candidate: focusedElement,
+                    assessment: assessedFocusedElement
+                )
+            },
+            isTerminal: {
+                $0.assessment.protection == .protectedContent
+            },
+            isRetryable: {
+                $0.assessment.protection == .indeterminate ||
+                    !$0.assessment.pointAssessments.allSatisfy(\.isResolved)
+            },
+            isContextCurrent: {
+                guard NSWorkspace.shared.frontmostApplication?
+                    .processIdentifier == targetProcessIdentifier else {
+                    return false
+                }
+                guard let windowConstraint else { return true }
+                guard let currentWindow =
+                    TextSelectionMonitor.currentFrontmostWindowSnapshot(
+                        frontmostProcessID: targetProcessIdentifier
+                    ) else {
+                    // A missing CG snapshot can be transient; the AX/window
+                    // attempt below remains fail-closed and consumes budget.
+                    return true
+                }
+                guard currentWindow.ownerPID == windowConstraint.ownerPID,
+                      currentWindow.windowID == windowConstraint.windowID else {
+                    return false
+                }
+                return !TextSelectionMonitor.didFrontmostWindowMove(
+                    from: TextSelectionMonitor.FrontmostWindowSnapshot(
+                        windowID: windowConstraint.windowID,
+                        ownerPID: windowConstraint.ownerPID,
+                        bounds: windowConstraint.bounds
+                    ),
+                    to: currentWindow
+                )
+            },
+            wait: { delay in
+                guard delay >= 0 else { return false }
+                do {
+                    try await Task<Never, Never>.sleep(
+                        nanoseconds: UInt64(delay * 1_000_000_000)
+                    )
+                    return !Task.isCancelled
+                } catch {
+                    return false
+                }
+            }
+        )
+
+        guard let result,
+              Self.areSameAccessibilityElement(
+                result.candidate,
+                result.assessment.focusedElement
+              ) else {
+            return nil
+        }
+        return result.assessment
+    }
+
+    func getFocusedElementWithRetry(
+        expectedProcessIdentifier: pid_t? = nil,
+        windowConstraint: FocusedWindowConstraint? = nil,
+        retryDelays: [TimeInterval] = AccessibilityManager.focusedElementRetryDelays
+    ) async -> AXUIElement? {
+        let frontmostProcessIdentifier =
+            NSWorkspace.shared.frontmostApplication?.processIdentifier
+        if let expectedProcessIdentifier,
+           expectedProcessIdentifier != frontmostProcessIdentifier {
+            return nil
+        }
+        guard let targetProcessIdentifier =
+                expectedProcessIdentifier ?? frontmostProcessIdentifier,
+              windowConstraint == nil ||
+                windowConstraint?.ownerPID == targetProcessIdentifier else {
+            return nil
+        }
+
+        let session = FocusResolutionSession(
+            expectedSelectionWindow: windowConstraint?.expectedSelectionWindow.map {
+                TransferredAXElement(value: $0)
+            },
+            capturedWindowBounds: windowConstraint?.bounds
+        )
+        var unavailableAccessibilityWindowValidationCount = 0
+        let resolvedSession = await Self.resolveCandidateWithRetry(
+            retryDelays: retryDelays,
+            lookup: {
+                await session.resolveFocus(
+                    processIdentifier: targetProcessIdentifier
+                ) ? session : nil
+            },
+            validate: { _ in
+                guard let windowConstraint else { return .accept }
+                let accessibilityWindowMatches =
+                    await session.accessibilityWindowMatchesConstraint()
+                let currentTopmostWindow =
+                    TextSelectionMonitor.currentFrontmostWindowSnapshot(
+                        frontmostProcessID: targetProcessIdentifier
+                    )
+                var disposition = TextSelectionMonitor.focusedWindowRetryDisposition(
+                    capturedWindow: TextSelectionMonitor.FrontmostWindowSnapshot(
+                        windowID: windowConstraint.windowID,
+                        ownerPID: windowConstraint.ownerPID,
+                        bounds: windowConstraint.bounds
+                    ),
+                    currentTopmostWindow: currentTopmostWindow,
+                    accessibilityWindowMatches: accessibilityWindowMatches
+                )
+                if disposition == .retry,
+                   accessibilityWindowMatches == nil,
+                   currentTopmostWindow?.windowID == windowConstraint.windowID {
+                    unavailableAccessibilityWindowValidationCount += 1
+                    if unavailableAccessibilityWindowValidationCount >= 2 {
+                        disposition = .retryLookup
+                        unavailableAccessibilityWindowValidationCount = 0
+                    }
+                } else if disposition != .retry {
+                    unavailableAccessibilityWindowValidationCount = 0
+                }
+                if disposition == .retryLookup {
+                    await session.discardFocusedElement()
+                }
+                return disposition
+            },
+            isContextCurrent: {
+                NSWorkspace.shared.frontmostApplication?.processIdentifier ==
+                    targetProcessIdentifier
+            },
+            wait: { delay in
+                guard delay >= 0 else { return false }
+                do {
+                    try await Task<Never, Never>.sleep(
+                        nanoseconds: UInt64(delay * 1_000_000_000)
+                    )
+                    return !Task.isCancelled
+                } catch {
+                    return false
+                }
+            }
+        )
+        guard resolvedSession != nil,
+              !Task.isCancelled,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier ==
+                targetProcessIdentifier,
+              let transferredElement = await session.takeFocusedElement(),
+              !Task.isCancelled,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier ==
+                targetProcessIdentifier else {
+            return nil
+        }
+        return transferredElement.value
+    }
+
+    func getFocusedElement(expectedProcessIdentifier: pid_t? = nil) -> AXUIElement? {
+        let frontmostProcessIdentifier = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        if let expectedProcessIdentifier,
+           frontmostProcessIdentifier != expectedProcessIdentifier {
+            return nil
+        }
+        let targetProcessIdentifier = expectedProcessIdentifier ?? frontmostProcessIdentifier
+
+        let focusedElement = Self.resolveFocusedElement(
+            frontmostProcessIdentifier: targetProcessIdentifier,
+            systemWideLookup: { [systemWideElement] in
+                Self.focusedElement(
+                    fromSystemWideElement: systemWideElement,
+                    expectedProcessIdentifier: targetProcessIdentifier
+                )
+            },
+            directApplicationLookup: { processIdentifier in
+                let application = AXUIElementCreateApplication(processIdentifier)
+                _ = AXUIElementSetMessagingTimeout(
+                    application,
+                    Self.accessibilityMessagingTimeout
+                )
+                return Self.focusedElement(
+                    fromApplication: application,
+                    expectedProcessIdentifier: processIdentifier
+                )
+            },
+            candidateBelongsToProcess: { candidate, processIdentifier in
+                Self.element(candidate, belongsTo: processIdentifier)
+            },
+            isProcessStillFrontmost: { processIdentifier in
+                NSWorkspace.shared.frontmostApplication?.processIdentifier == processIdentifier
+            }
+        )
+        return focusedElement
+    }
+
+    nonisolated private static func element(
+        _ element: AXUIElement,
+        belongsTo expectedProcessIdentifier: pid_t
+    ) -> Bool {
+        var actualProcessIdentifier = pid_t()
+        return AXUIElementGetPid(element, &actualProcessIdentifier) == .success &&
+            actualProcessIdentifier == expectedProcessIdentifier
+    }
+
+    nonisolated private static func focusedElement(
+        fromSystemWideElement systemWideElement: AXUIElement,
+        expectedProcessIdentifier: pid_t?
+    ) -> AXUIElement? {
         var focusedApp: AnyObject?
         let appResult = AXUIElementCopyAttributeValue(
             systemWideElement,
@@ -1673,10 +2511,32 @@ final class AccessibilityManager {
             CFGetTypeID(focusedApp) == AXUIElementGetTypeID()
         else { return nil }
         let app = unsafeBitCast(focusedApp, to: AXUIElement.self)
-        
+        _ = AXUIElementSetMessagingTimeout(
+            app,
+            Self.accessibilityMessagingTimeout
+        )
+
+        if let expectedProcessIdentifier {
+            var actualProcessIdentifier = pid_t()
+            guard AXUIElementGetPid(app, &actualProcessIdentifier) == .success,
+                  actualProcessIdentifier == expectedProcessIdentifier else {
+                return nil
+            }
+        }
+
+        return focusedElement(
+            fromApplication: app,
+            expectedProcessIdentifier: expectedProcessIdentifier
+        )
+    }
+
+    nonisolated private static func focusedElement(
+        fromApplication application: AXUIElement,
+        expectedProcessIdentifier: pid_t?
+    ) -> AXUIElement? {
         var focusedElement: AnyObject?
         let elementResult = AXUIElementCopyAttributeValue(
-            app,
+            application,
             kAXFocusedUIElementAttribute as CFString,
             &focusedElement
         )
@@ -1686,7 +2546,15 @@ final class AccessibilityManager {
             CFGetTypeID(focusedElement) == AXUIElementGetTypeID()
         else { return nil }
         
-        return unsafeBitCast(focusedElement, to: AXUIElement.self)
+        let element = unsafeBitCast(focusedElement, to: AXUIElement.self)
+        if let expectedProcessIdentifier {
+            var actualProcessIdentifier = pid_t()
+            guard AXUIElementGetPid(element, &actualProcessIdentifier) == .success,
+                  actualProcessIdentifier == expectedProcessIdentifier else {
+                return nil
+            }
+        }
+        return element
     }
 
     nonisolated static func areSameAccessibilityElement(
@@ -1832,6 +2700,12 @@ final class AccessibilityManager {
     }
 
     func isStructuralSelectionFocus(_ element: AXUIElement?) -> Bool {
+        Self.isStructuralSelectionFocusElement(element)
+    }
+
+    nonisolated private static func isStructuralSelectionFocusElement(
+        _ element: AXUIElement?
+    ) -> Bool {
         guard let element else { return false }
 
         var roleValue: AnyObject?
@@ -1844,10 +2718,17 @@ final class AccessibilityManager {
             return false
         }
 
-        return Self.isStructuralSelectionFocusRole(role)
+        return isStructuralSelectionFocusRole(role)
     }
 
     func selectionWindow(for element: AXUIElement?) -> AXUIElement? {
+        Self.selectionWindowElement(for: element)
+    }
+
+    nonisolated private static func selectionWindowElement(
+        for element: AXUIElement?,
+        maxAncestorDepth: Int = 12
+    ) -> AXUIElement? {
         guard let element else { return nil }
 
         var roleValue: AnyObject?
@@ -1862,17 +2743,46 @@ final class AccessibilityManager {
         }
 
         var windowValue: AnyObject?
-        guard AXUIElementCopyAttributeValue(
+        if AXUIElementCopyAttributeValue(
             element,
             kAXWindowAttribute as CFString,
             &windowValue
         ) == .success,
-              let windowValue,
-              CFGetTypeID(windowValue) == AXUIElementGetTypeID() else {
-            return nil
+           let windowValue,
+           CFGetTypeID(windowValue) == AXUIElementGetTypeID() {
+            return unsafeBitCast(windowValue, to: AXUIElement.self)
         }
 
-        return unsafeBitCast(windowValue, to: AXUIElement.self)
+        // Older macOS releases can publish AXFocusedUIElement before its
+        // AXWindow attribute. Walking the already-published parent chain gives
+        // Notes and other native editors a safe path to the same window.
+        var currentElement = element
+        for _ in 0..<maxAncestorDepth {
+            var parentValue: AnyObject?
+            guard AXUIElementCopyAttributeValue(
+                currentElement,
+                kAXParentAttribute as CFString,
+                &parentValue
+            ) == .success,
+                  let parentValue,
+                  CFGetTypeID(parentValue) == AXUIElementGetTypeID() else {
+                return nil
+            }
+            let parent = unsafeBitCast(parentValue, to: AXUIElement.self)
+            var parentRoleValue: AnyObject?
+            if AXUIElementCopyAttributeValue(
+                parent,
+                kAXRoleAttribute as CFString,
+                &parentRoleValue
+            ) == .success,
+               let parentRole = parentRoleValue as? String,
+               parentRole == kAXWindowRole {
+                return parent
+            }
+            currentElement = parent
+        }
+
+        return nil
     }
 
     func focusedElementRoleDescription() -> String? {
@@ -1908,6 +2818,13 @@ final class AccessibilityManager {
     }
 
     private func ancestorRoles(for element: AXUIElement, maxDepth: Int = 6) -> [String] {
+        Self.ancestorRoles(for: element, maxDepth: maxDepth)
+    }
+
+    nonisolated private static func ancestorRoles(
+        for element: AXUIElement,
+        maxDepth: Int = 6
+    ) -> [String] {
         var roles: [String] = []
         var currentElement = element
 

@@ -11,12 +11,23 @@ final class TextSelectionMonitorTests: XCTestCase {
     func testNotificationPayloadsKeepVerifiedFocusedElementAndProcessIdentifier() throws {
         let focusedElement = AXUIElementCreateApplication(getpid())
         let location = NSPoint(x: 120, y: 240)
+        let focusedElementAssessment = AccessibilityManager.FocusedElementAssessment(
+            protection: .unprotected,
+            isSelectionEditable: true,
+            selectionSnapshot: AccessibilityManager.SelectionSnapshot(
+                text: "selected",
+                rangeLocation: 2,
+                rangeLength: 8
+            ),
+            pointAssessments: []
+        )
         let textSelectedUserInfo = TextSelectionMonitor.textSelectedNotificationUserInfo(
             text: "selected",
             location: location,
             processIdentifier: 42,
             focusedElement: focusedElement,
-            windowID: 7
+            windowID: 7,
+            focusedElementAssessment: focusedElementAssessment
         )
         let emptyInputUserInfo = TextSelectionMonitor.emptyTextInputClickedNotificationUserInfo(
             location: location,
@@ -26,6 +37,11 @@ final class TextSelectionMonitorTests: XCTestCase {
 
         XCTAssertEqual(textSelectedUserInfo["text"] as? String, "selected")
         XCTAssertEqual(textSelectedUserInfo["windowID"] as? NSNumber, NSNumber(value: 7))
+        XCTAssertEqual(
+            textSelectedUserInfo["focusedElementAssessment"] as?
+                AccessibilityManager.FocusedElementAssessment,
+            focusedElementAssessment
+        )
         for userInfo in [textSelectedUserInfo, emptyInputUserInfo] {
             XCTAssertEqual(userInfo["processIdentifier"] as? NSNumber, NSNumber(value: 42))
             let deliveredElement = try XCTUnwrap(userInfo["focusedElement"])
@@ -272,6 +288,146 @@ final class TextSelectionMonitorTests: XCTestCase {
             snapshotAtMouseDown: snapshotAtMouseDown,
             currentSnapshot: unreadableSnapshot
         ))
+    }
+
+    func testAccessibilityDragSelectionRequiresRecoveredTextContextWithoutBaseline() {
+        let selectedSnapshot = AccessibilityManager.SelectionSnapshot(
+            text: "selected",
+            rangeLocation: 4,
+            rangeLength: 8,
+            hasReadableSelectedTextAttribute: true,
+            hasReadableSelectedRangeAttribute: true
+        )
+
+        XCTAssertFalse(TextSelectionMonitor.shouldHandleAccessibilityDragSelection(
+            snapshotAtMouseDown: nil,
+            currentSnapshot: selectedSnapshot,
+            startedInTextContext: false,
+            endedInTextContext: false
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldHandleAccessibilityDragSelection(
+            snapshotAtMouseDown: nil,
+            currentSnapshot: selectedSnapshot,
+            startedInTextContext: false,
+            endedInTextContext: true
+        ))
+        XCTAssertTrue(TextSelectionMonitor.shouldHandleAccessibilityDragSelection(
+            snapshotAtMouseDown: nil,
+            currentSnapshot: selectedSnapshot,
+            startedInTextContext: true,
+            endedInTextContext: true
+        ))
+    }
+
+    func testRecoveredAccessibilityWindowMustMatchCapturedWindowBounds() {
+        let capturedBounds = CGRect(x: 100, y: 80, width: 900, height: 700)
+
+        XCTAssertTrue(TextSelectionMonitor.accessibilityWindowFrameMatchesCapturedWindow(
+            CGRect(x: 102, y: 82, width: 898, height: 698),
+            capturedBounds: capturedBounds
+        ))
+        XCTAssertFalse(TextSelectionMonitor.accessibilityWindowFrameMatchesCapturedWindow(
+            CGRect(x: 1_100, y: 80, width: 900, height: 700),
+            capturedBounds: capturedBounds
+        ))
+        XCTAssertFalse(TextSelectionMonitor.accessibilityWindowFrameMatchesCapturedWindow(
+            nil,
+            capturedBounds: capturedBounds
+        ))
+    }
+
+    func testFocusedWindowValidationRetriesUnavailableAXWindowThenAcceptsMatch() {
+        let captured = TextSelectionMonitor.FrontmostWindowSnapshot(
+            windowID: 7,
+            ownerPID: 42,
+            bounds: CGRect(x: 100, y: 80, width: 900, height: 700)
+        )
+
+        XCTAssertEqual(
+            TextSelectionMonitor.focusedWindowRetryDisposition(
+                capturedWindow: captured,
+                currentTopmostWindow: captured,
+                accessibilityWindowMatches: nil
+            ),
+            .retry
+        )
+        XCTAssertEqual(
+            TextSelectionMonitor.focusedWindowRetryDisposition(
+                capturedWindow: captured,
+                currentTopmostWindow: captured,
+                accessibilityWindowMatches: true
+            ),
+            .accept
+        )
+    }
+
+    func testFocusedWindowValidationRejectsDifferentTopmostWindowEvenWithMatchingFrame() {
+        let captured = TextSelectionMonitor.FrontmostWindowSnapshot(
+            windowID: 7,
+            ownerPID: 42,
+            bounds: CGRect(x: 100, y: 80, width: 900, height: 700)
+        )
+        let replacement = TextSelectionMonitor.FrontmostWindowSnapshot(
+            windowID: 8,
+            ownerPID: 42,
+            bounds: captured.bounds
+        )
+
+        XCTAssertEqual(
+            TextSelectionMonitor.focusedWindowRetryDisposition(
+                capturedWindow: captured,
+                currentTopmostWindow: replacement,
+                accessibilityWindowMatches: true
+            ),
+            .reject
+        )
+    }
+
+    func testFocusedWindowValidationRejectsExplicitAXWindowMismatch() {
+        let captured = TextSelectionMonitor.FrontmostWindowSnapshot(
+            windowID: 7,
+            ownerPID: 42,
+            bounds: CGRect(x: 100, y: 80, width: 900, height: 700)
+        )
+
+        XCTAssertEqual(
+            TextSelectionMonitor.focusedWindowRetryDisposition(
+                capturedWindow: captured,
+                currentTopmostWindow: captured,
+                accessibilityWindowMatches: false
+            ),
+            .retryLookup
+        )
+    }
+
+    func testFocusedWindowValidationRetriesMissingCGSnapshotAndRejectsMovedWindow() {
+        let captured = TextSelectionMonitor.FrontmostWindowSnapshot(
+            windowID: 7,
+            ownerPID: 42,
+            bounds: CGRect(x: 100, y: 80, width: 900, height: 700)
+        )
+        let moved = TextSelectionMonitor.FrontmostWindowSnapshot(
+            windowID: 7,
+            ownerPID: 42,
+            bounds: CGRect(x: 130, y: 80, width: 900, height: 700)
+        )
+
+        XCTAssertEqual(
+            TextSelectionMonitor.focusedWindowRetryDisposition(
+                capturedWindow: captured,
+                currentTopmostWindow: nil,
+                accessibilityWindowMatches: true
+            ),
+            .retry
+        )
+        XCTAssertEqual(
+            TextSelectionMonitor.focusedWindowRetryDisposition(
+                capturedWindow: captured,
+                currentTopmostWindow: moved,
+                accessibilityWindowMatches: true
+            ),
+            .reject
+        )
     }
 
     func testShouldHandleCopiedDragSelectionPreservesTelegramFallbackWhenAccessibilityIsUnreadable() {
@@ -560,7 +716,61 @@ final class TextSelectionMonitorTests: XCTestCase {
             focusedElementMatches: false,
             currentFocusedElementIsStructural: false,
             focusedWindowMatches: false,
+            expectedWindowID: 7,
+            currentWindowID: 7
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: false,
+            currentFocusedElementAvailable: false,
+            focusedElementMatches: false,
+            currentFocusedElementIsStructural: false,
+            focusedWindowMatches: false,
+            expectedWindowID: 7,
+            currentWindowID: 8
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "ru.keepcoder.Telegram",
+            expectedFocusedElementAvailable: false,
+            currentFocusedElementAvailable: false,
+            focusedElementMatches: false,
+            currentFocusedElementIsStructural: false,
+            focusedWindowMatches: false,
             expectedWindowID: nil,
+            currentWindowID: nil
+        ))
+    }
+
+    func testAcquiredSelectionPresentationRejectsExactFocusInDifferentWindow() {
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "com.apple.Notes",
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: true,
+            focusedElementMatches: true,
+            currentFocusedElementIsStructural: false,
+            focusedWindowMatches: true,
+            expectedWindowID: 7,
+            currentWindowID: 8
+        ))
+    }
+
+    func testAcquiredSelectionPresentationRejectsExactFocusWhenCurrentWindowIsMissing() {
+        XCTAssertFalse(TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
+            expectedProcessIdentifier: 42,
+            currentProcessIdentifier: 42,
+            bundleID: "com.apple.Notes",
+            expectedFocusedElementAvailable: true,
+            currentFocusedElementAvailable: true,
+            focusedElementMatches: true,
+            currentFocusedElementIsStructural: false,
+            focusedWindowMatches: true,
+            expectedWindowID: 7,
             currentWindowID: nil
         ))
     }

@@ -3,6 +3,17 @@ import XCTest
 
 @MainActor
 final class AppDelegateTests: XCTestCase {
+    func testOnlyCurrentInteractionGenerationCanComplete() {
+        XCTAssertTrue(AppDelegate.isInteractionCurrent(
+            expectedGeneration: 8,
+            currentGeneration: 8
+        ))
+        XCTAssertFalse(AppDelegate.isInteractionCurrent(
+            expectedGeneration: 7,
+            currentGeneration: 8
+        ))
+    }
+
     func testTerminationRequiresExplicitDiscardWhenPluginEditorsAreDirty() {
         XCTAssertTrue(
             AppDelegate.shouldTerminate(

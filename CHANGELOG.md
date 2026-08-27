@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.3.35
+
+- 修复 macOS 15.3.1 备忘录中粘贴胶囊可出现、但拖选圆环和全局快捷键无法触发的问题：焦点解析优先使用目标 PID，并在辅助功能焦点、所属窗口和选区属性分阶段发布时进行有界重试。
+- 焦点后的保护状态、编辑性、选区和命中区域统一改为后台快照，避免辅助功能 IPC 阻塞主线程或一次短暂超时丢弃有效选区；旧的非空焦点也会重新获取，而不是永久复用。
+- 展示前严格绑定原进程与 Core Graphics 窗口 ID，并让新热键与新鼠标手势相互取消旧请求，防止跨窗口漂移或旧结果覆盖新选区；新增相应时序、窗口和重试回归测试。
+
+- Fixed drag-selection radial menus and global hotkeys failing in Notes on macOS 15.3.1 while the paste capsule still worked. Focus resolution now prefers the target PID and uses bounded retries while Accessibility focus, window ownership, and selection attributes are published in stages.
+- Protection, editability, selection, and hit-region reads after focus resolution now use a retryable background snapshot, avoiding main-thread Accessibility IPC and one-shot false negatives. Stale non-nil focus candidates are discarded and reacquired.
+- Presentation remains bound to the original process and Core Graphics window ID, while newer hotkey and mouse interactions invalidate older requests to prevent cross-window drift or stale results replacing a new selection. Added regression coverage for these timing, window, and retry paths.
+
 ## v0.3.34
 
 - Search in Telegram 从内置 AppleScript 改为原生、可验证的 Telegram 搜索动作：通过官方深链接进入全局搜索，再按辅助功能直接写入、定向 Unicode 事件、受保护剪贴板依次降级；只有从 Telegram 搜索框读回完全一致的文本才报告成功。
