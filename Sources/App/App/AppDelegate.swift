@@ -48,17 +48,23 @@ private final class MenuTargetContext {
     let focusedElement: AXUIElement?
     let windowID: CGWindowID?
     let allowsAcquiredSelectionFocusFallback: Bool
+    let focusedElementAssessment: AccessibilityManager.FocusedElementAssessment?
+    let interactionGeneration: UInt64?
 
     init(
         processIdentifier: pid_t?,
         focusedElement: AXUIElement?,
         windowID: CGWindowID?,
-        allowsAcquiredSelectionFocusFallback: Bool
+        allowsAcquiredSelectionFocusFallback: Bool,
+        focusedElementAssessment: AccessibilityManager.FocusedElementAssessment? = nil,
+        interactionGeneration: UInt64? = nil
     ) {
         self.processIdentifier = processIdentifier
         self.focusedElement = focusedElement
         self.windowID = windowID
         self.allowsAcquiredSelectionFocusFallback = allowsAcquiredSelectionFocusFallback
+        self.focusedElementAssessment = focusedElementAssessment
+        self.interactionGeneration = interactionGeneration
     }
 }
 
@@ -103,6 +109,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isDismissingMenus = false
     private var pendingMenuDismissCompletions: [() -> Void] = []
     private var pendingMenuPresentation: (() -> Void)?
+    private var pendingHotkeyFocusTask: Task<Void, Never>?
+    private var pendingHotkeyFocusRequestID: UUID?
+    private var interactionGeneration: UInt64 = 0
     private let menuActionGate = SingleFireActionGate()
     private var startupPermissionTimer: Timer?
     private var permissionRecoveryTimer: Timer?
@@ -413,22 +422,152 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Called when the global hotkey is pressed
     private func handleHotkeyTriggered() {
         let frontmostApplication = NSWorkspace.shared.frontmostApplication
-        let expectedProcessIdentifier = frontmostApplication?.processIdentifier
+        guard let expectedProcessIdentifier = frontmostApplication?.processIdentifier else {
+            return
+        }
         let expectedBundleID = frontmostApplication?.bundleIdentifier
-        let expectedWindowID = TextSelectionMonitor.currentFrontmostWindowSnapshot(
+        guard let expectedWindowSnapshot = TextSelectionMonitor.currentFrontmostWindowSnapshot(
             frontmostApplication: frontmostApplication
-        )?.windowID
-        guard currentContextAllowsMenuPresentation(
-            expectedProcessIdentifier: expectedProcessIdentifier
+        ), let expectedWindowID = expectedWindowSnapshot.windowID else {
+            return
+        }
+        let expectedWindowConstraint = AccessibilityManager.FocusedWindowConstraint(
+            windowID: expectedWindowID,
+            ownerPID: expectedWindowSnapshot.ownerPID,
+            bounds: expectedWindowSnapshot.bounds
+        )
+        guard Self.shouldAllowMenuPresentation(
+            isEnabled: isEnabled,
+            frontmostBundleID: expectedBundleID,
+            frontmostLocalizedName: frontmostApplication?.localizedName,
+            // This preflight intentionally avoids an AX lookup. Critical apps
+            // and exclusions still fail, while Finder gets its established
+            // editable-focus decision after focus acquisition below.
+            isFocusedSelectionEditable: true
         ) else {
             return
         }
-        AccessibilityManager.shared.cancelActiveSelectedTextViaCopy()
+        TextSelectionMonitor.shared.cancelPendingInteraction()
+        let requestInteractionGeneration = beginNewInteraction()
+        let focusRequestID = UUID()
+        pendingHotkeyFocusRequestID = focusRequestID
 
-        // Quick check via Accessibility API first
-        let expectedFocusedElement = AccessibilityManager.shared.getFocusedElement()
+        pendingHotkeyFocusTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let assessedFocusedElement = await AccessibilityManager.shared
+                .resolveAssessedFocusedElementWithRetry(
+                    expectedProcessIdentifier: expectedProcessIdentifier,
+                    windowConstraint: expectedWindowConstraint,
+                    bundleID: expectedBundleID,
+                    requireUsableSelection: true
+                )
+            let expectedFocusedElement = assessedFocusedElement?.focusedElement
+            guard !Task.isCancelled,
+                  Self.isInteractionCurrent(
+                    expectedGeneration: requestInteractionGeneration,
+                    currentGeneration: self.interactionGeneration
+                  ),
+                  self.pendingHotkeyFocusRequestID == focusRequestID else {
+                return
+            }
+            self.pendingHotkeyFocusTask = nil
+            self.pendingHotkeyFocusRequestID = nil
+            guard AccessibilityManager.isExpectedCopyFallbackProcess(
+                expectedProcessIdentifier: expectedProcessIdentifier,
+                currentProcessIdentifier:
+                    NSWorkspace.shared.frontmostApplication?.processIdentifier
+            ) else {
+                return
+            }
+            let currentTopmostWindow =
+                TextSelectionMonitor.currentFrontmostWindowSnapshot(
+                    frontmostProcessID: expectedProcessIdentifier
+                )
+            guard TextSelectionMonitor.focusedWindowRetryDisposition(
+                capturedWindow: expectedWindowSnapshot,
+                currentTopmostWindow: currentTopmostWindow,
+                accessibilityWindowMatches: true
+            ) == .accept else {
+                return
+            }
+            self.completeHotkeyTrigger(
+                expectedProcessIdentifier: expectedProcessIdentifier,
+                expectedBundleID: expectedBundleID,
+                expectedWindowID: expectedWindowID,
+                expectedFocusedElement: expectedFocusedElement,
+                focusedElementAssessment: assessedFocusedElement?.assessment,
+                interactionGeneration: requestInteractionGeneration
+            )
+        }
+    }
+
+    nonisolated static func isInteractionCurrent(
+        expectedGeneration: UInt64,
+        currentGeneration: UInt64
+    ) -> Bool {
+        expectedGeneration == currentGeneration
+    }
+
+    @discardableResult
+    private func beginNewInteraction() -> UInt64 {
+        interactionGeneration &+= 1
+        pendingHotkeyFocusTask?.cancel()
+        pendingHotkeyFocusTask = nil
+        pendingHotkeyFocusRequestID = nil
+        pendingMenuPresentation = nil
+        AccessibilityManager.shared.cancelActiveSelectedTextViaCopy()
+        return interactionGeneration
+    }
+
+    private func handlePhysicalMouseDownStarted() {
+        _ = beginNewInteraction()
+    }
+
+    private func completeHotkeyTrigger(
+        expectedProcessIdentifier: pid_t,
+        expectedBundleID: String?,
+        expectedWindowID: CGWindowID?,
+        expectedFocusedElement: AXUIElement?,
+        focusedElementAssessment: AccessibilityManager.FocusedElementAssessment?,
+        interactionGeneration: UInt64
+    ) {
+        guard Self.isInteractionCurrent(
+            expectedGeneration: interactionGeneration,
+            currentGeneration: self.interactionGeneration
+        ) else {
+            return
+        }
+        let allowMissingFocusedElement = expectedWindowID != nil &&
+            AccessibilityManager.shouldAllowContextlessBlindCopyFallback(
+                bundleID: expectedBundleID
+            )
+        guard expectedFocusedElement != nil || allowMissingFocusedElement else {
+            AccessibilityManager.shared.recordSelectionAttemptFailure(.noFocusedApplication)
+            return
+        }
+        guard !AccessibilityManager.shouldSuppressCopyFallback(
+            focusedElementAssessment: focusedElementAssessment?.protection,
+            secureEventInputEnabled:
+                AccessibilityManager.shared.isSecureEventInputEnabled(),
+            accessibilityEnabled:
+                AccessibilityManager.shared.isAccessibilityEnabled,
+            allowMissingFocusedElement: allowMissingFocusedElement
+        ) else {
+            return
+        }
+        let currentFrontmostApplication = NSWorkspace.shared.frontmostApplication
+        guard Self.shouldAllowMenuPresentation(
+            isEnabled: isEnabled,
+            frontmostBundleID: currentFrontmostApplication?.bundleIdentifier,
+            frontmostLocalizedName: currentFrontmostApplication?.localizedName,
+            isFocusedSelectionEditable:
+                focusedElementAssessment?.isSelectionEditable ?? false
+        ) else {
+            return
+        }
+
         if let expectedFocusedElement,
-           let text = AccessibilityManager.shared.selectedText(from: expectedFocusedElement),
+           let text = focusedElementAssessment?.selectionSnapshot?.usableText,
            !text.isEmpty {
             let mouseLocation = NSEvent.mouseLocation
             AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
@@ -439,7 +578,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 targetProcessIdentifier: expectedProcessIdentifier,
                 targetFocusedElement: expectedFocusedElement,
                 targetWindowID: expectedWindowID,
-                allowsAcquiredSelectionFocusFallback: true
+                allowsAcquiredSelectionFocusFallback: true,
+                focusedElementAssessment: focusedElementAssessment,
+                interactionGeneration: interactionGeneration
             )
             return
         }
@@ -449,21 +590,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AccessibilityManager.shared.getSelectedTextViaCopy(
             expectedProcessIdentifier: expectedProcessIdentifier,
             expectedFocusedElement: expectedFocusedElement,
-            allowMissingFocusedElement:
-                AccessibilityManager.shouldAllowContextlessBlindCopyFallback(
-                    bundleID: expectedBundleID
-                ),
+            expectedFocusedElementAssessment: focusedElementAssessment?.protection,
+            allowMissingFocusedElement: allowMissingFocusedElement,
             expectedBundleID: expectedBundleID,
             expectedWindowID: expectedWindowID,
             allowsAcquiredSelectionFocusFallback: true
         ) { [weak self] copiedText in
+            guard let self,
+                  Self.isInteractionCurrent(
+                    expectedGeneration: interactionGeneration,
+                    currentGeneration: self.interactionGeneration
+                  ) else {
+                return
+            }
             guard AccessibilityManager.isExpectedCopyFallbackProcess(
                 expectedProcessIdentifier: expectedProcessIdentifier,
                 currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier
             ) else {
                 return
             }
-            guard let self = self, let text = copiedText, !text.isEmpty else {
+            guard let text = copiedText, !text.isEmpty else {
                 AccessibilityManager.shared.recordSelectionAttemptFailure(.copyFallbackEmptySelection)
                 return
             }
@@ -471,7 +617,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 expectedProcessIdentifier: expectedProcessIdentifier,
                 expectedFocusedElement: expectedFocusedElement,
                 expectedWindowID: expectedWindowID,
-                allowsAcquiredSelectionFocusFallback: true
+                allowsAcquiredSelectionFocusFallback: true,
+                resolvedCurrentFocusedElement: expectedFocusedElement,
+                resolvedFocusedElementAssessment: focusedElementAssessment,
+                useResolvedCurrentFocusedElement: true
             ) else {
                 return
             }
@@ -484,7 +633,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 targetProcessIdentifier: expectedProcessIdentifier,
                 targetFocusedElement: expectedFocusedElement,
                 targetWindowID: expectedWindowID,
-                allowsAcquiredSelectionFocusFallback: true
+                allowsAcquiredSelectionFocusFallback: true,
+                focusedElementAssessment: focusedElementAssessment,
+                interactionGeneration: interactionGeneration
             )
         }
     }
@@ -532,6 +683,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        pendingHotkeyFocusTask?.cancel()
+        pendingHotkeyFocusTask = nil
+        pendingHotkeyFocusRequestID = nil
+        TextSelectionMonitor.shared.onPhysicalMouseDown = nil
         TextSelectionMonitor.shared.stopMonitoring()
         PluginManager.shared.stopWatchingPluginDirectories()
         HotkeyManager.shared.unregisterHotkeys()
@@ -729,6 +884,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AccessibilityManager.shared.onPermissionLost = { [weak self] in
             self?.showPermissionLostAlert()
         }
+        TextSelectionMonitor.shared.onPhysicalMouseDown = { [weak self] in
+            self?.handlePhysicalMouseDownStarted()
+        }
         AccessibilityManager.shared.startWatchdog()
         
         // Listen for text selection events
@@ -870,6 +1028,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let focusedElement = Self.accessibilityElement(from: userInfo["focusedElement"])
+        let focusedElementAssessment = userInfo["focusedElementAssessment"] as?
+            AccessibilityManager.FocusedElementAssessment
         let windowID = (userInfo["windowID"] as? NSNumber).map {
             CGWindowID($0.uint32Value)
         }
@@ -890,7 +1050,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             targetProcessIdentifier: processIdentifier,
             targetFocusedElement: focusedElement,
             targetWindowID: windowID,
-            allowsAcquiredSelectionFocusFallback: true
+            allowsAcquiredSelectionFocusFallback: true,
+            focusedElementAssessment: focusedElementAssessment
         )
     }
     
@@ -950,19 +1111,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         targetProcessIdentifier: pid_t?,
         targetFocusedElement: AXUIElement?,
         targetWindowID: CGWindowID?,
-        allowsAcquiredSelectionFocusFallback: Bool
+        allowsAcquiredSelectionFocusFallback: Bool,
+        focusedElementAssessment: AccessibilityManager.FocusedElementAssessment? = nil,
+        interactionGeneration: UInt64? = nil
     ) {
-        guard currentContextAllowsMenuPresentation(
-            expectedProcessIdentifier: targetProcessIdentifier,
-            expectedFocusedElement: targetFocusedElement,
-            expectedWindowID: targetWindowID,
-            allowsAcquiredSelectionFocusFallback:
-                allowsAcquiredSelectionFocusFallback
-        ) else {
-            return
-        }
-
-        let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
+        let appBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let presentationPlugins = PluginManager.shared.presentationPlugins(appBundleID: appBundleID)
         showRadialMenu(
             at: point,
@@ -972,7 +1125,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             targetFocusedElement: targetFocusedElement,
             targetWindowID: targetWindowID,
             allowsAcquiredSelectionFocusFallback:
-                allowsAcquiredSelectionFocusFallback
+                allowsAcquiredSelectionFocusFallback,
+            focusedElementAssessment: focusedElementAssessment,
+            interactionGeneration: interactionGeneration
         )
     }
 
@@ -980,53 +1135,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         expectedProcessIdentifier: pid_t? = nil,
         expectedFocusedElement: AXUIElement? = nil,
         expectedWindowID: CGWindowID? = nil,
-        allowsAcquiredSelectionFocusFallback: Bool = false
+        allowsAcquiredSelectionFocusFallback: Bool = false,
+        resolvedCurrentFocusedElement: AXUIElement? = nil,
+        resolvedFocusedElementAssessment:
+            AccessibilityManager.FocusedElementAssessment? = nil,
+        useResolvedCurrentFocusedElement: Bool = false
     ) -> Bool {
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         let currentProcessIdentifier = frontmostApp?.processIdentifier
-        let currentFocusedElement = AccessibilityManager.shared.getFocusedElement()
+        let currentFocusedElement: AXUIElement?
+        if useResolvedCurrentFocusedElement {
+            currentFocusedElement = resolvedCurrentFocusedElement
+        } else {
+            currentFocusedElement = AccessibilityManager.shared.getFocusedElement(
+                expectedProcessIdentifier:
+                    expectedProcessIdentifier ?? currentProcessIdentifier
+            )
+        }
 
         if allowsAcquiredSelectionFocusFallback {
             let currentWindowID = TextSelectionMonitor.currentFrontmostWindowSnapshot(
-                frontmostProcessID: currentProcessIdentifier,
-                matching: expectedWindowID
+                frontmostProcessID: currentProcessIdentifier
             )?.windowID
-            let expectedSelectionWindow = AccessibilityManager.shared.selectionWindow(
-                for: expectedFocusedElement
+            let focusedElementMatches = AccessibilityManager.areSameAccessibilityElement(
+                expectedFocusedElement,
+                currentFocusedElement
             )
-            let currentSelectionWindow = AccessibilityManager.shared.selectionWindow(
-                for: currentFocusedElement
-            )
+            let needsStructuralFocusFallback =
+                expectedFocusedElement != nil && !focusedElementMatches
+            let currentFocusedElementIsStructural = needsStructuralFocusFallback &&
+                AccessibilityManager.shared.isStructuralSelectionFocus(
+                    currentFocusedElement
+                )
+            let focusedWindowMatches: Bool
+            if needsStructuralFocusFallback {
+                focusedWindowMatches = AccessibilityManager.areSameAccessibilityElement(
+                    AccessibilityManager.shared.selectionWindow(
+                        for: expectedFocusedElement
+                    ),
+                    AccessibilityManager.shared.selectionWindow(
+                        for: currentFocusedElement
+                    )
+                )
+            } else {
+                focusedWindowMatches = focusedElementMatches
+            }
             guard TextSelectionMonitor.shouldContinueAcquiredSelectionPresentation(
                 expectedProcessIdentifier: expectedProcessIdentifier,
                 currentProcessIdentifier: currentProcessIdentifier,
                 bundleID: frontmostApp?.bundleIdentifier,
                 expectedFocusedElementAvailable: expectedFocusedElement != nil,
                 currentFocusedElementAvailable: currentFocusedElement != nil,
-                focusedElementMatches: AccessibilityManager.areSameAccessibilityElement(
-                    expectedFocusedElement,
-                    currentFocusedElement
-                ),
-                currentFocusedElementIsStructural:
-                    AccessibilityManager.shared.isStructuralSelectionFocus(
-                        currentFocusedElement
-                    ),
-                focusedWindowMatches: AccessibilityManager.areSameAccessibilityElement(
-                    expectedSelectionWindow,
-                    currentSelectionWindow
-                ),
+                focusedElementMatches: focusedElementMatches,
+                currentFocusedElementIsStructural: currentFocusedElementIsStructural,
+                focusedWindowMatches: focusedWindowMatches,
                 expectedWindowID: expectedWindowID,
                 currentWindowID: currentWindowID
             ) else {
                 return false
             }
-            guard !AccessibilityManager.shared.shouldSuppressSelectionPresentation(
-                allowMissingFocusedElement:
-                    AccessibilityManager.shouldAllowContextlessBlindCopyFallback(
-                        bundleID: frontmostApp?.bundleIdentifier
-                    )
-            ) else {
-                return false
+            let allowMissingFocusedElement =
+                AccessibilityManager.shouldAllowContextlessBlindCopyFallback(
+                    bundleID: frontmostApp?.bundleIdentifier
+                )
+            if let resolvedFocusedElementAssessment {
+                guard !AccessibilityManager.shouldSuppressCopyFallback(
+                    focusedElementAssessment:
+                        resolvedFocusedElementAssessment.protection,
+                    secureEventInputEnabled:
+                        AccessibilityManager.shared.isSecureEventInputEnabled(),
+                    accessibilityEnabled:
+                        AccessibilityManager.shared.isAccessibilityEnabled,
+                    allowMissingFocusedElement: allowMissingFocusedElement
+                ) else {
+                    return false
+                }
+            } else {
+                guard !AccessibilityManager.shared.shouldSuppressSelectionPresentation(
+                    focusedElement: currentFocusedElement,
+                    allowMissingFocusedElement: allowMissingFocusedElement
+                ) else {
+                    return false
+                }
             }
         } else {
             if expectedProcessIdentifier != nil,
@@ -1049,9 +1239,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isEnabled: isEnabled,
             frontmostBundleID: frontmostApp?.bundleIdentifier,
             frontmostLocalizedName: frontmostApp?.localizedName,
-            isFocusedSelectionEditable: currentFocusedElement.map {
-                AccessibilityManager.shared.isSelectionEditable($0)
-            } ?? false
+            isFocusedSelectionEditable:
+                resolvedFocusedElementAssessment?.isSelectionEditable ??
+                currentFocusedElement.map {
+                    AccessibilityManager.shared.isSelectionEditable($0)
+                } ?? false
         )
     }
 
@@ -1124,7 +1316,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         targetProcessIdentifier: pid_t?,
         targetFocusedElement: AXUIElement?,
         targetWindowID: CGWindowID?,
-        allowsAcquiredSelectionFocusFallback: Bool
+        allowsAcquiredSelectionFocusFallback: Bool,
+        focusedElementAssessment: AccessibilityManager.FocusedElementAssessment? = nil,
+        interactionGeneration: UInt64? = nil
     ) {
         guard !plugins.isEmpty else { return }
 
@@ -1133,33 +1327,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             focusedElement: targetFocusedElement,
             windowID: targetWindowID,
             allowsAcquiredSelectionFocusFallback:
-                allowsAcquiredSelectionFocusFallback
+                allowsAcquiredSelectionFocusFallback,
+            focusedElementAssessment: focusedElementAssessment,
+            interactionGeneration: interactionGeneration
         )
 
         scheduleMenuPresentation { [weak self] in
             guard let self else { return }
+            if let expectedGeneration = targetContext.interactionGeneration,
+               !Self.isInteractionCurrent(
+                    expectedGeneration: expectedGeneration,
+                    currentGeneration: self.interactionGeneration
+               ) {
+                return
+            }
+            let resolvedFocusedElement = targetContext.focusedElement
             guard self.currentContextAllowsMenuPresentation(
                 expectedProcessIdentifier: targetContext.processIdentifier,
                 expectedFocusedElement: targetContext.focusedElement,
                 expectedWindowID: targetContext.windowID,
                 allowsAcquiredSelectionFocusFallback:
-                    targetContext.allowsAcquiredSelectionFocusFallback
+                    targetContext.allowsAcquiredSelectionFocusFallback,
+                resolvedCurrentFocusedElement: resolvedFocusedElement,
+                resolvedFocusedElementAssessment:
+                    targetContext.focusedElementAssessment,
+                useResolvedCurrentFocusedElement: true
             ) else {
                 return
             }
 
-            // A previous menu may still be fading out while Telegram changes
-            // its AX focus. Calculate action availability only after the final
-            // context check so the visible state matches the execution gate.
-            let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
-            let currentFocusedElement = AccessibilityManager.shared.getFocusedElement()
-            let isSelectionEditable = currentFocusedElement.map {
-                AccessibilityManager.shared.isSelectionEditable($0)
-            } ?? false
-            let focusedElementMatches = AccessibilityManager.areSameAccessibilityElement(
-                targetContext.focusedElement,
-                currentFocusedElement
-            )
+            // The trigger already resolved and protected this exact candidate.
+            // Re-querying AX focus here can turn a transient macOS 15 success
+            // into a false negative while the same PID/window remains current.
+            let appBundleID =
+                NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            let isSelectionEditable =
+                targetContext.focusedElementAssessment?.isSelectionEditable ??
+                resolvedFocusedElement.map {
+                    AccessibilityManager.shared.isSelectionEditable($0)
+                } ?? false
             let items = plugins.map { plugin in
                 RadialMenuItem(
                     title: plugin.name,
@@ -1171,7 +1377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         text: selectedText,
                         appBundleID: appBundleID,
                         isSelectionEditable: isSelectionEditable,
-                        focusedElementMatches: focusedElementMatches
+                        focusedElementMatches: resolvedFocusedElement != nil
                     )
                 )
             }
@@ -1224,7 +1430,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self, self.menuActionGate.consume() else { return }
                 self.dismissAllMenus {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        let currentFocusedElement = AccessibilityManager.shared.getFocusedElement()
+                        let currentFocusedElement = AccessibilityManager.shared.getFocusedElement(
+                            expectedProcessIdentifier: targetContext.processIdentifier
+                        )
                         guard Self.shouldExecuteMenuAction(
                             expectedProcessIdentifier: targetContext.processIdentifier,
                             currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
@@ -1266,6 +1474,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func scheduleMenuPresentation(_ presentation: @escaping () -> Void) {
         // The newest hotkey/selection wins while an older panel is fading out.
+        pendingHotkeyFocusTask?.cancel()
+        pendingHotkeyFocusTask = nil
+        pendingHotkeyFocusRequestID = nil
         pendingMenuPresentation = presentation
         dismissAllMenus(cancelPendingPresentation: false)
     }
@@ -1333,7 +1544,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             requiresEditableTarget = false
             requiresOriginalFocusedElement = false
         }
-        let currentFocusedElement = AccessibilityManager.shared.getFocusedElement()
+        let currentFocusedElement = AccessibilityManager.shared.getFocusedElement(
+            expectedProcessIdentifier: targetProcessIdentifier
+        )
         guard Self.shouldExecuteMenuAction(
             expectedProcessIdentifier: targetProcessIdentifier,
             currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,

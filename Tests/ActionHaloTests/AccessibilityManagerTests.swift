@@ -235,6 +235,595 @@ final class AccessibilityManagerTests: XCTestCase {
         XCTAssertFalse(AccessibilityManager.isStructuralSelectionFocusRole(nil))
     }
 
+    func testFocusedElementResolutionFallsBackToDirectApplicationLookupBoundToFrontmostPID() throws {
+        let frontmostProcessIdentifier = pid_t(42)
+        let expectedFocusedElement = AXUIElementCreateApplication(frontmostProcessIdentifier)
+
+        let resolvedFocusedElement = AccessibilityManager.resolveFocusedElement(
+            frontmostProcessIdentifier: frontmostProcessIdentifier,
+            systemWideLookup: { nil },
+            directApplicationLookup: { processIdentifier in
+                processIdentifier == frontmostProcessIdentifier
+                    ? expectedFocusedElement
+                    : nil
+            },
+            candidateBelongsToProcess: { candidate, processIdentifier in
+                processIdentifier == frontmostProcessIdentifier &&
+                    AccessibilityManager.areSameAccessibilityElement(
+                        candidate,
+                        expectedFocusedElement
+                    )
+            },
+            isProcessStillFrontmost: { $0 == frontmostProcessIdentifier }
+        )
+
+        XCTAssertTrue(AccessibilityManager.areSameAccessibilityElement(
+            try XCTUnwrap(resolvedFocusedElement),
+            expectedFocusedElement
+        ))
+    }
+
+    func testFocusedElementResolutionRejectsResultWhenFrontmostPIDChanges() {
+        let originalProcessIdentifier = pid_t(42)
+        let focusedElement = AXUIElementCreateApplication(originalProcessIdentifier)
+        var frontmostChecks = [true, false]
+
+        let resolvedFocusedElement = AccessibilityManager.resolveFocusedElement(
+            frontmostProcessIdentifier: originalProcessIdentifier,
+            systemWideLookup: { nil },
+            directApplicationLookup: { _ in focusedElement },
+            candidateBelongsToProcess: { _, _ in true },
+            isProcessStillFrontmost: { processIdentifier in
+                XCTAssertEqual(processIdentifier, originalProcessIdentifier)
+                return frontmostChecks.removeFirst()
+            }
+        )
+
+        XCTAssertNil(resolvedFocusedElement)
+        XCTAssertTrue(frontmostChecks.isEmpty)
+    }
+
+    func testFocusedElementResolutionSkipsAXWhenProcessIsNoLongerFrontmost() {
+        var lookupCount = 0
+
+        let resolvedFocusedElement = AccessibilityManager.resolveFocusedElement(
+            frontmostProcessIdentifier: pid_t(42),
+            systemWideLookup: {
+                lookupCount += 1
+                return AXUIElementCreateSystemWide()
+            },
+            directApplicationLookup: { _ in
+                lookupCount += 1
+                return AXUIElementCreateSystemWide()
+            },
+            candidateBelongsToProcess: { _, _ in
+                lookupCount += 1
+                return true
+            },
+            isProcessStillFrontmost: { _ in false }
+        )
+
+        XCTAssertNil(resolvedFocusedElement)
+        XCTAssertEqual(lookupCount, 0)
+    }
+
+    func testFocusedElementResolutionPrefersSystemWideResultWithoutDirectLookup() throws {
+        let frontmostProcessIdentifier = pid_t(42)
+        let expectedFocusedElement = AXUIElementCreateApplication(frontmostProcessIdentifier)
+        var directLookupCount = 0
+
+        let resolvedFocusedElement = AccessibilityManager.resolveFocusedElement(
+            frontmostProcessIdentifier: frontmostProcessIdentifier,
+            systemWideLookup: { expectedFocusedElement },
+            directApplicationLookup: { _ in
+                directLookupCount += 1
+                return nil
+            },
+            candidateBelongsToProcess: { candidate, processIdentifier in
+                processIdentifier == frontmostProcessIdentifier &&
+                    AccessibilityManager.areSameAccessibilityElement(
+                        candidate,
+                        expectedFocusedElement
+                    )
+            },
+            isProcessStillFrontmost: { $0 == frontmostProcessIdentifier }
+        )
+
+        XCTAssertTrue(AccessibilityManager.areSameAccessibilityElement(
+            try XCTUnwrap(resolvedFocusedElement),
+            expectedFocusedElement
+        ))
+        XCTAssertEqual(directLookupCount, 0)
+    }
+
+    func testFocusedElementResolutionFailsClosedWithoutFrontmostPID() {
+        var lookupCount = 0
+
+        let resolvedFocusedElement = AccessibilityManager.resolveFocusedElement(
+            frontmostProcessIdentifier: nil,
+            systemWideLookup: {
+                lookupCount += 1
+                return AXUIElementCreateSystemWide()
+            },
+            directApplicationLookup: { _ in
+                lookupCount += 1
+                return AXUIElementCreateSystemWide()
+            },
+            candidateBelongsToProcess: { _, _ in
+                lookupCount += 1
+                return true
+            },
+            isProcessStillFrontmost: { _ in true }
+        )
+
+        XCTAssertNil(resolvedFocusedElement)
+        XCTAssertEqual(lookupCount, 0)
+    }
+
+    func testFocusedElementResolutionRejectsStaleSystemWideCandidateAndUsesDirectLookup() throws {
+        let frontmostProcessIdentifier = pid_t(42)
+        let staleFocusedElement = AXUIElementCreateApplication(99)
+        let expectedFocusedElement = AXUIElementCreateApplication(frontmostProcessIdentifier)
+        var directLookupCount = 0
+
+        let resolvedFocusedElement = AccessibilityManager.resolveFocusedElement(
+            frontmostProcessIdentifier: frontmostProcessIdentifier,
+            systemWideLookup: { staleFocusedElement },
+            directApplicationLookup: { _ in
+                directLookupCount += 1
+                return expectedFocusedElement
+            },
+            candidateBelongsToProcess: { candidate, processIdentifier in
+                processIdentifier == frontmostProcessIdentifier &&
+                    AccessibilityManager.areSameAccessibilityElement(
+                        candidate,
+                        expectedFocusedElement
+                    )
+            },
+            isProcessStillFrontmost: { $0 == frontmostProcessIdentifier }
+        )
+
+        XCTAssertTrue(AccessibilityManager.areSameAccessibilityElement(
+            try XCTUnwrap(resolvedFocusedElement),
+            expectedFocusedElement
+        ))
+        XCTAssertEqual(directLookupCount, 1)
+    }
+
+    func testFocusedElementResolutionRejectsDirectCandidateFromWrongProcess() {
+        let frontmostProcessIdentifier = pid_t(42)
+        let wrongFocusedElement = AXUIElementCreateApplication(99)
+
+        let resolvedFocusedElement = AccessibilityManager.resolveFocusedElement(
+            frontmostProcessIdentifier: frontmostProcessIdentifier,
+            systemWideLookup: { nil },
+            directApplicationLookup: { _ in wrongFocusedElement },
+            candidateBelongsToProcess: { candidate, _ in
+                !AccessibilityManager.areSameAccessibilityElement(
+                    candidate,
+                    wrongFocusedElement
+                )
+            },
+            isProcessStillFrontmost: { $0 == frontmostProcessIdentifier }
+        )
+
+        XCTAssertNil(resolvedFocusedElement)
+    }
+
+    @MainActor
+    func testFocusedElementRetryRecoversAfterTwoTransientFailures() async throws {
+        let expectedFocusedElement = AXUIElementCreateApplication(pid_t(42))
+        var lookupResults: [AXUIElement?] = [nil, nil, expectedFocusedElement]
+        var observedDelays: [TimeInterval] = []
+
+        let resolvedFocusedElement = await AccessibilityManager.resolveFocusedElementWithRetry(
+            retryDelays: [0.05, 0.1],
+            lookup: {
+                lookupResults.removeFirst()
+            },
+            wait: { delay in
+                observedDelays.append(delay)
+                return true
+            }
+        )
+
+        XCTAssertTrue(AccessibilityManager.areSameAccessibilityElement(
+            try XCTUnwrap(resolvedFocusedElement),
+            expectedFocusedElement
+        ))
+        XCTAssertEqual(observedDelays, [0.05, 0.1])
+        XCTAssertTrue(lookupResults.isEmpty)
+    }
+
+    @MainActor
+    func testFocusedElementRetryStopsImmediatelyAfterRecovery() async throws {
+        let expectedFocusedElement = AXUIElementCreateApplication(pid_t(42))
+        let unusedFocusedElement = AXUIElementCreateApplication(pid_t(99))
+        var lookupResults: [AXUIElement?] = [
+            nil,
+            expectedFocusedElement,
+            unusedFocusedElement
+        ]
+        var observedDelays: [TimeInterval] = []
+
+        let resolvedFocusedElement = await AccessibilityManager.resolveFocusedElementWithRetry(
+            retryDelays: [0.05, 0.1],
+            lookup: {
+                lookupResults.removeFirst()
+            },
+            wait: { delay in
+                observedDelays.append(delay)
+                return true
+            }
+        )
+
+        XCTAssertTrue(AccessibilityManager.areSameAccessibilityElement(
+            try XCTUnwrap(resolvedFocusedElement),
+            expectedFocusedElement
+        ))
+        XCTAssertEqual(observedDelays, [0.05])
+        XCTAssertEqual(lookupResults.count, 1)
+        XCTAssertTrue(AccessibilityManager.areSameAccessibilityElement(
+            try XCTUnwrap(lookupResults[0]),
+            unusedFocusedElement
+        ))
+    }
+
+    @MainActor
+    func testFocusedElementRetryStopsAfterConfiguredAttemptsAreExhausted() async {
+        var lookupCount = 0
+        var observedDelays: [TimeInterval] = []
+
+        let resolvedFocusedElement = await AccessibilityManager.resolveFocusedElementWithRetry(
+            retryDelays: [0.05, 0.1],
+            lookup: {
+                lookupCount += 1
+                return nil
+            },
+            wait: { delay in
+                observedDelays.append(delay)
+                return true
+            }
+        )
+
+        XCTAssertNil(resolvedFocusedElement)
+        XCTAssertEqual(lookupCount, 3)
+        XCTAssertEqual(observedDelays, [0.05, 0.1])
+    }
+
+    @MainActor
+    func testFocusedElementRetryStopsWhenWaitIsCancelled() async {
+        var lookupCount = 0
+        var waitCount = 0
+
+        let resolvedFocusedElement = await AccessibilityManager.resolveFocusedElementWithRetry(
+            retryDelays: [0.05, 0.1],
+            lookup: {
+                lookupCount += 1
+                return nil
+            },
+            wait: { _ in
+                waitCount += 1
+                return false
+            }
+        )
+
+        XCTAssertNil(resolvedFocusedElement)
+        XCTAssertEqual(lookupCount, 1)
+        XCTAssertEqual(waitCount, 1)
+    }
+
+    @MainActor
+    func testFocusedElementRetrySkipsLookupWhenTaskIsAlreadyCancelled() async {
+        var lookupCount = 0
+        let task = Task { @MainActor in
+            await AccessibilityManager.resolveCandidateWithRetry(
+                retryDelays: [0.05, 0.1],
+                lookup: {
+                    lookupCount += 1
+                    return 42
+                },
+                validate: { _ in .accept },
+                wait: { _ in true }
+            )
+        }
+
+        task.cancel()
+        let result = await task.value
+
+        XCTAssertNil(result)
+        XCTAssertEqual(lookupCount, 0)
+    }
+
+    @MainActor
+    func testFocusedElementRetryRevalidatesRetainedCandidateWithoutRepeatingFocusLookup() async {
+        var focusLookupCount = 0
+        var validationCount = 0
+
+        let result = await AccessibilityManager.resolveCandidateWithRetry(
+            retryDelays: [0.05, 0.1],
+            lookup: {
+                focusLookupCount += 1
+                return 42
+            },
+            validate: { candidate in
+                validationCount += 1
+                return validationCount == 1 ? .retry : .accept
+            },
+            wait: { _ in true }
+        )
+
+        XCTAssertEqual(result, 42)
+        XCTAssertEqual(focusLookupCount, 1)
+        XCTAssertEqual(validationCount, 2)
+    }
+
+    @MainActor
+    func testFocusedElementRetryCanDiscardStaleCandidateAndLookupAgain() async {
+        var candidates = [41, 42]
+        var focusLookupCount = 0
+
+        let result = await AccessibilityManager.resolveCandidateWithRetry(
+            retryDelays: [0.05],
+            lookup: {
+                focusLookupCount += 1
+                return candidates.removeFirst()
+            },
+            validate: { candidate in
+                candidate == 42 ? .accept : .retryLookup
+            },
+            wait: { _ in true }
+        )
+
+        XCTAssertEqual(result, 42)
+        XCTAssertEqual(focusLookupCount, 2)
+    }
+
+    func testSynchronousFocusedElementRetrySkipsStaleNonNilCandidate() {
+        var candidates = [41, 42]
+        var focusLookupCount = 0
+
+        let result = AccessibilityManager.resolveSynchronousCandidateWithRetry(
+            retryDelays: [0.05],
+            lookup: {
+                focusLookupCount += 1
+                return candidates.removeFirst()
+            },
+            isAccepted: { $0 == 42 },
+            shouldContinue: { true },
+            wait: { _ in true }
+        )
+
+        XCTAssertEqual(result, 42)
+        XCTAssertEqual(focusLookupCount, 2)
+    }
+
+    @MainActor
+    func testFocusedElementRetryStopsImmediatelyOnExplicitContextMismatch() async {
+        var lookupCount = 0
+        var waitCount = 0
+
+        let result = await AccessibilityManager.resolveCandidateWithRetry(
+            retryDelays: [0.05, 0.1],
+            lookup: {
+                lookupCount += 1
+                return 42
+            },
+            validate: { _ in .reject },
+            wait: { _ in
+                waitCount += 1
+                return true
+            }
+        )
+
+        XCTAssertNil(result)
+        XCTAssertEqual(lookupCount, 1)
+        XCTAssertEqual(waitCount, 0)
+    }
+
+    @MainActor
+    func testFocusedElementRetryDoesNotLookupAgainAfterCancellationDuringWait() async {
+        var lookupCount = 0
+
+        let result = await AccessibilityManager.resolveCandidateWithRetry(
+            retryDelays: [0.05, 0.1],
+            lookup: {
+                lookupCount += 1
+                return Optional<Int>.none
+            },
+            validate: { _ in .accept },
+            wait: { _ in
+                withUnsafeCurrentTask { task in
+                    task?.cancel()
+                }
+                return true
+            }
+        )
+
+        XCTAssertNil(result)
+        XCTAssertEqual(lookupCount, 1)
+    }
+
+    @MainActor
+    func testFreshAssessmentRetryReplacesStaleFocusWithNewSelectionPair() async {
+        var attempts: [(candidate: String, assessment: String)?] = [
+            (candidate: "old-sidebar", assessment: "no-selection"),
+            (candidate: "notes-text-area", assessment: "selected-text"),
+            (candidate: "notes-text-area", assessment: "selected-text")
+        ]
+
+        let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: [0.05, 0.1],
+            attempt: { attempts.removeFirst() },
+            isTerminal: { _ in false },
+            wait: { _ in true }
+        )
+
+        XCTAssertEqual(result?.candidate, "notes-text-area")
+        XCTAssertEqual(result?.assessment, "selected-text")
+        XCTAssertTrue(attempts.isEmpty)
+    }
+
+    @MainActor
+    func testFreshAssessmentRetryDoesNotReturnOldUsableSelectionEarly() async {
+        var attempts: [(candidate: String, assessment: String)?] = [
+            (candidate: "old-control", assessment: "old-selection"),
+            (candidate: "current-text-area", assessment: "current-selection")
+        ]
+
+        let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: [0.05],
+            attempt: { attempts.removeFirst() },
+            isTerminal: { _ in false },
+            wait: { _ in true }
+        )
+
+        XCTAssertEqual(result?.candidate, "current-text-area")
+        XCTAssertEqual(result?.assessment, "current-selection")
+    }
+
+    @MainActor
+    func testFreshAssessmentRetryFailsClosedWhenFinalPairIsUnavailable() async {
+        var attempts: [(candidate: String, assessment: String)?] = [
+            (candidate: "old-control", assessment: "old-selection"),
+            nil
+        ]
+
+        let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: [0.05],
+            attempt: { attempts.removeFirst() },
+            isTerminal: { _ in false },
+            wait: { _ in true }
+        )
+
+        XCTAssertNil(result)
+    }
+
+    @MainActor
+    func testFreshAssessmentRetryRecoversWhenRequiredFinalSampleIsTransientlyUnavailable() async {
+        var attempts: [(candidate: String, assessment: String)?] = [
+            (candidate: "old-control", assessment: "old-selection"),
+            (candidate: "old-control", assessment: "old-selection"),
+            nil,
+            nil,
+            (candidate: "current-text-area", assessment: "current-selection")
+        ]
+
+        let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: [0.05, 0.1],
+            recoveryRetryDelays: [0.05, 0.1],
+            attempt: { attempts.removeFirst() },
+            isTerminal: { _ in false },
+            wait: { _ in true }
+        )
+
+        XCTAssertEqual(result?.candidate, "current-text-area")
+        XCTAssertEqual(result?.assessment, "current-selection")
+        XCTAssertTrue(attempts.isEmpty)
+    }
+
+    @MainActor
+    func testFreshAssessmentRetryRecoversFromIndeterminateFinalAssessment() async {
+        var attempts: [(candidate: String, assessment: String)?] = [
+            (candidate: "text-area", assessment: "resolved"),
+            (candidate: "text-area", assessment: "indeterminate"),
+            (candidate: "text-area", assessment: "resolved")
+        ]
+
+        let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: [0.05],
+            recoveryRetryDelays: [0.1],
+            attempt: { attempts.removeFirst() },
+            isTerminal: { _ in false },
+            isRetryable: { $0 == "indeterminate" },
+            wait: { _ in true }
+        )
+
+        XCTAssertEqual(result?.candidate, "text-area")
+        XCTAssertEqual(result?.assessment, "resolved")
+        XCTAssertTrue(attempts.isEmpty)
+    }
+
+    @MainActor
+    func testFreshAssessmentRetryDoesNotReuseOldPairAfterRecoveryExhaustion() async {
+        var attempts: [(candidate: String, assessment: String)?] = [
+            (candidate: "old-control", assessment: "old-selection"),
+            nil,
+            nil,
+            nil
+        ]
+
+        let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: [0.05],
+            recoveryRetryDelays: [0.05, 0.1],
+            attempt: { attempts.removeFirst() },
+            isTerminal: { _ in false },
+            wait: { _ in true }
+        )
+
+        XCTAssertNil(result)
+        XCTAssertTrue(attempts.isEmpty)
+    }
+
+    @MainActor
+    func testFreshAssessmentRetryRefreshesAssessmentForSameCandidate() async {
+        var attempts: [(candidate: String, assessment: String)?] = [
+            (candidate: "same-text-area", assessment: "empty"),
+            (candidate: "same-text-area", assessment: "selected")
+        ]
+
+        let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: [0.05],
+            attempt: { attempts.removeFirst() },
+            isTerminal: { _ in false },
+            wait: { _ in true }
+        )
+
+        XCTAssertEqual(result?.candidate, "same-text-area")
+        XCTAssertEqual(result?.assessment, "selected")
+    }
+
+    @MainActor
+    func testFreshAssessmentRetryStopsForTerminalProtectedAssessment() async {
+        var attemptCount = 0
+        var waitCount = 0
+
+        let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: [0.05, 0.1],
+            attempt: {
+                attemptCount += 1
+                return (candidate: "secure-field", assessment: "protected")
+            },
+            isTerminal: { $0 == "protected" },
+            wait: { _ in
+                waitCount += 1
+                return true
+            }
+        )
+
+        XCTAssertEqual(result?.candidate, "secure-field")
+        XCTAssertEqual(attemptCount, 1)
+        XCTAssertEqual(waitCount, 0)
+    }
+
+    @MainActor
+    func testFreshAssessmentRetryStopsWhenRefreshWaitIsCancelled() async {
+        var attemptCount = 0
+
+        let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: [0.05],
+            attempt: {
+                attemptCount += 1
+                return (candidate: "old-control", assessment: "old-selection")
+            },
+            isTerminal: { _ in false },
+            wait: { _ in false }
+        )
+
+        XCTAssertNil(result)
+        XCTAssertEqual(attemptCount, 1)
+    }
+
     func testShouldTreatFocusedRoleAsTextSelectionContextRejectsBroadCodeHeuristicMatches() {
         let result = AccessibilityManager.shouldTreatFocusedRoleAsTextSelectionContext(
             role: "AXGroup",
