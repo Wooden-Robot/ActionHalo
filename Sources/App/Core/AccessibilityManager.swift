@@ -2155,15 +2155,19 @@ final class AccessibilityManager {
     /// consume the final configured attempt so a stale, non-nil AX focus (which
     /// can even carry an old selection) cannot win before macOS publishes the
     /// newly focused text element. A protected result is terminal and fails
-    /// closed immediately.
+    /// closed immediately. Its closures stay on MainActor so generic pairs
+    /// containing AX proxies never cross an executor boundary.
     static func resolveFreshAssessedCandidateWithRetry<Candidate, Assessment>(
         retryDelays: [TimeInterval],
         recoveryRetryDelays: [TimeInterval] = [],
-        attempt: () async -> (candidate: Candidate, assessment: Assessment)?,
-        isTerminal: (Assessment) -> Bool,
-        isRetryable: (Assessment) -> Bool = { _ in false },
-        isContextCurrent: () -> Bool = { true },
-        wait: (TimeInterval) async -> Bool
+        attempt: @MainActor () async -> (
+            candidate: Candidate,
+            assessment: Assessment
+        )?,
+        isTerminal: @MainActor (Assessment) -> Bool,
+        isRetryable: @MainActor (Assessment) -> Bool = { _ in false },
+        isContextCurrent: @MainActor () -> Bool = { true },
+        wait: @MainActor (TimeInterval) async -> Bool
     ) async -> (candidate: Candidate, assessment: Assessment)? {
         for attemptIndex in 0...retryDelays.count {
             guard !Task.isCancelled, isContextCurrent() else { return nil }
