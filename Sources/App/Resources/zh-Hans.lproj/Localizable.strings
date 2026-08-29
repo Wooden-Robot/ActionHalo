@@ -157,6 +157,10 @@
 "Built-in: Paste" = "内置：粘贴 (Paste)";
 "Built-in: Reveal in Finder" = "内置：在 Finder 中显示";
 "Built-in: Telegram Search" = "内置：Telegram 搜索";
+"Native Action: Copy" = "原生动作：复制";
+"Native Action: Paste" = "原生动作：粘贴";
+"Native Action: Reveal in Finder" = "原生动作：在 Finder 中显示";
+"Internal Command: Telegram Search" = "内部命令：Telegram 搜索";
 "Action Content:" = "执行内容:";
 "Save" = "保存";
 "Restore Default" = "恢复默认";
@@ -176,6 +180,11 @@
 "Built-in: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)" = "内置：纯粘贴\n触发系统的 Cmd+V 粘贴操作\n(无需内容配置)";
 "Built-in: Reveal in Finder\nOpens the selected file path in Finder\n(Supports /, ~, and file:// paths)" = "内置：在 Finder 中显示\n在 Finder 中打开所选文件路径的位置\n(支持 /、~ 和 file:// 路径)";
 "Built-in: Telegram Search\nOpens Telegram global search with the selected text\n(No content configuration needed)" = "内置：Telegram 搜索\n使用选中文本打开 Telegram 全局搜索\n(无需内容配置)";
+"Native Action: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)" = "原生动作：复制\n直接将原文本写入剪贴板\n（无需内容配置）";
+"Native Action: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)" = "原生动作：粘贴\n触发系统的 Cmd+V 粘贴操作\n（无需内容配置）";
+"Native Action: Reveal in Finder\nOpens the selected file path in Finder\n(Supports /, ~, and file:// paths)" = "原生动作：在 Finder 中显示\n在 Finder 中打开所选文件路径的位置\n（支持 /、~ 和 file:// 路径）";
+"Internal Command: Telegram Search\nOnly the bundled ActionHalo plugin can use this command" = "内部命令：Telegram 搜索\n仅 ActionHalo 随附的内置插件可以使用此命令";
+"Internal command plugins cannot be edited. Disable them instead if you do not want to use them." = "内部命令插件不可编辑；如不需要，请将其停用。";
 "Save Failed" = "保存失败";
 "Name and Identifier cannot be empty." = "名称和标识符不能为空。";
 "Identifier must use only letters, numbers, dots, and hyphens." = "标识符只能包含字母、数字、点和连字符。";

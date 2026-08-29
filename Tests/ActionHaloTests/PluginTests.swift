@@ -293,9 +293,63 @@ final class PluginTests: XCTestCase {
         XCTAssertNotNil(
             PluginLoader.load(
                 from: bundleURL,
-                allowReservedCoreIdentifier: true
+                source: .bundled
             )
         )
+    }
+
+    func testPluginLoaderRejectsStructurallyInvalidActions() throws {
+        let missingScript = try makePluginBundle(
+            identifier: "com.test.missing-script",
+            actionJSON: #"{ "type": "shell-script" }"#
+        )
+        let unsupportedKey = try makePluginBundle(
+            identifier: "com.test.unsupported-key",
+            actionJSON: #"{ "type": "key-combo", "key": "f13" }"#
+        )
+        let unsupportedModifier = try makePluginBundle(
+            identifier: "com.test.unsupported-modifier",
+            actionJSON: #"{ "type": "key-combo", "key": "x", "modifiers": ["hyper"] }"#
+        )
+
+        XCTAssertNil(PluginLoader.load(from: missingScript))
+        XCTAssertNil(PluginLoader.load(from: unsupportedKey))
+        XCTAssertNil(PluginLoader.load(from: unsupportedModifier))
+    }
+
+    func testNativeCommandsAreRestrictedToBundledPackages() throws {
+        let bundleURL = try makePluginBundle(
+            identifier: "com.test.native-command",
+            actionJSON: #"{ "type": "native-command", "command": "telegram-search" }"#
+        )
+
+        XCTAssertNil(PluginLoader.load(from: bundleURL))
+        let bundledPlugin = try XCTUnwrap(
+            PluginLoader.load(from: bundleURL, source: .bundled)
+        )
+        XCTAssertEqual(bundledPlugin.action, .nativeCommand(.telegramSearch))
+    }
+
+    func testPluginLoaderRejectsUnknownNativeCommand() throws {
+        let bundleURL = try makePluginBundle(
+            identifier: "com.test.unknown-native-command",
+            actionJSON: #"{ "type": "native-command", "command": "unknown" }"#
+        )
+
+        XCTAssertNil(PluginLoader.load(from: bundleURL, source: .bundled))
+    }
+
+    func testLegacyTelegramActionIsOnlyAcceptedForBundledPackages() throws {
+        let bundleURL = try makePluginBundle(
+            identifier: "com.test.legacy-telegram",
+            actionJSON: #"{ "type": "telegram-search" }"#
+        )
+
+        XCTAssertNil(PluginLoader.load(from: bundleURL))
+        let bundledPlugin = try XCTUnwrap(
+            PluginLoader.load(from: bundleURL, source: .bundled)
+        )
+        XCTAssertEqual(bundledPlugin.action, .nativeCommand(.telegramSearch))
     }
 
     func testPluginLoaderRejectsUnsupportedExtensionAndIdentifier() throws {
@@ -654,13 +708,13 @@ final class PluginTests: XCTestCase {
         let openURL = try XCTUnwrap(
             PluginLoader.load(
                 from: repositoryRoot.appendingPathComponent("Plugins/OpenURL.actionhaloext"),
-                allowReservedCoreIdentifier: true
+                source: .bundled
             )
         )
         let revealPath = try XCTUnwrap(
             PluginLoader.load(
                 from: repositoryRoot.appendingPathComponent("Plugins/RevealPath.actionhaloext"),
-                allowReservedCoreIdentifier: true
+                source: .bundled
             )
         )
 
@@ -684,7 +738,7 @@ final class PluginTests: XCTestCase {
         let plugin = try XCTUnwrap(
             PluginLoader.load(
                 from: pluginURL,
-                allowReservedCoreIdentifier: true
+                source: .bundled
             )
         )
 

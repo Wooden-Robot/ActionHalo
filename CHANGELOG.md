@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.3.36
+
+- 修复 Search in Telegram 只激活 Telegram、查询未进入搜索的问题；现在通过辅助功能直接触发 Telegram 的 Global Search 菜单，并只使用左侧顶部搜索框，不再打开居中的快速跳转框。
+- 内置 Telegram 搜索改用仅随 App 发布的 `native-command`，外部插件无法声明保留命令；插件动作在加载时完成结构校验和类型化，脚本、快捷键及 URL 执行不再依赖未经校验的可选字段。
+- 保留 v0.3.34 `telegram-search` 动作拼写的内置兼容，用户插件与通用 AppleScript 能力不受影响；新增内置来源隔离、动作校验和 Telegram 搜索回归测试。
+
+- Fixed Search in Telegram activating Telegram without placing the query in search. It now invokes Telegram's Global Search menu through Accessibility and uses only the top-left search field instead of opening the centered quick-switcher.
+- Moved bundled Telegram search to the app-only `native-command` mechanism. External plugins cannot declare reserved commands, and plugin actions are structurally validated and typed at load time instead of executing from unchecked optional fields.
+- Preserved bundled compatibility for the v0.3.34 `telegram-search` spelling without affecting user plugins or general AppleScript support. Added coverage for package-source isolation, action validation, and Telegram search.
+
 ## v0.3.35
 
 - 修复 macOS 15.3.1 备忘录中粘贴胶囊可出现、但拖选圆环和全局快捷键无法触发的问题：焦点解析优先使用目标 PID，并在辅助功能焦点、所属窗口和选区属性分阶段发布时进行有界重试。

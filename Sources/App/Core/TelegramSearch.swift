@@ -177,12 +177,25 @@ private extension TelegramSearchInputMethod {
     ]
 }
 
-/// The only macOS seam for Telegram search. It deliberately avoids menu titles,
+/// The only macOS seam for Telegram search. It deliberately avoids
 /// keyboard-layout-dependent characters, fixed window coordinates, and AppleScript.
 @MainActor
 final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
     private static let telegramBundleIdentifier = "ru.keepcoder.Telegram"
     private static let globalSearchURL = URL(string: "tg://chats/search")!
+    private static let globalSearchMenuItemIdentifier = "aMa-rb-kjV"
+    private static let globalSearchMenuItemTitles: Set<String> = [
+        "Global Search",
+        "全局搜索",
+        "全局搜尋",
+        "全域搜尋",
+        "Глобальный поиск",
+        "Globale Suche",
+        "Recherche globale",
+        "Búsqueda global",
+        "グローバル検索",
+        "전체 검색",
+    ]
     private static let maximumAXNodes = 240
 
     private var application: NSRunningApplication?
@@ -208,6 +221,15 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
                 if NSWorkspace.shared.frontmostApplication?.processIdentifier ==
                     runningApplication.processIdentifier {
                     await settle(for: 0.20)
+                    guard AXIsProcessTrusted() else {
+                        return .failed(.permissionDenied)
+                    }
+                    guard pressGlobalSearchMenuItem(
+                        processIdentifier: runningApplication.processIdentifier
+                    ) else {
+                        return .failed(.inputUnavailable)
+                    }
+                    await settle(for: 0.22)
                     searchField = locateSearchField(
                         processIdentifier: runningApplication.processIdentifier
                     )
@@ -218,6 +240,40 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
         } while Date() < deadline
 
         return .failed(.activationTimedOut)
+    }
+
+    private func pressGlobalSearchMenuItem(processIdentifier: pid_t) -> Bool {
+        let applicationElement = AXUIElementCreateApplication(processIdentifier)
+        guard let menuBar = elementAttribute(
+            kAXMenuBarAttribute,
+            from: applicationElement
+        ) else {
+            return false
+        }
+
+        var queue = [menuBar]
+        var index = 0
+        while index < queue.count, index < Self.maximumAXNodes {
+            let element = queue[index]
+            index += 1
+
+            let identifier = stringAttribute(kAXIdentifierAttribute, from: element)
+            let title = stringAttribute(kAXTitleAttribute, from: element)
+            if identifier == Self.globalSearchMenuItemIdentifier ||
+                title.map(Self.globalSearchMenuItemTitles.contains) == true {
+                return AXUIElementPerformAction(
+                    element,
+                    kAXPressAction as CFString
+                ) == .success
+            }
+
+            if queue.count < Self.maximumAXNodes {
+                queue.append(contentsOf: elementChildren(of: element).prefix(
+                    Self.maximumAXNodes - queue.count
+                ))
+            }
+        }
+        return false
     }
 
     func replaceQuery(

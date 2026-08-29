@@ -434,10 +434,9 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             "Execute Shell Script".localized,
             "Execute AppleScript".localized,
             "Simulate Key Combo".localized,
-            "Built-in: Copy".localized,
-            "Built-in: Paste".localized,
-            "Built-in: Reveal in Finder".localized,
-            "Built-in: Telegram Search".localized
+            "Native Action: Copy".localized,
+            "Native Action: Paste".localized,
+            "Native Action: Reveal in Finder".localized
         ])
         typePopUp.target = self
         typePopUp.action = #selector(typeChanged)
@@ -628,6 +627,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
     
     private func populate(with plugin: Plugin?) {
         guard let p = plugin else { return }
+        typePopUp.isEnabled = true
         nameField.stringValue = p.config.name
         enNameField.stringValue = p.config.localizedNames?["en"] ?? ""
         descField.stringValue = p.config.description ?? ""
@@ -687,8 +687,12 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         case .revealPath:
             typePopUp.selectItem(at: 6)
             contentTextView.string = ""
-        case .telegramSearch:
+        case .nativeCommand, .legacyTelegramSearch:
+            if typePopUp.numberOfItems == 7 {
+                typePopUp.addItem(withTitle: "Internal Command: Telegram Search".localized)
+            }
             typePopUp.selectItem(at: 7)
+            typePopUp.isEnabled = false
             contentTextView.string = ""
         }
         refreshTypePresentation()
@@ -782,25 +786,25 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             contentViewScroll.isHidden = true
             shortcutField.isHidden = false
         case 4: // Copy
-            infoLabel.stringValue = "Built-in: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)".localized
+            infoLabel.stringValue = "Native Action: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)".localized
             contentViewMinHeightConstraint?.constant = 44
             contentTextView.isEditable = false
             contentTextView.string = ""
             contentViewScroll.isHidden = true
         case 5: // Paste
-            infoLabel.stringValue = "Built-in: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)".localized
+            infoLabel.stringValue = "Native Action: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)".localized
             contentViewMinHeightConstraint?.constant = 44
             contentTextView.isEditable = false
             contentTextView.string = ""
             contentViewScroll.isHidden = true
         case 6: // Reveal in Finder
-            infoLabel.stringValue = "Built-in: Reveal in Finder\nOpens the selected file path in Finder\n(Supports /, ~, and file:// paths)".localized
+            infoLabel.stringValue = "Native Action: Reveal in Finder\nOpens the selected file path in Finder\n(Supports /, ~, and file:// paths)".localized
             contentViewMinHeightConstraint?.constant = 44
             contentTextView.isEditable = false
             contentTextView.string = ""
             contentViewScroll.isHidden = true
         case 7: // Telegram Search
-            infoLabel.stringValue = "Built-in: Telegram Search\nOpens Telegram global search with the selected text\n(No content configuration needed)".localized
+            infoLabel.stringValue = "Internal Command: Telegram Search\nOnly the bundled ActionHalo plugin can use this command".localized
             contentViewMinHeightConstraint?.constant = 44
             contentTextView.isEditable = false
             contentTextView.string = ""
@@ -904,6 +908,10 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
     }
 
     private func currentValidationMessage() -> String? {
+        if editingPlugin?.action.isNativeCommand == true {
+            return "Internal command plugins cannot be edited. Disable them instead if you do not want to use them.".localized
+        }
+
         let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let id = identifierField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let typeIndex = typePopUp.indexOfSelectedItem
@@ -1158,7 +1166,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
     ) -> [String: Any] {
         var result = existing
         var action = result["action"] as? [String: Any] ?? [:]
-        for knownActionKey in ["type", "url", "script", "inline", "key", "modifiers"] {
+        for knownActionKey in ["type", "url", "script", "inline", "key", "modifiers", "command"] {
             action.removeValue(forKey: knownActionKey)
         }
         for (key, value) in actionUpdates {

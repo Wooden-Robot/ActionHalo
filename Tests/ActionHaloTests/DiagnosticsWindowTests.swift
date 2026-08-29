@@ -43,6 +43,7 @@ final class DiagnosticsWindowTests: XCTestCase {
             name: "Regex",
             identifier: "com.test.regex",
             actionType: "url",
+            actionContent: #""url":"https://example.com?q={text}""#,
             filterJSON: #""filter":{"regex":"^[0-9]+$"}"#
         )
         let diagnostic = plugin.visibilityDiagnostic(text: "plain text", appBundleID: nil)
