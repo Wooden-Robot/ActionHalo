@@ -202,6 +202,8 @@ ActionHalo comes with a fully-featured **Visual Plugin Editor** built right into
 - 📝 `paste`: Paste into the current input area
 - 📂 `reveal-path`: Open the selected file path in Finder
 
+`native-command` is reserved for plugins bundled with ActionHalo and is not part of the public extension interface; external packages using it are rejected during loading. Product-specific features such as Telegram search are registered as command identifiers instead of expanding the public Action `type` list.
+
 #### Safe Regex Filters
 Plugin `filter.regex` values run through a linear-time, non-backtracking matcher so an imported plugin cannot freeze the menu with pathological input. The supported subset includes literals, `.`, `^` / `$`, groups and `(?:...)`, alternation, character classes, `*` / `+` / `?` / `{m,n}`, and the `\s`, `\d`, and `\w` families. Lookarounds, backreferences, mode modifiers, lazy quantifiers, and possessive quantifiers are rejected. Patterns are limited to 1 KiB and regex-filtered selections to 4,096 UTF-16 code units; omit `filter.regex` when every selection should match.
 

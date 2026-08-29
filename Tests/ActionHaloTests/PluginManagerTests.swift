@@ -241,7 +241,7 @@ final class PluginManagerTests: GlobalStateTestCase {
         )
         let bundledURL = try makeNativeTelegramPluginBundle()
         let legacyPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
-        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
+        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL, source: .bundled))
 
         XCTAssertEqual(
             legacyPlugin.packageFingerprint,
@@ -264,7 +264,7 @@ final class PluginManagerTests: GlobalStateTestCase {
         )
         let bundledURL = try makeNativeTelegramPluginBundle()
         let legacyPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
-        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
+        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL, source: .bundled))
 
         XCTAssertEqual(
             legacyPlugin.packageFingerprint,
@@ -289,7 +289,7 @@ final class PluginManagerTests: GlobalStateTestCase {
         )
         let bundledURL = try makeNativeTelegramPluginBundle()
         let customizedPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
-        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
+        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL, source: .bundled))
 
         let merged = PluginManager.mergePluginsPreservingExisting(
             user: [customizedPlugin],
@@ -318,7 +318,7 @@ final class PluginManagerTests: GlobalStateTestCase {
 
         let bundledURL = try makeNativeTelegramPluginBundle()
         let customizedPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
-        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
+        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL, source: .bundled))
 
         let merged = PluginManager.mergePluginsPreservingExisting(
             user: [customizedPlugin],
@@ -345,7 +345,7 @@ final class PluginManagerTests: GlobalStateTestCase {
 
         let legacyPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
         let replacementPlugin = try XCTUnwrap(
-            PluginLoader.load(from: replacementURL)
+            PluginLoader.load(from: replacementURL, source: .bundled)
         )
         let merged = PluginManager.mergePluginsPreservingExisting(
             user: [legacyPlugin],
@@ -363,7 +363,7 @@ final class PluginManagerTests: GlobalStateTestCase {
         )
         let bundledURL = try makeNativeTelegramPluginBundle()
         let customizedPlugin = try XCTUnwrap(PluginLoader.load(from: legacyURL))
-        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL))
+        let bundledPlugin = try XCTUnwrap(PluginLoader.load(from: bundledURL, source: .bundled))
 
         let merged = PluginManager.mergePluginsPreservingExisting(
             user: [customizedPlugin],

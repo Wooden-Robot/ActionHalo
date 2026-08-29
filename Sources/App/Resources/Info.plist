@@ -13,9 +13,9 @@
     <key>CFBundleIdentifier</key>
     <string>com.actionhalo.app</string>
 	<key>CFBundleVersion</key>
-	<string>0.3.35</string>
+	<string>0.3.36</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.35</string>
+	<string>0.3.36</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>

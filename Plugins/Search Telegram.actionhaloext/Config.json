@@ -5,6 +5,7 @@
   "icon": "paperplane",
   "isDefaultDisabled": true,
   "action": {
-    "type": "telegram-search"
+    "type": "native-command",
+    "command": "telegram-search"
   }
 }

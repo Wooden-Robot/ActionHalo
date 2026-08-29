@@ -1,5 +1,18 @@
 import Foundation
 
+enum PluginPackageSource: Sendable {
+    case external
+    case bundled
+
+    var allowsReservedCoreIdentifiers: Bool {
+        self == .bundled
+    }
+
+    var allowsNativeCommands: Bool {
+        self == .bundled
+    }
+}
+
 /// Loads and parses ActionHalo plugin packages.
 final class PluginLoader {
     static let packageExtension = "actionhaloext"
@@ -22,7 +35,7 @@ final class PluginLoader {
     /// Load a plugin from a .actionhaloext directory
     static func load(
         from directoryURL: URL,
-        allowReservedCoreIdentifier: Bool = false
+        source: PluginPackageSource = .external
     ) -> Plugin? {
         guard isLoadablePackageURL(directoryURL) else {
             NSLog("[ActionHalo] Unsupported plugin package extension: \(directoryURL.path)")
@@ -75,21 +88,28 @@ final class PluginLoader {
             guard !config.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   PluginManager.pluginIdentifierValidationMessage(
                     config.identifier,
-                    allowReservedCoreIdentifier: allowReservedCoreIdentifier
+                    allowReservedCoreIdentifier: source.allowsReservedCoreIdentifiers
                   ) == nil else {
                 NSLog("[ActionHalo] Plugin config missing required fields: \(directoryURL.lastPathComponent)")
                 return nil
             }
 
-            if config.action.type == .url {
-                guard let template = config.action.url,
-                      PluginManager.isAllowedPluginURLTemplate(template) else {
+            guard let action = PluginAction(
+                config: config.action,
+                allowNativeCommands: source.allowsNativeCommands
+            ) else {
+                NSLog("[ActionHalo] Plugin action is invalid or unavailable for this package source: \(directoryURL.lastPathComponent)")
+                return nil
+            }
+
+            if case .url(let template) = action {
+                guard PluginManager.isAllowedPluginURLTemplate(template) else {
                     NSLog("[ActionHalo] Plugin uses an unsupported or invalid URL: \(directoryURL.lastPathComponent)")
                     return nil
                 }
             }
-            
-            let plugin = Plugin(config: config, directoryURL: directoryURL)
+
+            let plugin = Plugin(config: config, action: action, directoryURL: directoryURL)
             NSLog("[ActionHalo] Loaded plugin: \(config.name) (\(config.identifier))")
             return plugin
             
@@ -102,7 +122,7 @@ final class PluginLoader {
     /// Scan a directory for ActionHalo packages.
     static func scanDirectory(
         _ directoryURL: URL,
-        allowReservedCoreIdentifiers: Bool = false
+        source: PluginPackageSource = .external
     ) -> [Plugin] {
         let fileManager = FileManager.default
         
@@ -139,7 +159,7 @@ final class PluginLoader {
                 if isSupportedPackageURL(itemURL) {
                     if let plugin = load(
                         from: itemURL,
-                        allowReservedCoreIdentifier: allowReservedCoreIdentifiers
+                        source: source
                     ) {
                         plugins.append(plugin)
                     }

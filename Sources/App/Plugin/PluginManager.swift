@@ -351,8 +351,8 @@ final class PluginManager: Sendable {
     }
 
     static func executionPolicy(for plugin: Plugin) -> ExecutionPolicy {
-        switch plugin.config.action.type {
-        case .shellScript, .applescript:
+        switch plugin.action {
+        case .shellScript, .appleScript:
             return .protected
         case .keyCombo:
             return plugin.requiresExecutionTrust ? .protected : .directKeyCombo
@@ -466,7 +466,7 @@ final class PluginManager: Sendable {
             }
 
             if let plugin = PluginLoader.load(from: packageURL),
-               let scriptValue = plugin.config.action.script,
+               let scriptValue = plugin.action.scriptReference,
                case .bundledFile(let scriptURL) = resolvedPluginScriptSource(
                    scriptValue,
                    pluginDirectoryURL: packageURL,
@@ -710,7 +710,7 @@ final class PluginManager: Sendable {
             // Load built-in plugins
             let builtIn = PluginLoader.scanDirectory(
                 self.builtInPluginsURL,
-                allowReservedCoreIdentifiers: true
+                source: .bundled
             )
             
             // Load user plugins
@@ -956,7 +956,7 @@ final class PluginManager: Sendable {
 
             guard let snapshotPlugin = PluginLoader.load(from: packageURL),
                   snapshotPlugin.id == plugin.id,
-                  snapshotPlugin.config.action.type == plugin.config.action.type,
+                  snapshotPlugin.action == plugin.action,
                   snapshotPlugin.requiresExecutionTrust,
                   let fingerprint = snapshotPlugin.executionTrustFingerprint else {
                 try? fileManager.removeItem(at: containerURL)
@@ -1354,7 +1354,7 @@ final class PluginManager: Sendable {
         targetProcessIdentifier: pid_t?,
         targetFocusedElement: AXUIElement?
     ) {
-        let action = plugin.config.action
+        let action = plugin.action
         let resolvedTargetProcessIdentifier =
             targetProcessIdentifier ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
         Self.verboseLog(
@@ -1364,7 +1364,7 @@ final class PluginManager: Sendable {
         switch Self.executionPolicy(for: plugin) {
         case .protected:
             let keyComboTargetID: UUID?
-            if action.type == .keyCombo, let targetFocusedElement {
+            if case .keyCombo = action, let targetFocusedElement {
                 let targetID = UUID()
                 pendingKeyComboTargets[targetID] = targetFocusedElement
                 keyComboTargetID = targetID
@@ -1378,7 +1378,8 @@ final class PluginManager: Sendable {
                 keyComboTargetID: keyComboTargetID
             )
         case .directKeyCombo:
-            guard let resolvedTargetProcessIdentifier,
+            guard case .keyCombo(let combo) = action,
+                  let resolvedTargetProcessIdentifier,
                   Self.isExpectedKeyComboTarget(
                     expectedProcessIdentifier: resolvedTargetProcessIdentifier,
                     currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
@@ -1389,7 +1390,7 @@ final class PluginManager: Sendable {
                 return
             }
             executeKeyCombo(
-                action,
+                combo,
                 targetProcessIdentifier: resolvedTargetProcessIdentifier
             )
         case .standard:
@@ -1402,13 +1403,13 @@ final class PluginManager: Sendable {
     }
 
     private func executeStandardPlugin(
-        _ action: PluginActionConfig,
+        _ action: PluginAction,
         text: String,
         targetProcessIdentifier: pid_t?
     ) {
-        switch action.type {
-        case .url:
-            executeURLAction(action, text: text)
+        switch action {
+        case .url(let template):
+            executeURLAction(template: template, text: text)
         case .copy:
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
@@ -1424,7 +1425,7 @@ final class PluginManager: Sendable {
             )
         case .revealPath:
             ActionExecutor.revealPathInFinder(text)
-        case .telegramSearch:
+        case .nativeCommand(.telegramSearch):
             Task { @MainActor in
                 if case .failure(let failure) = await TelegramSearch.shared.search(text) {
                     NSLog(
@@ -1435,7 +1436,7 @@ final class PluginManager: Sendable {
                     )
                 }
             }
-        case .shellScript, .applescript, .keyCombo:
+        case .shellScript, .appleScript, .keyCombo:
             assertionFailure("Protected and direct key-combo actions must be routed before standard execution.")
         }
     }
@@ -1470,25 +1471,25 @@ final class PluginManager: Sendable {
                 return
             }
 
-            let action = snapshot.plugin.config.action
-            switch action.type {
-            case .shellScript:
+            let action = snapshot.plugin.action
+            switch action {
+            case .shellScript(let source):
                 self.executeShellScript(
                     snapshot.plugin,
-                    action: action,
+                    source: source,
                     text: text,
                     cleanupSnapshot: snapshot
                 )
-            case .applescript:
+            case .appleScript(let source):
                 self.executeAppleScript(
                     snapshot.plugin,
-                    action: action,
+                    source: source,
                     text: text,
                     cleanupSnapshot: snapshot
                 )
-            case .keyCombo:
+            case .keyCombo(let combo):
                 self.executeTrustedKeyCombo(
-                    action,
+                    combo,
                     targetProcessIdentifier: targetProcessIdentifier,
                     keyComboTargetID: keyComboTargetID,
                     cleanupSnapshot: snapshot
@@ -1508,7 +1509,7 @@ final class PluginManager: Sendable {
     }
 
     private func executeTrustedKeyCombo(
-        _ action: PluginActionConfig,
+        _ combo: PluginKeyCombo,
         targetProcessIdentifier: pid_t?,
         keyComboTargetID: UUID?,
         cleanupSnapshot: TrustedExecutionSnapshot
@@ -1537,7 +1538,7 @@ final class PluginManager: Sendable {
                     return
                 }
                 self.executeKeyCombo(
-                    action,
+                    combo,
                     targetProcessIdentifier: targetProcessIdentifier
                 )
             }
@@ -1560,8 +1561,8 @@ final class PluginManager: Sendable {
     
     // MARK: - Action Execution
     
-    private func executeURLAction(_ action: PluginActionConfig, text: String) {
-        guard var urlTemplate = action.url else { return }
+    private func executeURLAction(template: String, text: String) {
+        var urlTemplate = template
         guard Self.isAllowedPluginURLTemplate(urlTemplate) else {
             NSLog("[ActionHalo] Refusing URL action with unsupported scheme.")
             return
@@ -1604,14 +1605,15 @@ final class PluginManager: Sendable {
     
     private func executeShellScript(
         _ plugin: Plugin,
-        action: PluginActionConfig,
+        source: PluginScriptActionSource,
         text: String,
         cleanupSnapshot: TrustedExecutionSnapshot
     ) {
         Self.verboseLog("Entering executeShellScript for plugin: \(plugin.id)")
         let scriptContent: String?
         
-        if let scriptName = action.script {
+        switch source {
+        case .script(let scriptName):
             switch Self.resolvedPluginScriptSource(
                 scriptName,
                 pluginDirectoryURL: plugin.directoryURL
@@ -1627,13 +1629,9 @@ final class PluginManager: Sendable {
                 NSLog("[ActionHalo] Refusing shell script outside the verified plugin package: \(scriptName)")
                 scriptContent = nil
             }
-        } else if let inline = action.inline {
+        case .inline(let inline):
             Self.verboseLog("Found inline action config for Shell Script")
             scriptContent = inline
-        } else {
-            Self.verboseLog("Neither inline nor script field found in config!")
-            removeTrustedExecutionSnapshot(cleanupSnapshot)
-            return
         }
         
         guard let content = scriptContent else {
@@ -1687,14 +1685,15 @@ final class PluginManager: Sendable {
     
     private func executeAppleScript(
         _ plugin: Plugin,
-        action: PluginActionConfig,
+        source actionSource: PluginScriptActionSource,
         text: String,
         cleanupSnapshot: TrustedExecutionSnapshot
     ) {
         Self.verboseLog("Entering executeAppleScript for plugin: \(plugin.id)")
         var source: String?
         
-        if let scriptName = action.script {
+        switch actionSource {
+        case .script(let scriptName):
             switch Self.resolvedPluginScriptSource(
                 scriptName,
                 pluginDirectoryURL: plugin.directoryURL
@@ -1711,11 +1710,9 @@ final class PluginManager: Sendable {
                 NSLog("[ActionHalo] Refusing AppleScript outside the verified plugin package: \(scriptName)")
                 source = nil
             }
-        } else if let inline = action.inline {
+        case .inline(let inline):
             Self.verboseLog("Found inline action config")
             source = Self.renderedAppleScriptSource(inline, text: text)
-        } else {
-            Self.verboseLog("Neither inline nor script field found in config!")
         }
         
         guard let appleScriptSource = source else {
@@ -1928,57 +1925,14 @@ final class PluginManager: Sendable {
     }
     
     private func executeKeyCombo(
-        _ action: PluginActionConfig,
+        _ combo: PluginKeyCombo,
         targetProcessIdentifier: pid_t
     ) {
-        guard let keyString = action.key else { return }
-        
-        var modifierFlags: CGEventFlags = []
-        if let modifiers = action.modifiers {
-            for mod in modifiers {
-                switch mod.lowercased() {
-                case "command", "cmd": modifierFlags.insert(.maskCommand)
-                case "shift": modifierFlags.insert(.maskShift)
-                case "option", "alt": modifierFlags.insert(.maskAlternate)
-                case "control", "ctrl": modifierFlags.insert(.maskControl)
-                default: break
-                }
-            }
-        }
-        
-        // Map key string to virtual key code
-        guard let keyCode = keyCodeForString(keyString) else { return }
         ActionExecutor.shared.simulateKeyCombo(
-            key: keyCode,
-            modifiers: modifierFlags,
+            key: combo.keyCode,
+            modifiers: combo.modifierFlags,
             targetProcessIdentifier: targetProcessIdentifier
         )
-    }
-    
-    private func keyCodeForString(_ key: String) -> CGKeyCode? {
-        let mapping: [String: CGKeyCode] = [
-            "a": 0x00, "b": 0x0B, "c": 0x08, "d": 0x02, "e": 0x0E,
-            "f": 0x03, "g": 0x05, "h": 0x04, "i": 0x22, "j": 0x26,
-            "k": 0x28, "l": 0x25, "m": 0x2E, "n": 0x2D, "o": 0x1F,
-            "p": 0x23, "q": 0x0C, "r": 0x0F, "s": 0x01, "t": 0x11,
-            "u": 0x20, "v": 0x09, "w": 0x0D, "x": 0x07, "y": 0x10,
-            "z": 0x06,
-            "0": 0x1D, "1": 0x12, "2": 0x13, "3": 0x14, "4": 0x15,
-            "5": 0x17, "6": 0x16, "7": 0x1A, "8": 0x1C, "9": 0x19,
-            "-": 0x1B, "=": 0x18, "[": 0x21, "]": 0x1E, "\\": 0x2A,
-            ";": 0x29, "'": 0x27, ",": 0x2B, ".": 0x2F, "/": 0x2C, "`": 0x32,
-            "return": 0x24, "tab": 0x30, "space": 0x31,
-            "delete": 0x33, "esc": 0x35, "escape": 0x35, "left": 0x7B, "right": 0x7C,
-            "up": 0x7E, "down": 0x7D,
-        ]
-        
-        let lower = key.lowercased()
-        if let code = mapping[lower] {
-            return code
-        }
-        
-        NSLog("[ActionHalo] Warning: Could not find virtual key code mapping for string '\(key)'")
-        return nil
     }
     
     // MARK: - Plugin Installation

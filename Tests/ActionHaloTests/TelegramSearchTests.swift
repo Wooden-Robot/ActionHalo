@@ -11,6 +11,7 @@ final class TelegramSearchTests: XCTestCase {
         let configURL = repositoryRoot.appendingPathComponent(
             "Plugins/Search Telegram.actionhaloext/Config.json"
         )
+        let pluginURL = configURL.deletingLastPathComponent()
         let object = try JSONSerialization.jsonObject(
             with: Data(contentsOf: configURL)
         )
@@ -19,10 +20,16 @@ final class TelegramSearchTests: XCTestCase {
 
         XCTAssertEqual(
             action["type"] as? String,
-            "telegram-search",
+            "native-command",
             "The bundled action must use the native verified path instead of fire-and-forget AppleScript."
         )
+        XCTAssertEqual(action["command"] as? String, "telegram-search")
         XCTAssertNil(action["script"])
+        XCTAssertNil(PluginLoader.load(from: pluginURL))
+        XCTAssertEqual(
+            PluginLoader.load(from: pluginURL, source: .bundled)?.action,
+            .nativeCommand(.telegramSearch)
+        )
     }
 
     @MainActor
