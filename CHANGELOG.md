@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.3.37
+
+- 优化拖选文字后圆环的出现速度：160ms 显示缓冲从松开鼠标时开始计时，与辅助功能取词及复制回退重叠，最多减少约 160ms 的额外等待。
+- 保留焦点、窗口、安全状态及新交互取消检查，并增加显示等待与取词耗时重叠的回归测试。
+
+- Reduced the delay before the radial menu appears after drag selection: the 160ms presentation grace period now starts at mouse-up and overlaps Accessibility acquisition and copy fallback, removing up to approximately 160ms of additional waiting.
+- Preserved focus, window, protection, and interaction cancellation checks, with regression coverage for overlapping acquisition and presentation timing.
+
 ## v0.3.36
 
 - 修复 Search in Telegram 只激活 Telegram、查询未进入搜索的问题；现在通过辅助功能直接触发 Telegram 的 Global Search 菜单，并只使用左侧顶部搜索框，不再打开居中的快速跳转框。
