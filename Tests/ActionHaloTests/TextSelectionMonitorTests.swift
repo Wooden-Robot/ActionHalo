@@ -2,6 +2,17 @@ import XCTest
 @testable import ActionHalo
 
 final class TextSelectionMonitorTests: XCTestCase {
+    func testPresentationWaitOverlapsSelectionAcquisition() {
+        for elapsed in [0.0, 0.05, 0.16, 0.35, 0.8] {
+            let delay = TextSelectionMonitor.selectionPresentationDelay(
+                selectionStartedAt: 100,
+                now: 100 + elapsed
+            )
+            XCTAssertEqual(elapsed + delay, max(0.16, elapsed), accuracy: 0.000001,
+                           "Acquisition must count toward the mouse-up presentation wait")
+        }
+    }
+
     func testNotificationName() {
         XCTAssertEqual(TextSelectionMonitor.textSelectedNotification.rawValue, "ActionHaloTextSelected")
         XCTAssertEqual(TextSelectionMonitor.emptyTextInputClickedNotification.rawValue, "ActionHaloEmptyTextInputClicked")

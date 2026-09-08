@@ -376,7 +376,16 @@ final class TextSelectionMonitor {
     
     // Minimum drag distance (in points) to consider as text selection
     private let minimumDragDistance: CGFloat = 5.0
-    private let mouseSelectionPresentationDelay: TimeInterval = 0.16
+    private var pendingSelectionStartedAt: TimeInterval?
+
+    nonisolated static func selectionPresentationDelay(
+        selectionStartedAt: TimeInterval,
+        now: TimeInterval
+    ) -> TimeInterval {
+        // Count acquisition time toward the mouse-up grace period instead of
+        // adding another pause after AX retries or clipboard fallback finish.
+        max(0, 0.16 - max(0, now - selectionStartedAt))
+    }
     nonisolated static let selectionSettleDelay: TimeInterval = 0.05
     nonisolated static let accessibilityPollingDelay: TimeInterval = 0.1
     nonisolated static let copyFallbackStartDelay: TimeInterval = 0.05
@@ -771,6 +780,7 @@ final class TextSelectionMonitor {
     }
 
     private func handleMouseUp(at upLocation: NSPoint) {
+        let selectionStartedAt = ProcessInfo.processInfo.systemUptime
         guard let downLocation = mouseDownLocation else { return }
         cancelPendingSelectionPresentation()
 
@@ -851,6 +861,7 @@ final class TextSelectionMonitor {
         if isDrag {
             let taskID = UUID()
             self.pendingSelectionTaskID = taskID
+            self.pendingSelectionStartedAt = selectionStartedAt
             self.pendingSelectionBaselineSnapshot = snapshotAtMouseDown
             self.pendingSelectionStartedInTextContext = startedInTextContext
             self.pendingSelectionEndedInTextContext = endedInTextContext
@@ -1306,6 +1317,7 @@ final class TextSelectionMonitor {
         let focusedElementAssessment = pendingSelectionFocusedElementAssessment
         let bundleID = pendingSelectionBundleID
         let windowID = pendingSelectionWindowID
+        let selectionStartedAt = pendingSelectionStartedAt ?? ProcessInfo.processInfo.systemUptime
         cleanupPendingTask()
 
         scheduleSelectionPresentation(
@@ -1315,7 +1327,8 @@ final class TextSelectionMonitor {
             focusedElement: focusedElement,
             focusedElementAssessment: focusedElementAssessment,
             bundleID: bundleID,
-            windowID: windowID
+            windowID: windowID,
+            selectionStartedAt: selectionStartedAt
         )
     }
 
@@ -1405,6 +1418,7 @@ final class TextSelectionMonitor {
         pendingCopyFallbackRequestID = nil
         isCopyFallbackInFlight = false
         pendingSelectionTaskID = nil
+        pendingSelectionStartedAt = nil
         pendingSelectionBaselineSnapshot = nil
         pendingSelectionStartedInTextContext = false
         pendingSelectionEndedInTextContext = false
@@ -1470,7 +1484,8 @@ final class TextSelectionMonitor {
         focusedElement: AXUIElement?,
         focusedElementAssessment: AccessibilityManager.FocusedElementAssessment?,
         bundleID: String?,
-        windowID: CGWindowID?
+        windowID: CGWindowID?,
+        selectionStartedAt: TimeInterval
     ) {
         cancelPendingSelectionPresentation()
         let presentationRequestID = UUID()
@@ -1535,7 +1550,10 @@ final class TextSelectionMonitor {
         }
 
         DispatchQueue.main.asyncAfter(
-            deadline: .now() + mouseSelectionPresentationDelay,
+            deadline: .now() + Self.selectionPresentationDelay(
+                selectionStartedAt: selectionStartedAt,
+                now: ProcessInfo.processInfo.systemUptime
+            ),
             execute: workItem
         )
     }
