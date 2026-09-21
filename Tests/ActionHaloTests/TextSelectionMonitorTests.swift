@@ -2,6 +2,34 @@ import XCTest
 @testable import ActionHalo
 
 final class TextSelectionMonitorTests: XCTestCase {
+    func testNativeTextSelectionIsNotRejectedByItsWindowOrApplicationAncestors() {
+        XCTAssertTrue(AccessibilityManager.shouldTreatFocusedRoleAsTextSelectionContext(
+            role: kAXTextAreaRole,
+            ancestorRoles: [kAXScrollAreaRole, kAXWindowRole, kAXApplicationRole],
+            bundleID: "com.apple.TextEdit"
+        ))
+        for role in [kAXWindowRole, kAXApplicationRole] {
+            XCTAssertFalse(AccessibilityManager.shouldTreatFocusedRoleAsTextSelectionContext(
+                role: role, ancestorRoles: [], bundleID: "com.apple.TextEdit"
+            ))
+        }
+        for ancestor in [kAXButtonRole, kAXCellRole, kAXRowRole, kAXOutlineRole] {
+            XCTAssertFalse(AccessibilityManager.shouldTreatFocusedRoleAsTextSelectionContext(
+                role: kAXStaticTextRole,
+                ancestorRoles: [ancestor, kAXWindowRole, kAXApplicationRole],
+                bundleID: "com.apple.TextEdit"
+            ))
+        }
+    }
+
+    func testCopyFallbackWaitsForHeldModifiersButNotOrdinaryDrags() {
+        XCTAssertEqual(AccessibilityManager.copyFallbackModifierReleaseDelay(flags: []), 0)
+        XCTAssertEqual(AccessibilityManager.copyFallbackModifierReleaseDelay(flags: .maskAlphaShift), 0)
+        for flag: CGEventFlags in [.maskCommand, .maskControl, .maskAlternate, .maskShift] {
+            XCTAssertEqual(AccessibilityManager.copyFallbackModifierReleaseDelay(flags: flag), 0.05)
+        }
+    }
+
     @MainActor
     func testReadyDragSelectionDoesNotSpendTimeInRetryTimers() async {
         let baseline = AccessibilityManager.FocusedElementAssessment(
