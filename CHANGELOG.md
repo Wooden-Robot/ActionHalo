@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.3.38
+
+- 加快拖选圆环弹出：移除取词前及显示前的固定等待；同一焦点元素中的选区确认变化后立即返回，避免重复取词和额外重试等待。
+- 对已确认无法通过辅助功能读取选区的兼容应用直接进入安全复制回退，并减少重复的文字区域命中检查。
+- 移除圆环旋转展开和背景渐入动画，两种菜单样式均在首帧完整显示；保留旧选区、密码框、窗口切换和新交互取消检查，新增延迟及安全回归测试。
+
+- Removed fixed acquisition and presentation delays after drag selection. A verified selection change in the same focused element now returns immediately without redundant acquisition retries.
+- Compatible apps with unreadable Accessibility selections now proceed directly to the protected copy fallback, with fewer redundant text-region hit tests.
+- Removed radial-menu entrance spins and background fades so both menu styles appear fully visible in their first frame. Preserved stale-selection, protected-field, window-switch, and interaction-cancellation safeguards with regression coverage.
+
 ## v0.3.37
 
 - 优化拖选文字后圆环的出现速度：160ms 显示缓冲从松开鼠标时开始计时，与辅助功能取词及复制回退重叠，最多减少约 160ms 的额外等待。

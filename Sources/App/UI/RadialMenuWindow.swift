@@ -8,7 +8,6 @@ final class RadialMenuWindow: NSPanel {
     private let backdropView = NSView(frame: .zero)
     private let visualEffectView = NSVisualEffectView(frame: .zero)
     private let vignetteLayer = CAGradientLayer()
-    private var suppressVisualEffectImmediateAlphaUpdate = false
     
     var onItemSelected: ((RadialMenuItem) -> Void)?
     var onDismissRequested: (() -> Void)?
@@ -122,42 +121,20 @@ final class RadialMenuWindow: NSPanel {
         radialMenuView.isGTAModeEnabled = backdropEnabled
         let backdropTargetAlpha = backdropEnabled ? max(0.38, min(CGFloat(targetAlpha) * 2.35, 0.94)) : 0
         
-        // Show with animation first time
+        // Build at full size and opacity so the first visible frame is usable.
         setupDismissMonitors()
         alphaValue = 1
-        backdropView.alphaValue = 0
-        visualEffectView.alphaValue = backdropEnabled ? 0 : radialMenuView.windowBaseAlpha
-        orderFront(nil)
-        
-        renderCurrentPage(allowCursorWarp: true)
+        backdropView.alphaValue = backdropTargetAlpha
+        visualEffectView.alphaValue = radialMenuView.windowBaseAlpha
+        radialMenuView.alphaValue = 1
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        radialMenuView.layer?.transform = CATransform3DIdentity
+        vignetteLayer.opacity = backdropEnabled ? 0.72 : 0
+        CATransaction.commit()
 
-        if backdropEnabled {
-            suppressVisualEffectImmediateAlphaUpdate = true
-            visualEffectView.alphaValue = 0
-        }
-        
-        AnimationHelper.showAnimation(for: radialMenuView)
-        
-        if backdropEnabled {
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.32
-                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.18, 0.82, 0.22, 1.0)
-                self.backdropView.animator().alphaValue = backdropTargetAlpha
-            })
-            animateGTAVignette()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
-                guard self.isVisible else { return }
-                NSAnimationContext.runAnimationGroup({ context in
-                    context.duration = 0.24
-                    context.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 0.84, 0.24, 1.0)
-                    self.visualEffectView.animator().alphaValue = self.radialMenuView.windowBaseAlpha
-                }, completionHandler: {
-                    Task { @MainActor [weak self] in
-                        self?.suppressVisualEffectImmediateAlphaUpdate = false
-                    }
-                })
-            }
-        }
+        renderCurrentPage(allowCursorWarp: true)
+        orderFront(nil)
     }
     
     private func renderCurrentPage(allowCursorWarp: Bool) {
@@ -296,7 +273,7 @@ final class RadialMenuWindow: NSPanel {
         visualEffectView.blendingMode = radialMenuView.isGTAModeEnabled ? .behindWindow : .withinWindow
         visualEffectView.layer?.cornerRadius = radius
         visualEffectView.layer?.masksToBounds = true
-        if !visualEffectView.isHidden && !suppressVisualEffectImmediateAlphaUpdate {
+        if !visualEffectView.isHidden {
             visualEffectView.alphaValue = radialMenuView.windowBaseAlpha
         }
         self.hasShadow = radialMenuView.isGTAModeEnabled
@@ -326,7 +303,6 @@ final class RadialMenuWindow: NSPanel {
         let hidingGeneration = presentationGeneration
 
         if radialMenuView.isGTAModeEnabled {
-            suppressVisualEffectImmediateAlphaUpdate = false
             vignetteLayer.removeAllAnimations()
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = 0.1
@@ -451,39 +427,4 @@ final class RadialMenuWindow: NSPanel {
     
     override var canBecomeKey: Bool { false }
     
-    private func animateGTAVignette() {
-        vignetteLayer.removeAllAnimations()
-        
-        let scale = CAKeyframeAnimation(keyPath: "transform.scale")
-        scale.values = [1.12, 1.0, 1.025, 1.0]
-        scale.keyTimes = [0.0, 0.48, 0.78, 1.0]
-        scale.duration = 0.34
-        scale.timingFunctions = [
-            CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.24, 1.0),
-            CAMediaTimingFunction(name: .easeOut),
-            CAMediaTimingFunction(name: .easeOut)
-        ]
-        
-        let opacity = CAKeyframeAnimation(keyPath: "opacity")
-        opacity.values = [0.0, 0.9, 0.72]
-        opacity.keyTimes = [0.0, 0.44, 1.0]
-        opacity.duration = 0.34
-        opacity.timingFunctions = [
-            CAMediaTimingFunction(controlPoints: 0.22, 0.84, 0.24, 1.0),
-            CAMediaTimingFunction(name: .easeOut)
-        ]
-        
-        let group = CAAnimationGroup()
-        group.animations = [scale, opacity]
-        group.duration = 0.34
-        group.fillMode = .forwards
-        group.isRemovedOnCompletion = false
-        vignetteLayer.add(group, forKey: "gtaVignetteReveal")
-        
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        vignetteLayer.opacity = 0.72
-        vignetteLayer.transform = CATransform3DIdentity
-        CATransaction.commit()
-    }
 }

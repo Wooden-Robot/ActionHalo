@@ -664,6 +664,136 @@ final class AccessibilityManagerTests: XCTestCase {
         XCTAssertTrue(attempts.isEmpty)
     }
 
+    func testFreshUsableSelectionRequiresReadableChangedUnprotectedSelection() {
+        func assessment(
+            text: String? = "old",
+            location: Int = 0,
+            textReadable: Bool = true,
+            rangeReadable: Bool = true,
+            protection: AccessibilityManager.ProtectedTextAssessment = .unprotected,
+            resolved: Bool = true
+        ) -> AccessibilityManager.FocusedElementAssessment {
+            AccessibilityManager.FocusedElementAssessment(
+                protection: protection,
+                isSelectionEditable: true,
+                selectionSnapshot: AccessibilityManager.SelectionSnapshot(
+                    text: text,
+                    rangeLocation: location,
+                    rangeLength: 3,
+                    hasReadableSelectedTextAttribute: textReadable,
+                    hasReadableSelectedRangeAttribute: rangeReadable
+                ),
+                pointAssessments: [.init(
+                    isTextSelectionContext: true,
+                    isInsideFocusedElementBounds: true,
+                    isResolved: resolved
+                )]
+            )
+        }
+
+        let cases: [(
+            String,
+            AccessibilityManager.FocusedElementAssessment,
+            AccessibilityManager.FocusedElementAssessment,
+            Bool
+        )] = [
+            ("new text", assessment(), assessment(text: "new"), true),
+            ("new selection", assessment(text: nil), assessment(), true),
+            ("unchanged stale text", assessment(), assessment(), false),
+            ("unreadable baseline", assessment(text: nil, textReadable: false), assessment(), false),
+            ("unreadable current", assessment(), assessment(text: "new", textReadable: false), false),
+            ("empty current", assessment(), assessment(text: nil), false),
+            ("whitespace current", assessment(), assessment(text: "  "), false),
+            ("protected baseline", assessment(protection: .protectedContent), assessment(text: "new"), false),
+            ("indeterminate baseline", assessment(protection: .indeterminate), assessment(text: "new"), false),
+            ("protected current", assessment(), assessment(text: "new", protection: .protectedContent), false),
+            ("indeterminate current", assessment(), assessment(text: "new", protection: .indeterminate), false),
+            ("unresolved endpoint", assessment(), assessment(text: "new", resolved: false), false),
+            ("same text moved range", assessment(), assessment(location: 10), true),
+            ("unreadable previous range", assessment(rangeReadable: false), assessment(location: 10), false),
+            ("unreadable current range", assessment(), assessment(location: 10, rangeReadable: false), false),
+            ("range readability alone", assessment(rangeReadable: false), assessment(), false)
+        ]
+        for (label, baseline, current, expected) in cases {
+            XCTAssertEqual(
+                AccessibilityManager.hasFreshUsableSelection(current, comparedTo: baseline),
+                expected,
+                label
+            )
+        }
+    }
+
+    @MainActor
+    func testFreshAssessmentRetryAcceptsProvenSelectionWithoutWaiting() async {
+        var attemptCount = 0
+        var waitCount = 0
+        let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: [0.05, 0.1],
+            attempt: {
+                attemptCount += 1
+                return (candidate: "text-area", assessment: "new-selection")
+            },
+            isTerminal: { _ in false },
+            canAcceptEarly: { $0 == "text-area" && $1 == "new-selection" },
+            wait: { _ in waitCount += 1; return true }
+        )
+
+        XCTAssertEqual(result?.assessment, "new-selection")
+        XCTAssertEqual(attemptCount, 1)
+        XCTAssertEqual(waitCount, 0)
+    }
+
+    @MainActor
+    func testFreshAssessmentRetryCannotEarlyAcceptRetryableAssessment() async {
+        var attempts = ["indeterminate", "ready"]
+        var earlyAcceptanceChecks: [String] = []
+        var waitCount = 0
+        let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: [0.05, 0.1],
+            attempt: { (candidate: "text-area", assessment: attempts.removeFirst()) },
+            isTerminal: { _ in false },
+            isRetryable: { $0 == "indeterminate" },
+            canAcceptEarly: { _, assessment in
+                earlyAcceptanceChecks.append(assessment)
+                return true
+            },
+            wait: { _ in waitCount += 1; return true }
+        )
+
+        XCTAssertEqual(result?.assessment, "ready")
+        XCTAssertEqual(earlyAcceptanceChecks, ["ready"])
+        XCTAssertEqual(waitCount, 1)
+    }
+
+    @MainActor
+    func testFreshAssessmentRetryChecksCancellationAndContextBeforeEarlyAcceptance() async {
+        for cancelDuringAssessment in [false, true] {
+            let task = Task { @MainActor in
+                var contextIsCurrent = true
+                var earlyAcceptanceCount = 0
+                var waitCount = 0
+                let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+                    retryDelays: [0.05, 0.1],
+                    attempt: {
+                        if cancelDuringAssessment {
+                            withUnsafeCurrentTask { $0?.cancel() }
+                        } else {
+                            contextIsCurrent = false
+                        }
+                        return (candidate: "text-area", assessment: "new-selection")
+                    },
+                    isTerminal: { _ in false },
+                    canAcceptEarly: { _, _ in earlyAcceptanceCount += 1; return true },
+                    isContextCurrent: { contextIsCurrent },
+                    wait: { _ in waitCount += 1; return true }
+                )
+                return result == nil && earlyAcceptanceCount == 0 && waitCount == 0
+            }
+            let rejectedBeforeAcceptance = await task.value
+            XCTAssertTrue(rejectedBeforeAcceptance, "Cancellation: \(cancelDuringAssessment)")
+        }
+    }
+
     @MainActor
     func testFreshAssessmentRetryDoesNotReturnOldUsableSelectionEarly() async {
         var attempts: [(candidate: String, assessment: String)?] = [
