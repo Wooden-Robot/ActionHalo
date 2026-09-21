@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.3.39
+
+- 修复正常文本区域因窗口、应用祖先节点被误判而反复等待的问题；选区与拖选端点精确匹配时立即返回，并限制可选位置查询的等待时间。
+- 复用单次取词中的安全检查，减少重复辅助功能查询；普通拖选不再等待修饰键释放，无焦点的已知兼容应用直接进入受保护的复制回退。
+- 保留旧选区、敏感内容、进程及窗口校验，增加回归测试与可选的 TextEdit 实时取词耗时测试。
+
+- Fixed repeated waits caused by treating normal window and application ancestors as invalid text contexts. Selections matching both drag endpoints now return immediately, with bounded optional position queries.
+- Reused protection checks within each assessment and removed unnecessary modifier-release waits for ordinary drags. Known compatible apps without Accessibility focus proceed directly to guarded copy fallback.
+- Preserved stale-selection, protected-content, process, and window safeguards, with regression coverage and an opt-in live TextEdit acquisition latency test.
+
 ## v0.3.38
 
 - 加快拖选圆环弹出：移除取词前及显示前的固定等待；同一焦点元素中的选区确认变化后立即返回，避免重复取词和额外重试等待。

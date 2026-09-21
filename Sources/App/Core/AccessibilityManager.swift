@@ -223,6 +223,10 @@ private struct MaterializedPasteboardContents {
 @MainActor
 final class AccessibilityManager {
     nonisolated static let copyFallbackPreflightDelay: TimeInterval = 0.05
+    nonisolated static func copyFallbackModifierReleaseDelay(flags: CGEventFlags) -> TimeInterval {
+        flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty
+            ? 0 : copyFallbackPreflightDelay
+    }
     nonisolated static let copyFallbackKeyGap: TimeInterval = 0.01
     nonisolated static let copyFallbackPollAttempts = 12
     nonisolated static let copyFallbackLatePollAttempts = 8
@@ -638,6 +642,7 @@ final class AccessibilityManager {
         let isSelectionEditable: Bool
         let selectionSnapshot: SelectionSnapshot?
         let pointAssessments: [PointSelectionAssessment]
+        var selectionMatchesGesture = false
     }
 
     struct AssessedFocusedElement {
@@ -798,14 +803,13 @@ final class AccessibilityManager {
     }
 
     func currentSelectionSnapshot(for element: AXUIElement) -> SelectionSnapshot? {
-        Self.selectionSnapshot(for: element)
+        guard Self.protectionAssessment(for: element) == .unprotected else { return nil }
+        return Self.selectionSnapshot(forUnprotectedElement: element)
     }
 
     nonisolated private static func selectionSnapshot(
-        for element: AXUIElement
+        forUnprotectedElement element: AXUIElement
     ) -> SelectionSnapshot? {
-        guard Self.protectionAssessment(for: element) == .unprotected else { return nil }
-
         var selectedText: String?
         var selectedTextRaw: AnyObject?
         let selectedTextResult = AXUIElementCopyAttributeValue(
@@ -876,14 +880,13 @@ final class AccessibilityManager {
     }
 
     func isSelectionEditable(_ focusedElement: AXUIElement) -> Bool {
-        Self.selectionEditable(focusedElement)
+        guard Self.protectionAssessment(for: focusedElement) == .unprotected else { return false }
+        return Self.selectionEditable(forUnprotectedElement: focusedElement)
     }
 
     nonisolated private static func selectionEditable(
-        _ focusedElement: AXUIElement
+        forUnprotectedElement focusedElement: AXUIElement
     ) -> Bool {
-        guard Self.protectionAssessment(for: focusedElement) == .unprotected else { return false }
-
         var isSettable: DarwinBoolean = false
         let isValueSettable =
             AXUIElementIsAttributeSettable(focusedElement, kAXValueAttribute as CFString, &isSettable) == .success &&
@@ -997,9 +1000,13 @@ final class AccessibilityManager {
         }
 
         copyFallbackQueue.async {
-            // Give the user ~50ms to lift their fingers from the global hotkey
-            // so physical modifiers (like Option/Control) don't turn Cmd+C into Option+Cmd+C
-            usleep(useconds_t(Self.copyFallbackPreflightDelay * 1_000_000))
+            // Only hotkeys/modifier-assisted drags need time to release keys.
+            let modifierDelay = Self.copyFallbackModifierReleaseDelay(
+                flags: CGEventSource.flagsState(.combinedSessionState)
+            )
+            if modifierDelay > 0 {
+                usleep(useconds_t(modifierDelay * 1_000_000))
+            }
 
             guard let targetProcessIdentifier = expectedProcessIdentifier,
                   Self.copyFallbackContextIsValid(
@@ -1613,8 +1620,10 @@ final class AccessibilityManager {
         var latestState = startingState ?? initialState
         var stableFreshCandidate = StableFreshPasteboardCandidate()
 
-        for _ in 0..<attempts {
-            usleep(useconds_t(copyFallbackPollInterval * 1_000_000))
+        for attempt in 0...attempts {
+            if attempt > 0 {
+                usleep(useconds_t(copyFallbackPollInterval * 1_000_000))
+            }
             guard let state = stablePasteboardState(from: pasteboard) else {
                 continue
             }
@@ -1991,6 +2000,51 @@ final class AccessibilityManager {
         return false
     }
 
+    nonisolated static func selectionRangeMatchesGesture(
+        _ selection: CFRange?,
+        start: CFRange?,
+        end: CFRange?
+    ) -> Bool {
+        guard let selection, let start, let end,
+              selection.length > 0 else { return false }
+        for range in [selection, start, end] {
+            guard range.location >= 0, range.length >= 0,
+                  !range.location.addingReportingOverflow(range.length).overflow else {
+                return false
+            }
+        }
+        let firstPosition = min(start.location, end.location)
+        let lastPosition = max(start.location + start.length, end.location + end.length)
+        return selection.location == firstPosition &&
+            selection.location + selection.length == lastPosition
+    }
+
+    nonisolated private static func rangeForPosition(
+        _ point: CGPoint,
+        in element: AXUIElement
+    ) -> CFRange? {
+        // This optional proof must not turn an unsupported parameterized
+        // attribute into another noticeable wait. Other AX reads retain 250ms.
+        guard AXUIElementSetMessagingTimeout(element, 0.01) == .success else { return nil }
+        defer { _ = AXUIElementSetMessagingTimeout(element, accessibilityMessagingTimeout) }
+        var position = point
+        guard let pointValue = AXValueCreate(.cgPoint, &position) else { return nil }
+        var value: AnyObject?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXRangeForPositionParameterizedAttribute as CFString,
+            pointValue,
+            &value
+        ) == .success,
+              let value,
+              CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        let rangeValue = unsafeBitCast(value, to: AXValue.self)
+        var range = CFRange()
+        guard AXValueGetType(rangeValue) == .cfRange,
+              AXValueGetValue(rangeValue, .cfRange, &range) else { return nil }
+        return range
+    }
+
     nonisolated private static func focusedElementAssessment(
         for focusedElement: AXUIElement,
         systemWideElement: AXUIElement,
@@ -2013,6 +2067,10 @@ final class AccessibilityManager {
             )
         }
 
+        // Capture the selection before slower context checks can advance a
+        // mouse-down baseline to the final selection. Reuse this assessment's
+        // protection result for the same element throughout these reads.
+        let snapshot = selectionSnapshot(forUnprotectedElement: focusedElement)
         let focusedFrame = frameOfElement(focusedElement)
         var roleValue: AnyObject?
         let role = AXUIElementCopyAttributeValue(
@@ -2053,11 +2111,32 @@ final class AccessibilityManager {
             )
         }
 
+        var selectionMatchesGesture = false
+        if accessibilityPoints.count == 2,
+           pointAssessments.allSatisfy({
+               $0.isResolved && $0.isTextSelectionContext && $0.isInsideFocusedElementBounds
+           }),
+           let snapshot,
+           snapshot.canReadSelectedTextViaAccessibility,
+           snapshot.usableText != nil,
+           snapshot.hasReadableSelectedRangeAttribute,
+           let location = snapshot.rangeLocation,
+           let length = snapshot.rangeLength,
+           let start = rangeForPosition(accessibilityPoints[0], in: focusedElement),
+           let end = rangeForPosition(accessibilityPoints[1], in: focusedElement) {
+            selectionMatchesGesture = selectionRangeMatchesGesture(
+                CFRange(location: location, length: length),
+                start: start,
+                end: end
+            )
+        }
+
         return FocusedElementAssessment(
             protection: protection,
-            isSelectionEditable: selectionEditable(focusedElement),
-            selectionSnapshot: selectionSnapshot(for: focusedElement),
-            pointAssessments: pointAssessments
+            isSelectionEditable: selectionEditable(forUnprotectedElement: focusedElement),
+            selectionSnapshot: snapshot,
+            pointAssessments: pointAssessments,
+            selectionMatchesGesture: selectionMatchesGesture
         )
     }
     
@@ -2262,6 +2341,17 @@ final class AccessibilityManager {
             NSWorkspace.shared.frontmostApplication?.processIdentifier
         guard let targetProcessIdentifier else { return nil }
 
+        // These exact-listed hosts already have a guarded, PID/window-bound
+        // copy path. Missing AX focus cannot benefit from full assessment retries.
+        if requireUsableSelection,
+           Self.shouldAllowContextlessBlindCopyFallback(bundleID: bundleID),
+           await getFocusedElementWithRetry(
+                expectedProcessIdentifier: targetProcessIdentifier,
+                retryDelays: []
+           ) == nil {
+            return nil
+        }
+
         let result: (
             candidate: AXUIElement,
             assessment: AssessedFocusedElement
@@ -2311,6 +2401,7 @@ final class AccessibilityManager {
                     !$0.assessment.pointAssessments.allSatisfy(\.isResolved)
             },
             canAcceptEarly: { focusedElement, assessedFocusedElement in
+                if assessedFocusedElement.assessment.selectionMatchesGesture { return true }
                 guard let selectionBaseline,
                       Self.areSameAccessibilityElement(
                         selectionBaseline.focusedElement, focusedElement
@@ -2906,7 +2997,10 @@ final class AccessibilityManager {
         }
 
         if allowedRoles.contains(role) {
-            if ancestorRoles.contains(where: { forbiddenRoles.contains($0) || structuralAncestorRoles.contains($0) }) {
+            if ancestorRoles.contains(where: {
+                structuralAncestorRoles.contains($0) ||
+                    (forbiddenRoles.contains($0) && $0 != kAXWindowRole && $0 != kAXApplicationRole)
+            }) {
                 return false
             }
             return true

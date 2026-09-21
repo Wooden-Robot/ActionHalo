@@ -723,6 +723,43 @@ final class AccessibilityManagerTests: XCTestCase {
         }
     }
 
+    func testSelectionRangeMustMatchBothGestureEndpoints() {
+        func range(_ location: Int, _ length: Int = 1) -> CFRange {
+            CFRange(location: location, length: length)
+        }
+        let cases: [(String, CFRange?, CFRange?, CFRange?, Bool)] = [
+            ("forward", range(10, 5), range(10), range(14), true),
+            ("reverse", range(10, 5), range(14), range(10), true),
+            ("adjacent stale selection", range(10, 5), range(11), range(15), false),
+            ("one character extension still unpublished", range(11, 4), range(10), range(14), false),
+            ("insertion endpoints", range(10, 5), range(10, 0), range(15, 0), true),
+            ("different stale selection", range(1, 5), range(10), range(14), false),
+            ("selection extends past gesture", range(10, 20), range(10), range(14), false),
+            ("different start", range(10, 5), range(12), range(14), false),
+            ("missing selection", nil, range(10), range(14), false),
+            ("missing start", range(10, 5), nil, range(14), false),
+            ("missing end", range(10, 5), range(10), nil, false),
+            ("empty selection", range(10, 0), range(10), range(10), false),
+            ("negative selection location", range(-1, 5), range(0), range(3), false),
+            ("negative selection length", range(10, -1), range(10), range(14), false),
+            ("negative endpoint location", range(0, 5), range(-1), range(4), false),
+            ("negative endpoint length", range(10, 5), range(10, -1), range(14), false),
+            ("selection overflow", range(Int.max, 1), range(10), range(14), false),
+            ("endpoint overflow", range(10, 5), range(10), range(Int.max, 1), false)
+        ]
+        for (label, selection, start, end, expected) in cases {
+            XCTAssertEqual(
+                AccessibilityManager.selectionRangeMatchesGesture(
+                    selection,
+                    start: start,
+                    end: end
+                ),
+                expected,
+                label
+            )
+        }
+    }
+
     @MainActor
     func testFreshAssessmentRetryAcceptsProvenSelectionWithoutWaiting() async {
         var attemptCount = 0
