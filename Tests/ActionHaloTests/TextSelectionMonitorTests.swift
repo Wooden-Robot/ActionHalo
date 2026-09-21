@@ -2,15 +2,70 @@ import XCTest
 @testable import ActionHalo
 
 final class TextSelectionMonitorTests: XCTestCase {
-    func testPresentationWaitOverlapsSelectionAcquisition() {
-        for elapsed in [0.0, 0.05, 0.16, 0.35, 0.8] {
-            let delay = TextSelectionMonitor.selectionPresentationDelay(
-                selectionStartedAt: 100,
-                now: 100 + elapsed
-            )
-            XCTAssertEqual(elapsed + delay, max(0.16, elapsed), accuracy: 0.000001,
-                           "Acquisition must count toward the mouse-up presentation wait")
+    @MainActor
+    func testReadyDragSelectionDoesNotSpendTimeInRetryTimers() async {
+        let baseline = AccessibilityManager.FocusedElementAssessment(
+            protection: .unprotected,
+            isSelectionEditable: true,
+            selectionSnapshot: .init(text: nil, rangeLocation: 0, rangeLength: 0,
+                                     hasReadableSelectedTextAttribute: true),
+            pointAssessments: []
+        )
+        let selected = AccessibilityManager.FocusedElementAssessment(
+            protection: .unprotected,
+            isSelectionEditable: true,
+            selectionSnapshot: .init(text: "new-selection", rangeLocation: 0, rangeLength: 13,
+                                     hasReadableSelectedTextAttribute: true),
+            pointAssessments: []
+        )
+        var elapsed: TimeInterval = 0
+        var attempts = 0
+        let result = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+            retryDelays: AccessibilityManager.focusedElementRetryDelays,
+            attempt: {
+                attempts += 1
+                return (candidate: "verified-text-area", assessment: selected)
+            },
+            isTerminal: { _ in false },
+            canAcceptEarly: { candidate, assessment in
+                candidate == "verified-text-area" &&
+                    AccessibilityManager.hasFreshUsableSelection(assessment, comparedTo: baseline)
+            },
+            wait: { delay in
+                elapsed += delay
+                return true
+            }
+        )
+        XCTAssertEqual(result?.assessment.selectionSnapshot?.usableText, "new-selection")
+        XCTAssertEqual(attempts, 1, "A verified new selection should not be acquired three times")
+        XCTAssertEqual(elapsed, 0, "Ready text should not wait on artificial timers")
+    }
+
+    func testClipboardOnlyHostsSkipRedundantAccessibilityPolling() {
+        let unreadable = AccessibilityManager.SelectionSnapshot(
+            text: nil, rangeLocation: nil, rangeLength: nil
+        )
+        let readable = AccessibilityManager.SelectionSnapshot(
+            text: nil, rangeLocation: 0, rangeLength: 0,
+            hasReadableSelectedTextAttribute: true
+        )
+        for bundleID in ["com.openai.codex", "ru.keepcoder.Telegram", "com.google.Chrome"] {
+            XCTAssertTrue(TextSelectionMonitor.shouldStartCopyFallbackImmediately(
+                snapshot: unreadable, bundleID: bundleID
+            ))
+            XCTAssertFalse(TextSelectionMonitor.shouldStartCopyFallbackImmediately(
+                snapshot: readable, bundleID: bundleID
+            ))
         }
+        XCTAssertTrue(TextSelectionMonitor.shouldStartCopyFallbackImmediately(
+            snapshot: nil, bundleID: "com.openai.codex"
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldStartCopyFallbackImmediately(
+            snapshot: nil, bundleID: "com.example.app"
+        ))
+        XCTAssertFalse(TextSelectionMonitor.shouldStartCopyFallbackImmediately(
+            snapshot: unreadable, bundleID: "com.example.app"
+        ))
     }
 
     func testNotificationName() {
@@ -241,7 +296,6 @@ final class TextSelectionMonitorTests: XCTestCase {
     func testObserverTimeoutLeavesRoomForCopyFallbackWorstCase() {
         let worstCaseCopyFallbackCompletion =
             TextSelectionMonitor.accessibilityPollingDelay +
-            TextSelectionMonitor.copyFallbackStartDelay +
             AccessibilityManager.copyFallbackWorstCaseDuration
 
         XCTAssertGreaterThan(TextSelectionMonitor.observerTimeout, worstCaseCopyFallbackCompletion)

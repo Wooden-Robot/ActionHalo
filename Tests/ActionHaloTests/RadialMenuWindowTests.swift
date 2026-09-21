@@ -1,4 +1,5 @@
 import XCTest
+import QuartzCore
 @testable import ActionHalo
 
 final class RadialMenuWindowTests: GlobalStateTestCase {
@@ -46,15 +47,30 @@ final class RadialMenuWindowTests: GlobalStateTestCase {
         window.hideMenu()
     }
 
-    func testShowMenuInGTAModeKeepsWindowVisibleWithoutFullscreenFade() {
-        UserDefaults.standard.set(true, forKey: "WheelBackdropEnabled")
+    func testShowMenuIsImmediatelyVisibleWithoutEntranceAnimations() throws {
+        UserDefaults.standard.set(0.25, forKey: "ringOpacity")
+        for backdropEnabled in [true, false] {
+            UserDefaults.standard.set(backdropEnabled, forKey: "WheelBackdropEnabled")
+            let window = RadialMenuWindow()
+            window.showMenu(at: NSPoint(x: 400, y: 300), items: makeItems(count: 4), selectedText: "hello")
+            defer { window.hideMenu() }
 
-        let window = RadialMenuWindow()
-        window.showMenu(at: NSPoint(x: 400, y: 300), items: makeItems(count: 4), selectedText: "hello")
+            let menu = try XCTUnwrap(renderedMenuView(in: window))
+            let menuLayer = try XCTUnwrap(menu.layer)
+            let glass = try XCTUnwrap(window.contentView?.subviews.compactMap { $0 as? NSVisualEffectView }.first)
+            let backdrop = try XCTUnwrap(window.contentView?.subviews.first)
+            let vignette = try XCTUnwrap(backdrop.layer?.sublayers?.first)
 
-        XCTAssertEqual(window.alphaValue, 1.0, accuracy: 0.001)
-
-        window.hideMenu()
+            XCTAssertTrue(window.isVisible)
+            XCTAssertEqual(window.alphaValue, 1.0, accuracy: 0.001)
+            XCTAssertEqual(menu.alphaValue, 1.0, accuracy: 0.001)
+            XCTAssertTrue(CATransform3DIsIdentity(menuLayer.transform))
+            XCTAssertTrue(menuLayer.animationKeys()?.isEmpty ?? true)
+            XCTAssertEqual(glass.alphaValue, backdropEnabled ? 1.0 : 0.25, accuracy: 0.001)
+            XCTAssertEqual(backdrop.alphaValue, backdropEnabled ? 0.94 : 0, accuracy: 0.001)
+            XCTAssertEqual(vignette.opacity, backdropEnabled ? 0.72 : 0, accuracy: 0.001)
+            XCTAssertTrue(vignette.animationKeys()?.isEmpty ?? true)
+        }
     }
 
     func testSelectingNextPageShowsPreviousAndRemainingItems() throws {

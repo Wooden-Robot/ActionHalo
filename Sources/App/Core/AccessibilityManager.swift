@@ -2038,7 +2038,7 @@ final class AccessibilityManager {
             } else {
                 focusedContextAssessment = nil
             }
-            let hitContextAssessment = textElementAssessment(
+            let hitContextAssessment = focusedContextAssessment == true ? true : textElementAssessment(
                 atAccessibilityPoint: point,
                 systemWideElement: systemWideElement,
                 bundleID: bundleID
@@ -2152,7 +2152,8 @@ final class AccessibilityManager {
     }
 
     /// Focus and its assessment must come from the same fresh lookup. Always
-    /// consume the final configured attempt so a stale, non-nil AX focus (which
+    /// consume the final configured attempt unless the caller proves freshness,
+    /// so a stale, non-nil AX focus (which
     /// can even carry an old selection) cannot win before macOS publishes the
     /// newly focused text element. A protected result is terminal and fails
     /// closed immediately. Its closures stay on MainActor so generic pairs
@@ -2166,6 +2167,7 @@ final class AccessibilityManager {
         )?,
         isTerminal: @MainActor (Assessment) -> Bool,
         isRetryable: @MainActor (Assessment) -> Bool = { _ in false },
+        canAcceptEarly: @MainActor (Candidate, Assessment) -> Bool = { _, _ in false },
         isContextCurrent: @MainActor () -> Bool = { true },
         wait: @MainActor (TimeInterval) async -> Bool
     ) async -> (candidate: Candidate, assessment: Assessment)? {
@@ -2174,7 +2176,9 @@ final class AccessibilityManager {
             let result = await attempt()
             guard !Task.isCancelled, isContextCurrent() else { return nil }
 
-            if let result, isTerminal(result.assessment) {
+            if let result, isTerminal(result.assessment) ||
+                (!isRetryable(result.assessment) &&
+                    canAcceptEarly(result.candidate, result.assessment)) {
                 return result
             }
             guard attemptIndex < retryDelays.count else {
@@ -2251,6 +2255,7 @@ final class AccessibilityManager {
         bundleID: String? = nil,
         points: [NSPoint] = [],
         requireUsableSelection: Bool = false,
+        selectionBaseline: AssessedFocusedElement? = nil,
         retryDelays: [TimeInterval] = AccessibilityManager.focusedElementRetryDelays
     ) async -> AssessedFocusedElement? {
         let targetProcessIdentifier = expectedProcessIdentifier ??
@@ -2305,6 +2310,16 @@ final class AccessibilityManager {
                 $0.assessment.protection == .indeterminate ||
                     !$0.assessment.pointAssessments.allSatisfy(\.isResolved)
             },
+            canAcceptEarly: { focusedElement, assessedFocusedElement in
+                guard let selectionBaseline,
+                      Self.areSameAccessibilityElement(
+                        selectionBaseline.focusedElement, focusedElement
+                      ) else { return false }
+                return Self.hasFreshUsableSelection(
+                    assessedFocusedElement.assessment,
+                    comparedTo: selectionBaseline.assessment
+                )
+            },
             isContextCurrent: {
                 guard NSWorkspace.shared.frontmostApplication?
                     .processIdentifier == targetProcessIdentifier else {
@@ -2353,6 +2368,24 @@ final class AccessibilityManager {
             return nil
         }
         return result.assessment
+    }
+
+    nonisolated static func hasFreshUsableSelection(
+        _ current: FocusedElementAssessment,
+        comparedTo baseline: FocusedElementAssessment
+    ) -> Bool {
+        guard baseline.protection == .unprotected,
+              current.protection == .unprotected,
+              current.pointAssessments.allSatisfy(\.isResolved),
+              let previous = baseline.selectionSnapshot,
+              let selection = current.selectionSnapshot,
+              previous.canReadSelectedTextViaAccessibility,
+              selection.canReadSelectedTextViaAccessibility,
+              selection.usableText != nil else { return false }
+        if previous.usableText != selection.usableText { return true }
+        guard previous.hasReadableSelectedRangeAttribute,
+              selection.hasReadableSelectedRangeAttribute else { return false }
+        return didSelectionChange(from: previous, to: selection)
     }
 
     func getFocusedElementWithRetry(
