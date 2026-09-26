@@ -2,6 +2,56 @@ import XCTest
 @testable import ActionHalo
 
 final class TextSelectionMonitorTests: XCTestCase {
+    func testEmptyInputPopupRequiresConfirmedUnprotectedEditableHitWithoutSelection() {
+        func assessment(
+            protection: AccessibilityManager.ProtectedTextAssessment = .unprotected,
+            editable: Bool = true,
+            text: String? = nil,
+            readableText: Bool = true,
+            rangeLength: Int? = nil,
+            inside: Bool = true,
+            resolved: Bool = true
+        ) -> AccessibilityManager.FocusedElementAssessment {
+            .init(
+                protection: protection,
+                isSelectionEditable: editable,
+                selectionSnapshot: .init(
+                    text: text, rangeLocation: 0, rangeLength: rangeLength,
+                    hasReadableSelectedTextAttribute: readableText,
+                    hasReadableSelectedRangeAttribute: rangeLength != nil
+                ),
+                pointAssessments: [.init(
+                    isTextSelectionContext: true,
+                    isInsideFocusedElementBounds: inside,
+                    isResolved: resolved
+                )],
+                isEditableTextInput: editable
+            )
+        }
+        for accepted in [
+            assessment(),
+            assessment(text: " \n "),
+            assessment(readableText: false, rangeLength: 0)
+        ] {
+            XCTAssertTrue(TextSelectionMonitor.shouldPresentEmptyInputPastePopup(assessment: accepted))
+        }
+        for rejected in [
+            assessment(protection: .protectedContent),
+            assessment(protection: .indeterminate),
+            assessment(editable: false),
+            assessment(text: "selected"),
+            assessment(readableText: false),
+            assessment(readableText: false, rangeLength: 3),
+            assessment(inside: false),
+            assessment(resolved: false)
+        ] {
+            XCTAssertFalse(TextSelectionMonitor.shouldPresentEmptyInputPastePopup(assessment: rejected))
+        }
+        var nonInput = assessment()
+        nonInput.isEditableTextInput = false
+        XCTAssertFalse(TextSelectionMonitor.shouldPresentEmptyInputPastePopup(assessment: nonInput))
+    }
+
     func testNativeTextSelectionIsNotRejectedByItsWindowOrApplicationAncestors() {
         XCTAssertTrue(AccessibilityManager.shouldTreatFocusedRoleAsTextSelectionContext(
             role: kAXTextAreaRole,
@@ -126,7 +176,17 @@ final class TextSelectionMonitorTests: XCTestCase {
         let emptyInputUserInfo = TextSelectionMonitor.emptyTextInputClickedNotificationUserInfo(
             location: location,
             processIdentifier: 42,
-            focusedElement: focusedElement
+            focusedElement: focusedElement,
+            windowSnapshot: .init(windowID: 7, ownerPID: 42, bounds: .zero),
+            focusedElementAssessment: focusedElementAssessment
+        )
+        XCTAssertEqual(
+            emptyInputUserInfo["windowSnapshot"] as? TextSelectionMonitor.FrontmostWindowSnapshot,
+            .init(windowID: 7, ownerPID: 42, bounds: .zero)
+        )
+        XCTAssertEqual(
+            emptyInputUserInfo["focusedElementAssessment"] as? AccessibilityManager.FocusedElementAssessment,
+            focusedElementAssessment
         )
 
         XCTAssertEqual(textSelectedUserInfo["text"] as? String, "selected")

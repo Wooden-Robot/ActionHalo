@@ -411,6 +411,56 @@ final class AccessibilityManagerTests: XCTestCase {
     }
 
     @MainActor
+    func testSlowAssessmentLeavesMainActorAndNewRequestsResponsiveAfterCancellation() async {
+        let element = AXUIElementCreateApplication(ProcessInfo.processInfo.processIdentifier)
+        let expectedAssessment = AccessibilityManager.FocusedElementAssessment(
+            protection: .unprotected,
+            isSelectionEditable: true,
+            selectionSnapshot: nil,
+            pointAssessments: []
+        )
+        let oldWorkerStarted = expectation(description: "Old AX assessment started")
+        let releaseOldWorker = DispatchSemaphore(value: 0)
+        let oldRequest = Task { @MainActor in
+            let result = await AccessibilityManager.shared.assessFocusedElement(
+                element,
+                forEmptyInputClick: true,
+                retryDelays: [],
+                assessmentProvider: {
+                    oldWorkerStarted.fulfill()
+                    XCTAssertEqual(
+                        releaseOldWorker.wait(timeout: .now() + 2),
+                        .success,
+                        "Slow AX must not block MainActor or serialize a newer request behind it."
+                    )
+                    return expectedAssessment
+                }
+            )
+            return result == nil
+        }
+        defer {
+            oldRequest.cancel()
+            releaseOldWorker.signal()
+        }
+
+        await fulfillment(of: [oldWorkerStarted], timeout: 1)
+        oldRequest.cancel()
+        let newResult = await AccessibilityManager.shared.assessFocusedElement(
+            element,
+            forEmptyInputClick: true,
+            retryDelays: [],
+            assessmentProvider: { expectedAssessment }
+        )
+        XCTAssertEqual(newResult?.assessment, expectedAssessment)
+
+        // Only MainActor can release the old synchronous read, and only after
+        // the independent replacement request has completed.
+        releaseOldWorker.signal()
+        let cancelledResultWasDiscarded = await oldRequest.value
+        XCTAssertTrue(cancelledResultWasDiscarded, "An uninterruptible AX read must discard its result after cancellation.")
+    }
+
+    @MainActor
     func testFocusedElementRetryRecoversAfterTwoTransientFailures() async throws {
         let expectedFocusedElement = AXUIElementCreateApplication(pid_t(42))
         var lookupResults: [AXUIElement?] = [nil, nil, expectedFocusedElement]
@@ -1520,12 +1570,55 @@ final class AccessibilityManagerTests: XCTestCase {
         )
 
         snapshot?.discardTemporaryFiles()
-        XCTAssertTrue(
+        XCTAssertFalse(
             FileManager.default.fileExists(atPath: temporaryDirectoryURL.path),
-            "The spill must stay available while the pasteboard owns its lazy data provider"
+            "Restored data must no longer depend on the temporary spill"
         )
         snapshot = nil
         XCTAssertEqual(destination.data(forType: type), payload)
+    }
+
+    func testRestoredSpillSurvivesWriterExit() throws {
+        let environmentKey = "ACTIONHALO_TEST_RESTORE_PASTEBOARD"
+        let type = NSPasteboard.PasteboardType("com.actionhalo.tests.writer-exit")
+        let payload = Data(repeating: 0x5A, count: 32)
+        if let name = ProcessInfo.processInfo.environment[environmentKey] {
+            let pasteboard = NSPasteboard(name: NSPasteboard.Name(name))
+            pasteboard.clearContents()
+            XCTAssertTrue(pasteboard.setData(payload, forType: type))
+            let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(
+                from: pasteboard,
+                maxInMemoryBytes: 0
+            ))
+            defer { snapshot.discardTemporaryFiles() }
+            XCTAssertNotNil(snapshot.temporaryDirectoryURL)
+            pasteboard.clearContents()
+            XCTAssertTrue(pasteboard.setString("temporary copy", forType: .string))
+            XCTAssertTrue(AccessibilityManager.restorePasteboardSnapshot(snapshot, to: pasteboard))
+            // Do not read the restored data here: that would materialize a lazy provider.
+            return
+        }
+
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("ActionHaloTests-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        child.arguments = [
+            "xctest", "-XCTest",
+            "ActionHaloTests.AccessibilityManagerTests/testRestoredSpillSurvivesWriterExit",
+            Bundle(for: Self.self).bundlePath
+        ]
+        var environment = ProcessInfo.processInfo.environment
+        environment[environmentKey] = pasteboard.name.rawValue
+        child.environment = environment
+        let output = Pipe()
+        child.standardOutput = output
+        child.standardError = output
+        try child.run()
+        let childOutput = output.fileHandleForReading.readDataToEndOfFile()
+        child.waitUntilExit()
+        XCTAssertEqual(child.terminationStatus, 0, String(decoding: childOutput, as: UTF8.self))
+        XCTAssertEqual(pasteboard.data(forType: type), payload)
     }
 
     func testRestoreDoesNotRequireSnapshottingOversizedTemporaryClipboard() throws {

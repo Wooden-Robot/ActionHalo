@@ -49,19 +49,16 @@ final class HotkeyManager {
     
     /// Human-readable description
     var hotkeyDescription: String {
-        guard let hk = hotkey else { return "Not Set".localized }
-        var parts: [String] = []
-        if hk.modifiers & UInt32(cmdKey) != 0 { parts.append("⌘") }
-        if hk.modifiers & UInt32(shiftKey) != 0 { parts.append("⇧") }
-        if hk.modifiers & UInt32(optionKey) != 0 { parts.append("⌥") }
-        if hk.modifiers & UInt32(controlKey) != 0 { parts.append("⌃") }
-        parts.append(keyStringFromCode(UInt16(hk.keyCode)))
-        return parts.joined()
+        description(for: hotkey)
     }
     
     /// Human-readable description for toggle hotkey
     var toggleHotkeyDescription: String {
-        guard let hk = toggleHotkey else { return "Not Set".localized }
+        description(for: toggleHotkey)
+    }
+
+    private func description(for hotkey: (keyCode: UInt32, modifiers: UInt32)?) -> String {
+        guard let hk = hotkey else { return "Not Set".localized }
         var parts: [String] = []
         if hk.modifiers & UInt32(cmdKey) != 0 { parts.append("⌘") }
         if hk.modifiers & UInt32(shiftKey) != 0 { parts.append("⇧") }
@@ -118,11 +115,73 @@ final class HotkeyManager {
         }
         return hotkey
     }
+
+    /// Keep the working binding and preferences until the replacement is registered.
+    @discardableResult
+    func updateHotkey(
+        _ candidate: (keyCode: UInt32, modifiers: UInt32)?,
+        isToggle: Bool = false
+    ) -> [RegistrationIssue] {
+        if candidate != nil, Self.validatedHotkey(candidate) == nil {
+            return [RegistrationIssue(
+                kind: .invalidModifiers,
+                message: isToggle
+                    ? "Auto Trigger Toggle Hotkey must include Command, Option, or Control.".localized
+                    : "Open Menu Hotkey must include Command, Option, or Control.".localized
+            )]
+        }
+        let otherHotkey = isToggle ? hotkey : toggleHotkey
+        if let candidate, let otherHotkey, candidate == otherHotkey {
+            return [RegistrationIssue(
+                kind: .duplicateAssignment,
+                message: "Open Menu Hotkey and Auto Trigger Toggle Hotkey cannot use the same shortcut.".localized
+            )]
+        }
+
+        let previousHotkey = isToggle ? toggleHotkey : hotkey
+        let previousRef = isToggle ? toggleHotkeyRef : hotkeyRef
+        if let candidate, let previousHotkey,
+           candidate == previousHotkey, previousRef != nil {
+            return []
+        }
+
+        var replacementRef: EventHotKeyRef?
+        if let candidate {
+            var status = installEventHandlerIfNeeded()
+            if status == noErr {
+                let identifier = EventHotKeyID(signature: fourCharCode("OFIR"), id: isToggle ? 2 : 1)
+                status = RegisterEventHotKey(
+                    candidate.keyCode, candidate.modifiers, identifier,
+                    GetApplicationEventTarget(), 0, &replacementRef
+                )
+            }
+            guard status == noErr else {
+                if hotkeyRef == nil, toggleHotkeyRef == nil { unregisterHotkeys() }
+                let message = isToggle
+                    ? "Failed to register Auto Trigger Toggle Hotkey (%@). It may conflict with another shortcut.".localized
+                    : "Failed to register Open Menu Hotkey (%@). It may conflict with another shortcut.".localized
+                return [RegistrationIssue(
+                    kind: .registerFailed(status),
+                    message: String(format: message, description(for: candidate))
+                )]
+            }
+        }
+
+        if let previousRef { UnregisterEventHotKey(previousRef) }
+        if isToggle {
+            toggleHotkeyRef = replacementRef
+            toggleHotkey = candidate
+        } else {
+            hotkeyRef = replacementRef
+            hotkey = candidate
+        }
+        if hotkeyRef == nil, toggleHotkeyRef == nil { unregisterHotkeys() }
+        return []
+    }
     
     /// Register all global hotkeys
     @discardableResult
     func registerHotkeys() -> [RegistrationIssue] {
-        unregisterHotkeys()
         var issues: [RegistrationIssue] = []
 
         let menuHotkey = Self.validatedHotkey(hotkey)
@@ -155,35 +214,16 @@ final class HotkeyManager {
             return issues
         }
 
+        unregisterHotkeys()
         guard menuHotkey != nil || autoTriggerHotkey != nil else { return issues }
-        
-        let handler: EventHandlerUPP = { _, event, _ -> OSStatus in
-            var hotkeyID = EventHotKeyID()
-            let status = GetEventParameter(
-                event,
-                EventParamName(kEventParamDirectObject),
-                EventParamType(typeEventHotKeyID),
-                nil,
-                MemoryLayout<EventHotKeyID>.size,
-                nil,
-                &hotkeyID
-            )
-            
-            if status == noErr {
-                let identifier = hotkeyID.id
-                DispatchQueue.main.async {
-                    if identifier == 1 {
-                        HotkeyManager.shared.onHotkeyPressed?()
-                    } else if identifier == 2 {
-                        HotkeyManager.shared.onToggleHotkeyPressed?()
-                    }
-                }
-            }
-            return noErr
+        let handlerStatus = installEventHandlerIfNeeded()
+        guard handlerStatus == noErr else {
+            issues.append(RegistrationIssue(
+                kind: .registerFailed(handlerStatus),
+                message: String(format: "Failed to register Open Menu Hotkey (%@). It may conflict with another shortcut.".localized, hotkeyDescription)
+            ))
+            return issues
         }
-        
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), handler, 1, &eventType, nil, &eventHandler)
         
         if let hk = menuHotkey {
             let hotkeyID = EventHotKeyID(signature: fourCharCode("OFIR"), id: 1)
@@ -218,6 +258,37 @@ final class HotkeyManager {
         }
 
         return issues
+    }
+
+    private func installEventHandlerIfNeeded() -> OSStatus {
+        guard eventHandler == nil else { return noErr }
+        let handler: EventHandlerUPP = { _, event, _ -> OSStatus in
+            var hotkeyID = EventHotKeyID()
+            let status = GetEventParameter(
+                event,
+                EventParamName(kEventParamDirectObject),
+                EventParamType(typeEventHotKeyID),
+                nil,
+                MemoryLayout<EventHotKeyID>.size,
+                nil,
+                &hotkeyID
+            )
+
+            if status == noErr {
+                let identifier = hotkeyID.id
+                DispatchQueue.main.async {
+                    if identifier == 1 {
+                        HotkeyManager.shared.onHotkeyPressed?()
+                    } else if identifier == 2 {
+                        HotkeyManager.shared.onToggleHotkeyPressed?()
+                    }
+                }
+            }
+            return noErr
+        }
+
+        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        return InstallEventHandler(GetApplicationEventTarget(), handler, 1, &eventType, nil, &eventHandler)
     }
     
     /// Unregister all global hotkeys

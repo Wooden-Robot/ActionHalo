@@ -89,13 +89,27 @@ final class TextSelectionMonitor {
     static func emptyTextInputClickedNotificationUserInfo(
         location: NSPoint,
         processIdentifier: pid_t,
-        focusedElement: AXUIElement
+        focusedElement: AXUIElement,
+        windowSnapshot: FrontmostWindowSnapshot,
+        focusedElementAssessment: AccessibilityManager.FocusedElementAssessment
     ) -> [String: Any] {
         [
             "mouseLocation": NSValue(point: location),
             "processIdentifier": NSNumber(value: processIdentifier),
-            "focusedElement": focusedElement
+            "focusedElement": focusedElement,
+            "windowSnapshot": windowSnapshot,
+            "focusedElementAssessment": focusedElementAssessment
         ]
+    }
+
+    nonisolated static func shouldPresentEmptyInputPastePopup(
+        assessment: AccessibilityManager.FocusedElementAssessment
+    ) -> Bool {
+        assessment.protection == .unprotected &&
+            assessment.isEditableTextInput == true && assessment.isSelectionEditable &&
+            assessment.hasConfirmedEmptySelection &&
+            assessment.pointAssessments.first?.isResolved == true &&
+            assessment.pointAssessments.first?.isInsideFocusedElementBounds == true
     }
 
     nonisolated static func shouldSuppressForFileDragPasteboard(typeIdentifiers: [String]) -> Bool {
@@ -373,6 +387,8 @@ final class TextSelectionMonitor {
     private var pendingPresentationRequestID: UUID?
     private var presentationCancelMonitor: Any?
     private var pendingEmptyInputCheckID: UUID?
+    private var pendingEmptyInputTask: Task<Void, Never>?
+    private var emptyInputCancelMonitor: Any?
     private(set) var lastEmptyInputCheckLocation: NSPoint?
     
     // Minimum drag distance (in points) to consider as text selection
@@ -1015,15 +1031,25 @@ final class TextSelectionMonitor {
             // It was just a click. Check if it's inside a text input field.
             let emptyInputCheckID = UUID()
             pendingEmptyInputCheckID = emptyInputCheckID
-            // We still need a tiny delay here for the system to focus the new element
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            emptyInputCancelMonitor = NSEvent.addGlobalMonitorForEvents(
+                matching: [.keyDown, .rightMouseDown]
+            ) { [weak self] _ in
+                self?.cancelPendingEmptyInputCheck()
+            }
+            pendingEmptyInputTask = Task { @MainActor [weak self] in
+                // Allow macOS to publish focus after the physical click.
+                do {
+                    try await Task.sleep(nanoseconds: 50_000_000)
+                } catch { return }
                 guard let self,
+                      !Task.isCancelled,
                       self.pendingEmptyInputCheckID == emptyInputCheckID else {
                     return
                 }
-                self.checkForEmptyTextInputClick(
+                await self.checkForEmptyTextInputClick(
                     at: upLocation,
                     expectedProcessIdentifier: selectionProcessIdentifier,
+                    windowSnapshot: windowSnapshotAtMouseUp,
                     requestID: emptyInputCheckID
                 )
             }
@@ -1443,7 +1469,7 @@ final class TextSelectionMonitor {
         pendingSelectionBundleID = nil
         pendingSelectionWindowID = nil
         pendingSelectionWindowSnapshot = nil
-        pendingEmptyInputCheckID = nil
+        cancelPendingEmptyInputCheck()
         
         stopSelectionObserver()
     }
@@ -1585,54 +1611,63 @@ final class TextSelectionMonitor {
     private func checkForEmptyTextInputClick(
         at mouseLocation: NSPoint,
         expectedProcessIdentifier: pid_t?,
+        windowSnapshot: FrontmostWindowSnapshot?,
         requestID: UUID
-    ) {
+    ) async {
+        defer {
+            if pendingEmptyInputCheckID == requestID {
+                cancelPendingEmptyInputCheck()
+            }
+        }
         lastEmptyInputCheckLocation = mouseLocation
 
         let frontmostApp = NSWorkspace.shared.frontmostApplication
-        guard AccessibilityManager.isExpectedCopyFallbackProcess(
+        guard AccessibilityManager.shared.isAccessibilityEnabled,
+              !AccessibilityManager.shared.isSecureEventInputEnabled(),
+              AccessibilityManager.isExpectedCopyFallbackProcess(
             expectedProcessIdentifier: expectedProcessIdentifier,
             currentProcessIdentifier: frontmostApp?.processIdentifier
         ), Self.shouldAllowEmptyTextInputCheck(
             bundleID: frontmostApp?.bundleIdentifier,
             localizedName: frontmostApp?.localizedName
         ) else {
-            pendingEmptyInputCheckID = nil
             return
         }
 
         // Quick check: If pasteboard is empty, don't even bother checking accessibility
         guard Self.hasUsableClipboardText(NSPasteboard.general.string(forType: .string)) else {
-            pendingEmptyInputCheckID = nil
             return
         }
 
-        // This method is invoked on the main queue. Keep AppKit access and the bounded AX
-        // queries on that queue, while reusing one focused-element lookup.
-        guard let focusedElement = AccessibilityManager.shared.getFocusedElement(
-            expectedProcessIdentifier: expectedProcessIdentifier
-        ) else {
-            pendingEmptyInputCheckID = nil
+        guard let expectedProcessIdentifier,
+              let windowSnapshot, let windowID = windowSnapshot.windowID,
+              let assessed = await AccessibilityManager.shared.resolveAssessedFocusedElementWithRetry(
+                expectedProcessIdentifier: expectedProcessIdentifier,
+                windowConstraint: AccessibilityManager.FocusedWindowConstraint(
+                    windowID: windowID,
+                    ownerPID: windowSnapshot.ownerPID,
+                    bounds: windowSnapshot.bounds
+                ),
+                bundleID: frontmostApp?.bundleIdentifier,
+                points: [mouseLocation],
+                forEmptyInputClick: true
+              ) else {
             return
         }
-        let selectedText = AccessibilityManager.shared.selectedText(from: focusedElement)
-        let isTextInput = AccessibilityManager.shared.isTextInputElement(
-            at: mouseLocation,
-            focusedElement: focusedElement
-        )
 
-        guard pendingEmptyInputCheckID == requestID else { return }
-        pendingEmptyInputCheckID = nil
-        guard AccessibilityManager.isExpectedCopyFallbackProcess(
-            expectedProcessIdentifier: expectedProcessIdentifier,
-            currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier
-        ), AccessibilityManager.areSameAccessibilityElement(
-            focusedElement,
-            AccessibilityManager.shared.getFocusedElement(
-                expectedProcessIdentifier: expectedProcessIdentifier
-            )
-        ), selectedText == nil, isTextInput,
-              let expectedProcessIdentifier else {
+        guard !Task.isCancelled, isMonitoring,
+              pendingEmptyInputCheckID == requestID,
+              Self.shouldContinueMouseGesture(
+                mouseDownProcessIdentifier: expectedProcessIdentifier,
+                currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                windowAtMouseDown: windowSnapshot,
+                windowAtMouseUp: Self.currentFrontmostWindowSnapshot(frontmostProcessID: expectedProcessIdentifier)
+              ),
+              !AccessibilityManager.shared.isSecureEventInputEnabled(),
+              AccessibilityManager.shared.isAccessibilityEnabled,
+              !AppExclusionStore.isExcluded(frontmostApp?.bundleIdentifier ?? ""),
+              Self.hasUsableClipboardText(NSPasteboard.general.string(forType: .string)),
+              Self.shouldPresentEmptyInputPastePopup(assessment: assessed.assessment) else {
             return
         }
 
@@ -1642,8 +1677,20 @@ final class TextSelectionMonitor {
             userInfo: Self.emptyTextInputClickedNotificationUserInfo(
                 location: mouseLocation,
                 processIdentifier: expectedProcessIdentifier,
-                focusedElement: focusedElement
+                focusedElement: assessed.focusedElement,
+                windowSnapshot: windowSnapshot,
+                focusedElementAssessment: assessed.assessment
             )
         )
+    }
+
+    private func cancelPendingEmptyInputCheck() {
+        pendingEmptyInputCheckID = nil
+        pendingEmptyInputTask?.cancel()
+        pendingEmptyInputTask = nil
+        if let monitor = emptyInputCancelMonitor {
+            NSEvent.removeMonitor(monitor)
+            emptyInputCancelMonitor = nil
+        }
     }
 }

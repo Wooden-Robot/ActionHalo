@@ -44,27 +44,7 @@ private enum PasteboardSnapshotPayload {
 }
 
 private final class PasteboardSnapshotFileStore: Sendable {
-    private struct CleanupState {
-        var activeLeaseCount = 0
-        var cleanupRequested = false
-        var isCleanedUp = false
-    }
-
-    final class Lease: Sendable {
-        private let fileStore: PasteboardSnapshotFileStore
-
-        fileprivate init(fileStore: PasteboardSnapshotFileStore) {
-            self.fileStore = fileStore
-        }
-
-        deinit {
-            fileStore.releaseLease()
-        }
-    }
-
     let directoryURL: URL
-
-    private let cleanupState = LockedState(initialState: CleanupState())
 
     init?(fileManager: FileManager = .default) {
         directoryURL = fileManager.temporaryDirectory.appendingPathComponent(
@@ -93,129 +73,12 @@ private final class PasteboardSnapshotFileStore: Sendable {
         }
     }
 
-    func makeLease() -> Lease? {
-        cleanupState.withLock {
-            guard !$0.cleanupRequested, !$0.isCleanedUp else { return nil }
-            $0.activeLeaseCount += 1
-            return Lease(fileStore: self)
-        }
-    }
-
     func cleanup() {
-        let shouldRemoveDirectory = cleanupState.withLock {
-            guard !$0.isCleanedUp else { return false }
-            $0.cleanupRequested = true
-            guard $0.activeLeaseCount == 0 else { return false }
-            $0.isCleanedUp = true
-            return true
-        }
-        if shouldRemoveDirectory {
-            try? FileManager.default.removeItem(at: directoryURL)
-        }
-    }
-
-    private func releaseLease() {
-        let shouldRemoveDirectory = cleanupState.withLock {
-            guard $0.activeLeaseCount > 0 else { return false }
-            $0.activeLeaseCount -= 1
-            guard $0.cleanupRequested,
-                  $0.activeLeaseCount == 0,
-                  !$0.isCleanedUp else {
-                return false
-            }
-            $0.isCleanedUp = true
-            return true
-        }
-        if shouldRemoveDirectory {
-            try? FileManager.default.removeItem(at: directoryURL)
-        }
+        try? FileManager.default.removeItem(at: directoryURL)
     }
 
     deinit {
         cleanup()
-    }
-}
-
-private final class PasteboardSnapshotDataProvider:
-    NSObject,
-    NSPasteboardItemDataProvider,
-    Sendable
-{
-    private let retentionID = UUID()
-    private let filesByType: [NSPasteboard.PasteboardType: URL]
-    private let fileStoreLease: PasteboardSnapshotFileStore.Lease
-
-    init(
-        filesByType: [NSPasteboard.PasteboardType: URL],
-        fileStoreLease: PasteboardSnapshotFileStore.Lease
-    ) {
-        self.filesByType = filesByType
-        self.fileStoreLease = fileStoreLease
-        super.init()
-    }
-
-    func activate() {
-        PasteboardSnapshotDataProviderRegistry.shared.retain(
-            self,
-            identifier: retentionID
-        )
-    }
-
-    func cancel() {
-        PasteboardSnapshotDataProviderRegistry.shared.release(
-            identifier: retentionID
-        )
-    }
-
-    func pasteboard(
-        _ pasteboard: NSPasteboard?,
-        item: NSPasteboardItem,
-        provideDataForType type: NSPasteboard.PasteboardType
-    ) {
-        guard let fileURL = filesByType[type],
-              let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else {
-            return
-        }
-        item.setData(data, forType: type)
-    }
-
-    func pasteboardFinishedWithDataProvider(_ pasteboard: NSPasteboard) {
-        cancel()
-    }
-}
-
-private final class PasteboardSnapshotDataProviderRegistry: Sendable {
-    static let shared = PasteboardSnapshotDataProviderRegistry()
-
-    private let retainedProviders =
-        LockedState<[UUID: PasteboardSnapshotDataProvider]>(
-            initialState: [:]
-        )
-
-    private init() {}
-
-    func retain(
-        _ provider: PasteboardSnapshotDataProvider,
-        identifier: UUID
-    ) {
-        retainedProviders.withLock { $0[identifier] = provider }
-    }
-
-    func release(identifier: UUID) {
-        _ = retainedProviders.withLock { $0.removeValue(forKey: identifier) }
-    }
-}
-
-private struct MaterializedPasteboardContents {
-    let items: [NSPasteboardItem]
-    let dataProviders: [PasteboardSnapshotDataProvider]
-
-    func activateDataProviders() {
-        dataProviders.forEach { $0.activate() }
-    }
-
-    func cancelDataProviders() {
-        dataProviders.forEach { $0.cancel() }
     }
 }
 
@@ -405,22 +268,26 @@ final class AccessibilityManager {
             bundleID: String?,
             accessibilityPoints: [CGPoint],
             requireUsableSelection: Bool,
-            retryDelays: [TimeInterval]
+            forEmptyInputClick: Bool,
+            retryDelays: [TimeInterval],
+            assessmentProvider: (@Sendable () -> FocusedElementAssessment)?
         ) async -> TransferredAssessedFocusedElement? {
             var latestAssessment: FocusedElementAssessment?
 
             for attemptIndex in 0...retryDelays.count {
                 guard !Task.isCancelled else { return nil }
-                let assessment = AccessibilityManager.focusedElementAssessment(
+                let assessment = assessmentProvider?() ?? AccessibilityManager.focusedElementAssessment(
                     for: focusedElement,
                     systemWideElement: systemWideElement,
                     bundleID: bundleID,
-                    accessibilityPoints: accessibilityPoints
+                    accessibilityPoints: accessibilityPoints,
+                    forEmptyInputClick: forEmptyInputClick
                 )
                 latestAssessment = assessment
 
                 if assessment.protection == .protectedContent ||
                     (assessment.protection == .unprotected &&
+                        (!forEmptyInputClick || assessment.isEditableTextInput != nil) &&
                         assessment.pointAssessments.allSatisfy(\.isResolved) &&
                         (!requireUsableSelection ||
                             assessment.selectionSnapshot?.usableText != nil)) {
@@ -643,6 +510,16 @@ final class AccessibilityManager {
         let selectionSnapshot: SelectionSnapshot?
         let pointAssessments: [PointSelectionAssessment]
         var selectionMatchesGesture = false
+        var isEditableTextInput: Bool? = nil
+
+        var hasConfirmedEmptySelection: Bool {
+            guard let selectionSnapshot else { return false }
+            if selectionSnapshot.hasReadableSelectedTextAttribute {
+                return selectionSnapshot.usableText == nil
+            }
+            return selectionSnapshot.hasReadableSelectedRangeAttribute &&
+                selectionSnapshot.rangeLength == 0
+        }
     }
 
     struct AssessedFocusedElement {
@@ -846,8 +723,8 @@ final class AccessibilityManager {
             text: selectedText,
             rangeLocation: rangeLocation,
             rangeLength: rangeLength,
-            hasReadableSelectedTextAttribute: selectedTextResult == .success,
-            hasReadableSelectedRangeAttribute: selectedRangeResult == .success
+            hasReadableSelectedTextAttribute: selectedTextResult == .success && selectedTextRaw is String,
+            hasReadableSelectedRangeAttribute: rangeLocation != nil && rangeLength != nil
         )
     }
 
@@ -1494,7 +1371,7 @@ final class AccessibilityManager {
         defer { rollbackSnapshot?.discardTemporaryFiles() }
         let rollbackContents = rollbackSnapshot.flatMap(materializedPasteboardContents)
 
-        // Snapshot materialization can invoke lazy data providers. Recheck ownership immediately
+        // Capturing the rollback can invoke lazy data providers. Recheck ownership immediately
         // before replacing the pasteboard so a newer third-party write wins.
         if let expectedCurrentState,
            stablePasteboardState(from: pasteboard) != expectedCurrentState {
@@ -1512,66 +1389,43 @@ final class AccessibilityManager {
 
     nonisolated private static func materializedPasteboardContents(
         from snapshot: PasteboardSnapshot
-    ) -> MaterializedPasteboardContents? {
+    ) -> [NSPasteboardItem]? {
         var restoredItems: [NSPasteboardItem] = []
-        var dataProviders: [PasteboardSnapshotDataProvider] = []
         restoredItems.reserveCapacity(snapshot.items.count)
 
         for itemSnapshot in snapshot.items {
             let item = NSPasteboardItem()
-            var spilledFiles: [NSPasteboard.PasteboardType: URL] = [:]
 
             for (type, payload) in itemSnapshot {
+                let data: Data
                 switch payload {
                 case .memory(let inMemoryData):
-                    guard item.setData(inMemoryData, forType: type) else {
-                        return nil
-                    }
+                    data = inMemoryData
                 case .file(let fileURL):
-                    guard FileManager.default.isReadableFile(atPath: fileURL.path) else {
+                    guard let fileData = try? Data(contentsOf: fileURL, options: .mappedIfSafe) else {
                         return nil
                     }
-                    spilledFiles[type] = fileURL
+                    data = fileData
                 }
-            }
-
-            if !spilledFiles.isEmpty {
-                guard let fileStore = snapshot.fileStore,
-                      let lease = fileStore.makeLease() else {
+                // The pasteboard must own the bytes before ActionHalo exits.
+                // A lazy provider would leave restored data dependent on this process.
+                guard item.setData(data, forType: type) else {
                     return nil
                 }
-                let provider = PasteboardSnapshotDataProvider(
-                    filesByType: spilledFiles,
-                    fileStoreLease: lease
-                )
-                item.setDataProvider(provider, forTypes: Array(spilledFiles.keys))
-                dataProviders.append(provider)
             }
 
             restoredItems.append(item)
         }
 
-        return MaterializedPasteboardContents(
-            items: restoredItems,
-            dataProviders: dataProviders
-        )
+        return restoredItems
     }
 
     nonisolated private static func replacePasteboardContents(
-        with contents: MaterializedPasteboardContents,
+        with contents: [NSPasteboardItem],
         on pasteboard: NSPasteboard
     ) -> Bool {
-        contents.activateDataProviders()
         pasteboard.clearContents()
-        guard !contents.items.isEmpty else {
-            contents.cancelDataProviders()
-            return true
-        }
-        guard pasteboard.writeObjects(contents.items) else {
-            contents.cancelDataProviders()
-            return false
-        }
-        return true
+        return contents.isEmpty || pasteboard.writeObjects(contents)
     }
 
     private struct CopyObservation {
@@ -1859,32 +1713,25 @@ final class AccessibilityManager {
         return CGRect(origin: position, size: size)
     }
     
-    /// Check if the element at the specified screen coordinates is a text input field
+    // Synchronous diagnostics snapshot only. The automatic click path uses
+    // the per-request assessment actor below.
     func isTextInputElement(at point: NSPoint) -> Bool {
-        guard isAccessibilityEnabled else { return false }
-        
-        // 1. Get the globally focused element instead of hit-testing.
-        // Hit-testing often returns low-level items like AXGroup or AXStaticText which breaks the logic.
-        guard let focusedElement = getFocusedElement() else { return false }
-        return isTextInputElement(at: point, focusedElement: focusedElement)
+        guard isAccessibilityEnabled,
+              let element = getFocusedElement(),
+              Self.protectionAssessment(for: element) == .unprotected else { return false }
+        var role: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success else {
+            return false
+        }
+        return Self.editableTextInput(forUnprotectedElement: element, role: role as? String) == true &&
+            isPoint(point, inside: element)
     }
 
-    func isTextInputElement(
-        at point: NSPoint,
-        focusedElement: AXUIElement
-    ) -> Bool {
-        guard Self.protectionAssessment(for: focusedElement) == .unprotected else { return false }
-        
-        // 2. Verify the role
-        var roleValue: AnyObject?
-        let roleResult = AXUIElementCopyAttributeValue(
-            focusedElement,
-            kAXRoleAttribute as CFString,
-            &roleValue
-        )
-        guard roleResult == .success, let role = roleValue as? String else { return false }
-        
-        // 3. Verify it's a text input
+    nonisolated private static func editableTextInput(
+        forUnprotectedElement focusedElement: AXUIElement,
+        role: String?
+    ) -> Bool? {
+        guard let role else { return nil }
         let textRoles = [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole, "AXWebArea", "AXGroup", "AXDocument", "AXSearchField"]
         let forbiddenRoles = [
             kAXCheckBoxRole,
@@ -1902,27 +1749,30 @@ final class AccessibilityManager {
         
         if forbiddenRoles.contains(role) { return false }
         
-        var isEditableText = false
-        
         var isSettable: DarwinBoolean = false
-        let isValueSettable = AXUIElementIsAttributeSettable(focusedElement, kAXValueAttribute as CFString, &isSettable) == .success && isSettable.boolValue
-        let isSelectedTextSettable = AXUIElementIsAttributeSettable(focusedElement, kAXSelectedTextAttribute as CFString, &isSettable) == .success && isSettable.boolValue
+        let valueStatus = AXUIElementIsAttributeSettable(focusedElement, kAXValueAttribute as CFString, &isSettable)
+        let isValueSettable = valueStatus == .success && isSettable.boolValue
+        let selectionStatus = AXUIElementIsAttributeSettable(focusedElement, kAXSelectedTextAttribute as CFString, &isSettable)
+        let isSelectedTextSettable = selectionStatus == .success && isSettable.boolValue
+        let hasTransientFailure = [valueStatus, selectionStatus].contains {
+            $0 != .success && $0 != .attributeUnsupported
+        }
         
         if isValueSettable || isSelectedTextSettable {
-            isEditableText = true
+            return true
         } else if textRoles.contains(role) {
             // Some specific rich text editors don't flag attributes as settable but are actively editing
             var isEditing: AnyObject?
-            if AXUIElementCopyAttributeValue(focusedElement, "AXDocumentIsEditing" as CFString, &isEditing) == .success,
-               let editing = isEditing as? Bool, editing {
-                isEditableText = true
+            let status = AXUIElementCopyAttributeValue(focusedElement, "AXDocumentIsEditing" as CFString, &isEditing)
+            if status == .success {
+                guard let editing = isEditing as? Bool else { return nil }
+                if editing { return true }
+            } else if status != .attributeUnsupported {
+                return nil
             }
         }
         
-        guard isEditableText else { return false }
-        
-        // 4. Verify the click fell INSIDE the element's bounds to avoid false positives when clicking out
-        return isPoint(point, inside: focusedElement)
+        return hasTransientFailure ? nil : false
     }
     
     /// Check if the element at the specified screen coordinates is purely text (like a webpage paragraph, a text field, or static text label),
@@ -2049,7 +1899,8 @@ final class AccessibilityManager {
         for focusedElement: AXUIElement,
         systemWideElement: AXUIElement,
         bundleID: String?,
-        accessibilityPoints: [CGPoint]
+        accessibilityPoints: [CGPoint],
+        forEmptyInputClick: Bool
     ) -> FocusedElementAssessment {
         let protection = protectionAssessment(for: focusedElement)
         guard protection == .unprotected else {
@@ -2078,6 +1929,23 @@ final class AccessibilityManager {
             kAXRoleAttribute as CFString,
             &roleValue
         ) == .success ? roleValue as? String : nil
+        if forEmptyInputClick {
+            let isInput = editableTextInput(forUnprotectedElement: focusedElement, role: role)
+            let selectionIsReadable = snapshot?.isReadable == true
+            return FocusedElementAssessment(
+                protection: protection,
+                isSelectionEditable: isInput == true,
+                selectionSnapshot: snapshot,
+                pointAssessments: accessibilityPoints.map { point in
+                    PointSelectionAssessment(
+                        isTextSelectionContext: isInput == true,
+                        isInsideFocusedElementBounds: focusedFrame?.contains(point) ?? false,
+                        isResolved: isInput != nil && (isInput == false || (focusedFrame != nil && selectionIsReadable))
+                    )
+                },
+                isEditableTextInput: isInput
+            )
+        }
         let ancestorRoles = ancestorRoles(for: focusedElement)
         let focusedRoleIsTextContext = role.map {
             shouldTreatFocusedRoleAsTextSelectionContext(
@@ -2292,7 +2160,9 @@ final class AccessibilityManager {
         bundleID: String? = nil,
         points: [NSPoint] = [],
         requireUsableSelection: Bool = false,
-        retryDelays: [TimeInterval] = AccessibilityManager.focusedElementRetryDelays
+        forEmptyInputClick: Bool = false,
+        retryDelays: [TimeInterval] = AccessibilityManager.focusedElementRetryDelays,
+        assessmentProvider: (@Sendable () -> FocusedElementAssessment)? = nil
     ) async -> AssessedFocusedElement? {
         guard !Task.isCancelled else { return nil }
         if let expectedProcessIdentifier,
@@ -2312,7 +2182,9 @@ final class AccessibilityManager {
             bundleID: bundleID,
             accessibilityPoints: accessibilityPoints,
             requireUsableSelection: requireUsableSelection,
-            retryDelays: retryDelays
+            forEmptyInputClick: forEmptyInputClick,
+            retryDelays: retryDelays,
+            assessmentProvider: assessmentProvider
         ), !Task.isCancelled else {
             return nil
         }
@@ -2334,6 +2206,7 @@ final class AccessibilityManager {
         bundleID: String? = nil,
         points: [NSPoint] = [],
         requireUsableSelection: Bool = false,
+        forEmptyInputClick: Bool = false,
         selectionBaseline: AssessedFocusedElement? = nil,
         retryDelays: [TimeInterval] = AccessibilityManager.focusedElementRetryDelays
     ) async -> AssessedFocusedElement? {
@@ -2370,6 +2243,7 @@ final class AccessibilityManager {
                     bundleID: bundleID,
                     points: points,
                     requireUsableSelection: requireUsableSelection,
+                    forEmptyInputClick: forEmptyInputClick,
                     retryDelays: []
                 ) else {
                     return nil
@@ -2398,9 +2272,13 @@ final class AccessibilityManager {
             },
             isRetryable: {
                 $0.assessment.protection == .indeterminate ||
+                    (forEmptyInputClick && $0.assessment.isEditableTextInput == nil) ||
                     !$0.assessment.pointAssessments.allSatisfy(\.isResolved)
             },
             canAcceptEarly: { focusedElement, assessedFocusedElement in
+                // A click already waited for focus to settle and the attempt
+                // rechecked the same window and element after reading attributes.
+                if forEmptyInputClick { return true }
                 if assessedFocusedElement.assessment.selectionMatchesGesture { return true }
                 guard let selectionBaseline,
                       Self.areSameAccessibilityElement(

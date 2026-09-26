@@ -224,7 +224,7 @@ struct PluginEditorDirtyState: Equatable, Sendable {
 }
 
 /// A visual editor window for creating and modifying ActionHalo plugins
-final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegate {
+final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate, NSTextViewDelegate {
     static let maximumEditableScriptBytes = 1 * 1024 * 1024
 
     enum PluginPackageWriteError: LocalizedError, Sendable {
@@ -292,6 +292,7 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         self.title = plugin == nil ? "New Plugin".localized : "Edit Plugin".localized
         self.center()
         self.isReleasedWhenClosed = false
+        self.delegate = self
         
         setupUI()
         populate(with: plugin)
@@ -817,7 +818,28 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
     }
     
     @objc private func cancelClicked() {
-        self.close()
+        performClose(nil)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        confirmClose {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Unsaved Plugin Changes".localized
+            alert.informativeText = "Discard your unsaved changes to this plugin?".localized
+            alert.addButton(withTitle: "Cancel".localized)
+            let discardButton = alert.addButton(withTitle: "Discard Changes".localized)
+            discardButton.hasDestructiveAction = true
+            return alert.runModal() == .alertSecondButtonReturn
+        }
+    }
+
+    func confirmClose(discardChanges: () -> Bool) -> Bool {
+        guard !isSaving else { return false }
+        guard hasUnsavedChanges else { return true }
+        guard discardChanges() else { return false }
+        discardUnsavedChanges()
+        return true
     }
 
     func controlTextDidChange(_ obj: Notification) {
@@ -991,6 +1013,11 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         let existingConfigDict = Self.existingConfigDictionary(
             from: editingPlugin?.directoryURL
         )
+        let scriptFileName = Self.scriptFileName(
+            for: typeIndex,
+            existingConfig: existingConfigDict,
+            directoryURL: editingPlugin?.directoryURL
+        )
         var actionUpdates: [String: Any] = [:]
         
         switch typeIndex {
@@ -1001,11 +1028,11 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         case 1: // Shell script
             if content.isEmpty { return showError("Script cannot be empty".localized) }
             actionUpdates["type"] = "shell-script"
-            actionUpdates["script"] = "script.sh" // Reference external file
+            actionUpdates["script"] = scriptFileName
         case 2: // AppleScript
             if content.isEmpty { return showError("Code cannot be empty".localized) }
             actionUpdates["type"] = "applescript"
-            actionUpdates["script"] = "script.applescript" // Reference external file
+            actionUpdates["script"] = scriptFileName
         case 3: // Key Combo
             if content.isEmpty { return showError("Key combo cannot be empty".localized) }
             let parts = content.components(separatedBy: "+")
@@ -1047,7 +1074,6 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         let editingPluginWasNil = (editingPlugin == nil)
         let templateURL = editingPlugin?.directoryURL
         let customIconSourceURL = customIconURL
-        let scriptFileName = Self.scriptFileName(for: typeIndex)
         let configData: Data
         do {
             // Serialize the heterogeneous editor model before crossing the
@@ -1126,15 +1152,43 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
         }
     }
 
-    nonisolated static func scriptFileName(for typeIndex: Int) -> String? {
+    nonisolated static func scriptFileName(
+        for typeIndex: Int,
+        existingConfig: [String: Any] = [:],
+        directoryURL: URL? = nil
+    ) -> String? {
+        let actionType: PluginActionType
+        let fileExtension: String
         switch typeIndex {
         case 1:
-            return "script.sh"
+            actionType = .shellScript
+            fileExtension = "sh"
         case 2:
-            return "script.applescript"
+            actionType = .applescript
+            fileExtension = "applescript"
         default:
             return nil
         }
+
+        if let directoryURL,
+           let action = existingConfig["action"] as? [String: Any],
+           action["type"] as? String == actionType.rawValue,
+           let reference = action["script"] as? String,
+           case .bundledFile = PluginManager.resolvedPluginScriptSource(
+               reference,
+               pluginDirectoryURL: directoryURL
+           ) {
+            return reference.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var name = "script.\(fileExtension)"
+        var suffix = 2
+        while let directoryURL,
+              FileManager.default.fileExists(atPath: directoryURL.appendingPathComponent(name).path) {
+            name = "script-\(suffix).\(fileExtension)"
+            suffix += 1
+        }
+        return name
     }
 
     static func existingConfigDictionary(from packageURL: URL?) -> [String: Any] {
@@ -1277,15 +1331,34 @@ final class PluginEditorWindow: NSWindow, NSTextFieldDelegate, NSTextViewDelegat
             try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
         }
 
-        try configData.write(to: stagingURL.appendingPathComponent("Config.json"), options: .atomic)
-
         if let scriptFileName, let scriptContent {
+            let scriptURL = stagingURL.appendingPathComponent(scriptFileName)
+            guard PluginManager.isPluginDirectory(scriptURL, inside: stagingURL),
+                  expectedConfig.action.script == scriptFileName,
+                  !PluginManager.sameFileURL(scriptURL, stagingURL.appendingPathComponent("Config.json")) else {
+                throw PluginPackageWriteError.invalidConfiguration
+            }
+            if fileManager.fileExists(atPath: scriptURL.path) {
+                guard let originalData = try? Data(contentsOf: stagingURL.appendingPathComponent("Config.json")),
+                      let originalConfig = try? JSONDecoder().decode(PluginConfig.self, from: originalData),
+                      originalConfig.action.type == expectedConfig.action.type,
+                      let originalReference = originalConfig.action.script,
+                      case .bundledFile(let originalScriptURL) = PluginManager.resolvedPluginScriptSource(
+                          originalReference,
+                          pluginDirectoryURL: stagingURL
+                      ),
+                      PluginManager.sameFileURL(scriptURL, originalScriptURL) else {
+                    throw PluginPackageWriteError.invalidConfiguration
+                }
+            }
             try scriptContent.write(
-                to: stagingURL.appendingPathComponent(scriptFileName),
+                to: scriptURL,
                 atomically: true,
                 encoding: .utf8
             )
         }
+
+        try configData.write(to: stagingURL.appendingPathComponent("Config.json"), options: .atomic)
 
         let iconDestURL = stagingURL.appendingPathComponent("icon.png")
         if shouldKeepCustomIcon {
