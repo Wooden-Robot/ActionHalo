@@ -25,6 +25,7 @@ final class StatusBarController: NSObject {
     private var baseStatusItemToolTip: String?
     
     var onEnabledChanged: ((Bool) -> Void)?
+    var onRelaunchRequested: (() -> Void)?
     var currentEnabledState: Bool { isEnabled }
 
     override init() {
@@ -119,10 +120,6 @@ final class StatusBarController: NSObject {
         </dict>
         </plist>
         """
-    }
-
-    static func relaunchArguments(bundlePath: String) -> [String] {
-        [bundlePath]
     }
 
     static func isLaunchAgentEnabled(fileManager: FileManager = .default, bundleIdentifier: String) -> Bool {
@@ -516,37 +513,17 @@ final class StatusBarController: NSObject {
         
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn {
-            relaunchApp()
+            onRelaunchRequested?()
         } else {
             rebuildMenu() // Update the checkmarks immediately at least
         }
     }
     
-    // Programmatically relaunch the app
-    private func relaunchApp() {
-        let bundlePath = Bundle.main.bundleURL.path
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        task.arguments = Self.relaunchArguments(bundlePath: bundlePath)
-
-        do {
-            try task.run()
-        } catch {
-            NSLog("[ActionHalo] Failed to relaunch app: \(error.localizedDescription)")
-        }
-
-        NSApplication.shared.terminate(nil)
-    }
-    
     @objc private func setHotkey() {
         let recorder = HotkeyRecorderWindow(title: "Set Open Menu Hotkey".localized)
         recorder.onHotkeyRecorded = { [weak self] keyCode, modifiers in
-            if keyCode == 0 && modifiers == 0 {
-                HotkeyManager.shared.hotkey = nil
-            } else {
-                HotkeyManager.shared.hotkey = (keyCode, modifiers)
-            }
-            let issues = HotkeyManager.shared.registerHotkeys()
+            let candidate = keyCode == 0 && modifiers == 0 ? nil : (keyCode, modifiers)
+            let issues = HotkeyManager.shared.updateHotkey(candidate, isToggle: false)
             self?.presentHotkeyRegistrationIssues(issues)
             self?.rebuildMenu()
         }
@@ -558,12 +535,8 @@ final class StatusBarController: NSObject {
     @objc private func setToggleHotkey() {
         let recorder = HotkeyRecorderWindow(title: "Set Auto Trigger Toggle Hotkey".localized)
         recorder.onHotkeyRecorded = { [weak self] keyCode, modifiers in
-            if keyCode == 0 && modifiers == 0 {
-                HotkeyManager.shared.toggleHotkey = nil
-            } else {
-                HotkeyManager.shared.toggleHotkey = (keyCode, modifiers)
-            }
-            let issues = HotkeyManager.shared.registerHotkeys()
+            let candidate = keyCode == 0 && modifiers == 0 ? nil : (keyCode, modifiers)
+            let issues = HotkeyManager.shared.updateHotkey(candidate, isToggle: true)
             self?.presentHotkeyRegistrationIssues(issues)
             self?.rebuildMenu()
         }

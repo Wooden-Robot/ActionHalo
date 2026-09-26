@@ -59,6 +59,26 @@ final class PluginEditorWindowTests: XCTestCase {
     }
 
     @MainActor
+    func testEditorCloseRequiresExplicitDiscardOfUnsavedChanges() {
+        let editor = PluginEditorWindow()
+        defer { editor.close() }
+        XCTAssertTrue(editor.delegate === editor)
+        XCTAssertTrue(editor.confirmClose {
+            XCTFail("A clean editor must close without prompting")
+            return false
+        })
+
+        editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        XCTAssertFalse(editor.confirmClose { false })
+        XCTAssertTrue(editor.hasUnsavedChanges)
+        XCTAssertTrue(editor.isDocumentEdited)
+
+        XCTAssertTrue(editor.confirmClose { true })
+        XCTAssertFalse(editor.hasUnsavedChanges)
+        XCTAssertFalse(editor.isDocumentEdited)
+    }
+
+    @MainActor
     func testTypeIconAndShortcutUserActionsMarkEditorDirty() throws {
         let editor = PluginEditorWindow()
         let contentView = try XCTUnwrap(editor.contentView)
@@ -423,6 +443,103 @@ final class PluginEditorWindowTests: XCTestCase {
         XCTAssertEqual(config.name, "New")
         XCTAssertEqual(script, "new script")
         XCTAssertTrue(FileManager.default.fileExists(atPath: bundleURL.appendingPathComponent("extra.txt").path))
+    }
+
+    func testScriptSavePreservesOriginalEntryPointAndAuxiliaryFiles() throws {
+        for (typeIndex, actionType, fileExtension) in [
+            (1, "shell-script", "sh"),
+            (2, "applescript", "applescript"),
+        ] {
+            let originalReference = "scripts/main.\(fileExtension)"
+            let bundleURL = try makePluginPackage(config: """
+                {"name":"Old","identifier":"com.test.original","action":{"type":"\(actionType)","script":"\(originalReference)"}}
+                """)
+            try FileManager.default.createDirectory(
+                at: bundleURL.appendingPathComponent("scripts"),
+                withIntermediateDirectories: true
+            )
+            try "old entry".write(to: bundleURL.appendingPathComponent(originalReference), atomically: true, encoding: .utf8)
+            let helperURL = bundleURL.appendingPathComponent("script.\(fileExtension)")
+            try "keep helper".write(to: helperURL, atomically: true, encoding: .utf8)
+            var config = PluginEditorWindow.existingConfigDictionary(from: bundleURL)
+            let scriptName = try XCTUnwrap(PluginEditorWindow.scriptFileName(
+                for: typeIndex,
+                existingConfig: config,
+                directoryURL: bundleURL
+            ))
+            XCTAssertEqual(scriptName, originalReference)
+            config["name"] = "Renamed"
+            config["action"] = ["type": actionType, "script": scriptName]
+
+            try PluginEditorWindow.writePluginPackageAtomically(
+                bundleURL: bundleURL,
+                templateURL: bundleURL,
+                configData: JSONSerialization.data(withJSONObject: config),
+                scriptFileName: scriptName,
+                scriptContent: "edited entry",
+                customIconSourceURL: nil,
+                shouldKeepCustomIcon: false
+            )
+
+            XCTAssertEqual(PluginLoader.load(from: bundleURL)?.config.action.script, originalReference)
+            XCTAssertEqual(try String(contentsOf: bundleURL.appendingPathComponent(originalReference), encoding: .utf8), "edited entry")
+            XCTAssertEqual(try String(contentsOf: helperURL, encoding: .utf8), "keep helper")
+        }
+    }
+
+    func testInlineScriptSaveAvoidsExistingFilesAndRejectsUnsafeOverwrites() throws {
+        let bundleURL = try makePluginPackage(
+            config: #"{"name":"Inline","identifier":"com.test.inline","action":{"type":"shell-script","inline":"echo inline"}}"#
+        )
+        let helperURL = bundleURL.appendingPathComponent("script.sh")
+        try "keep helper".write(to: helperURL, atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(
+            at: bundleURL.appendingPathComponent("script-2.sh"),
+            withIntermediateDirectories: true
+        )
+        let config = PluginEditorWindow.existingConfigDictionary(from: bundleURL)
+        let scriptName = try XCTUnwrap(PluginEditorWindow.scriptFileName(
+            for: 1,
+            existingConfig: config,
+            directoryURL: bundleURL
+        ))
+        XCTAssertEqual(scriptName, "script-3.sh")
+
+        // A file can appear after the editor chose an unused name.
+        let lateFileURL = bundleURL.appendingPathComponent(scriptName)
+        try "keep late file".write(to: lateFileURL, atomically: true, encoding: .utf8)
+        for unsafeName in [scriptName, "script.sh", "../outside.sh"] {
+            var updatedConfig = config
+            updatedConfig["action"] = ["type": "shell-script", "script": unsafeName]
+            XCTAssertThrowsError(try PluginEditorWindow.writePluginPackageAtomically(
+                bundleURL: bundleURL,
+                templateURL: bundleURL,
+                configData: JSONSerialization.data(withJSONObject: updatedConfig),
+                scriptFileName: unsafeName,
+                scriptContent: "echo edited",
+                customIconSourceURL: nil,
+                shouldKeepCustomIcon: false
+            ))
+        }
+        XCTAssertEqual(try String(contentsOf: lateFileURL, encoding: .utf8), "keep late file")
+        XCTAssertEqual(try String(contentsOf: helperURL, encoding: .utf8), "keep helper")
+        XCTAssertEqual(PluginLoader.load(from: bundleURL)?.config.action.inline, "echo inline")
+
+        try FileManager.default.removeItem(at: lateFileURL)
+        var updatedConfig = config
+        updatedConfig["action"] = ["type": "shell-script", "script": scriptName]
+        try PluginEditorWindow.writePluginPackageAtomically(
+            bundleURL: bundleURL,
+            templateURL: bundleURL,
+            configData: JSONSerialization.data(withJSONObject: updatedConfig),
+            scriptFileName: scriptName,
+            scriptContent: "echo edited",
+            customIconSourceURL: nil,
+            shouldKeepCustomIcon: false
+        )
+        XCTAssertEqual(try String(contentsOf: lateFileURL, encoding: .utf8), "echo edited")
+        XCTAssertEqual(try String(contentsOf: helperURL, encoding: .utf8), "keep helper")
+        XCTAssertEqual(PluginLoader.load(from: bundleURL)?.config.action.script, scriptName)
     }
 
     func testWritePluginPackageAtomicallyPreservesExistingCustomIconWhenNoNewIconIsSelected() throws {

@@ -12,13 +12,6 @@ final class StatusBarControllerTests: XCTestCase {
         XCTAssertFalse(plist.contains(Bundle.main.bundlePath))
     }
 
-    func testRelaunchArgumentsPreserveRawBundlePath() {
-        let args = StatusBarController.relaunchArguments(bundlePath: "/Applications/ActionHalo Beta.app")
-
-        XCTAssertEqual(args, ["/Applications/ActionHalo Beta.app"])
-        XCTAssertFalse(args[0].contains("%20"))
-    }
-
     func testClosedAttachedMenuIsDetachedEvenAfterMainMenuWasRebuilt() {
         let attachedMenu = NSMenu()
         let rebuiltMenu = NSMenu()

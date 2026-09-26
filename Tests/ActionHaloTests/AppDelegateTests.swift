@@ -3,6 +3,45 @@ import XCTest
 
 @MainActor
 final class AppDelegateTests: XCTestCase {
+    func testRelaunchWaitsForOldProcessAndPreservesLiteralBundlePath() throws {
+        let oldProcess = Process()
+        oldProcess.executableURL = URL(fileURLWithPath: "/bin/cat")
+        let input = Pipe()
+        oldProcess.standardInput = input
+        oldProcess.standardOutput = FileHandle.nullDevice
+        try oldProcess.run()
+        defer {
+            if oldProcess.isRunning { oldProcess.terminate() }
+        }
+
+        let bundlePath = "/Applications/ActionHalo 'literal' $(echo wrong).app"
+        let helper = AppDelegate.relaunchProcess(
+            bundlePath: bundlePath,
+            processIdentifier: oldProcess.processIdentifier,
+            openerPath: "/usr/bin/printf"
+        )
+        let output = Pipe()
+        helper.standardOutput = output
+        let completed = expectation(description: "Relaunch helper finishes after old process exits")
+        helper.terminationHandler = { _ in completed.fulfill() }
+        try helper.run()
+        defer {
+            if helper.isRunning { helper.terminate() }
+        }
+
+        usleep(50_000)
+        XCTAssertTrue(helper.isRunning)
+        oldProcess.terminate()
+        oldProcess.waitUntilExit()
+        wait(for: [completed], timeout: 3)
+        guard !helper.isRunning else { return }
+        XCTAssertEqual(helper.terminationStatus, 0)
+        XCTAssertEqual(
+            String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8),
+            bundlePath
+        )
+    }
+
     func testOnlyCurrentInteractionGenerationCanComplete() {
         XCTAssertTrue(AppDelegate.isInteractionCurrent(
             expectedGeneration: 8,
@@ -12,6 +51,32 @@ final class AppDelegateTests: XCTestCase {
             expectedGeneration: 7,
             currentGeneration: 8
         ))
+    }
+
+    func testPastePopupCompletionRejectsCancelledReplacedAndSupersededRequests() {
+        let requestID = UUID()
+        XCTAssertTrue(AppDelegate.shouldCompletePastePopupRequest(
+            requestID: requestID,
+            currentRequestID: requestID,
+            expectedGeneration: 8,
+            currentGeneration: 8,
+            isCancelled: false
+        ))
+        let invalidRequests: [(UUID?, UInt64, Bool)] = [
+            (nil, 8, false),
+            (UUID(), 8, false),
+            (requestID, 9, false),
+            (requestID, 8, true),
+        ]
+        for (currentRequestID, currentGeneration, isCancelled) in invalidRequests {
+            XCTAssertFalse(AppDelegate.shouldCompletePastePopupRequest(
+                requestID: requestID,
+                currentRequestID: currentRequestID,
+                expectedGeneration: 8,
+                currentGeneration: currentGeneration,
+                isCancelled: isCancelled
+            ))
+        }
     }
 
     func testTerminationRequiresExplicitDiscardWhenPluginEditorsAreDirty() {

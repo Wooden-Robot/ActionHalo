@@ -111,6 +111,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingMenuPresentation: (() -> Void)?
     private var pendingHotkeyFocusTask: Task<Void, Never>?
     private var pendingHotkeyFocusRequestID: UUID?
+    private var pendingPastePopupTask: Task<Void, Never>?
+    private var pendingPastePopupRequestID: UUID?
     private var interactionGeneration: UInt64 = 0
     private let menuActionGate = SingleFireActionGate()
     private var startupPermissionTimer: Timer?
@@ -122,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingPluginInstallPaths: Set<String> = []
     private var pendingPrelaunchPluginURLs: [URL] = []
     private var hasFinishedLaunching = false
+    private var relaunchRequested = false
     
     // Global monitor for clicking outside
     private var globalClickMonitor: Any?
@@ -360,6 +363,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBarController.onEnabledChanged = { [weak self] enabled in
             self?.setEnabled(enabled)
         }
+        statusBarController.onRelaunchRequested = { [weak self] in
+            self?.relaunchRequested = true
+            NSApp.terminate(nil)
+        }
 
         // Check accessibility permission.
         if !AccessibilityManager.shared.ensureAccessibilityPermission() {
@@ -511,6 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @discardableResult
     private func beginNewInteraction() -> UInt64 {
         interactionGeneration &+= 1
+        cancelPendingPastePopupWork()
         pendingHotkeyFocusTask?.cancel()
         pendingHotkeyFocusTask = nil
         pendingHotkeyFocusRequestID = nil
@@ -651,7 +659,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         guard !unsavedEditors.isEmpty else {
-            return .terminateNow
+            return prepareForTermination()
         }
 
         let alert = NSAlert()
@@ -668,6 +676,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hasVisibleUnsavedPluginEditors: true,
             discardConfirmed: discardConfirmed
         ) else {
+            relaunchRequested = false
             sender.activate(ignoringOtherApps: true)
             if let editor = unsavedEditors.first {
                 if editor.isMiniaturized {
@@ -678,11 +687,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return .terminateCancel
         }
 
-        unsavedEditors.forEach { $0.discardUnsavedChanges() }
-        return .terminateNow
+        let reply = prepareForTermination()
+        if reply == .terminateNow {
+            unsavedEditors.forEach { $0.discardUnsavedChanges() }
+        }
+        return reply
+    }
+
+    static func relaunchProcess(
+        bundlePath: String,
+        processIdentifier: pid_t,
+        openerPath: String = "/usr/bin/open"
+    ) -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [
+            "-c",
+            "while kill -0 \"$1\" 2>/dev/null; do sleep 0.1; done; exec \"$2\" \"$3\"",
+            "ActionHalo-relaunch", String(processIdentifier), openerPath, bundlePath
+        ]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        return process
+    }
+
+    private func prepareForTermination() -> NSApplication.TerminateReply {
+        guard relaunchRequested else { return .terminateNow }
+        do {
+            try Self.relaunchProcess(
+                bundlePath: Bundle.main.bundlePath,
+                processIdentifier: ProcessInfo.processInfo.processIdentifier
+            ).run()
+            return .terminateNow
+        } catch {
+            relaunchRequested = false
+            NSAlert(error: error).runModal()
+            return .terminateCancel
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        cancelPendingPastePopupWork()
         pendingHotkeyFocusTask?.cancel()
         pendingHotkeyFocusTask = nil
         pendingHotkeyFocusRequestID = nil
@@ -931,6 +977,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func showPermissionLostAlert() {
+        cancelPendingPastePopupWork()
         TextSelectionMonitor.shared.stopMonitoring()
         
         let alert = NSAlert()
@@ -1060,7 +1107,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let userInfo = notification.userInfo,
               let locationValue = userInfo["mouseLocation"] as? NSValue,
               let processNumber = userInfo["processIdentifier"] as? NSNumber,
-              let focusedElement = Self.accessibilityElement(from: userInfo["focusedElement"]) else {
+              let focusedElement = Self.accessibilityElement(from: userInfo["focusedElement"]),
+              let assessment = userInfo["focusedElementAssessment"] as?
+                AccessibilityManager.FocusedElementAssessment,
+              let windowSnapshot = userInfo["windowSnapshot"] as?
+                TextSelectionMonitor.FrontmostWindowSnapshot,
+              TextSelectionMonitor.shouldPresentEmptyInputPastePopup(assessment: assessment) else {
             return
         }
         let processIdentifier = pid_t(processNumber.int32Value)
@@ -1076,7 +1128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isEnabled: isEnabled,
             frontmostBundleID: frontmostApp?.bundleIdentifier,
             frontmostLocalizedName: frontmostApp?.localizedName,
-            isFocusedSelectionEditable: false
+            isFocusedSelectionEditable: assessment.isSelectionEditable
         ) else {
             return
         }
@@ -1084,7 +1136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mouseLocation = locationValue.pointValue
         currentSelectedText = "" // Empty text because nothing is selected
         
-        let appBundleID = AccessibilityManager.shared.getFocusedAppBundleID()
+        let appBundleID = frontmostApp?.bundleIdentifier
 
         // Find the built-in paste plugin, respecting per-app disable overrides.
         guard let pastePlugin = Self.emptyInputPastePlugin(
@@ -1099,7 +1151,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             at: mouseLocation,
             plugin: pastePlugin,
             targetProcessIdentifier: processIdentifier,
-            targetFocusedElement: focusedElement
+            targetFocusedElement: focusedElement,
+            windowSnapshot: windowSnapshot,
+            focusedElementAssessment: assessment
         )
     }
     
@@ -1407,78 +1461,219 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         at point: NSPoint,
         plugin: Plugin,
         targetProcessIdentifier: pid_t,
-        targetFocusedElement: AXUIElement
+        targetFocusedElement: AXUIElement,
+        windowSnapshot: TextSelectionMonitor.FrontmostWindowSnapshot,
+        focusedElementAssessment: AccessibilityManager.FocusedElementAssessment
     ) {
+        guard let windowID = windowSnapshot.windowID,
+              windowSnapshot.ownerPID == targetProcessIdentifier else { return }
         let targetContext = MenuTargetContext(
             processIdentifier: targetProcessIdentifier,
             focusedElement: targetFocusedElement,
-            windowID: nil,
-            allowsAcquiredSelectionFocusFallback: false
+            windowID: windowID,
+            allowsAcquiredSelectionFocusFallback: false,
+            focusedElementAssessment: focusedElementAssessment
         )
+        let windowConstraint = AccessibilityManager.FocusedWindowConstraint(
+            windowID: windowID,
+            ownerPID: windowSnapshot.ownerPID,
+            bounds: windowSnapshot.bounds
+        )
+        let requestID = UUID()
+        let generation = interactionGeneration
 
-        scheduleMenuPresentation { [weak self] in
-            guard let self else { return }
-            guard self.currentContextAllowsMenuPresentation(
-                expectedProcessIdentifier: targetContext.processIdentifier,
-                expectedFocusedElement: targetContext.focusedElement
-            ) else {
-                return
-            }
+        scheduleMenuPresentation(pastePopupRequestID: requestID) { [weak self] in
+            guard let self, self.isCurrentPastePopupRequest(requestID, generation: generation) else { return }
+            self.pendingPastePopupTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.finishPastePopupWork(requestID) }
+                guard let currentFocusedElement = await AccessibilityManager.shared.getFocusedElementWithRetry(
+                    expectedProcessIdentifier: targetContext.processIdentifier,
+                    windowConstraint: windowConstraint
+                ), self.isCurrentPastePopupRequest(requestID, generation: generation),
+                   TextSelectionMonitor.shouldPresentEmptyInputPastePopup(assessment: focusedElementAssessment),
+                   self.pastePopupContextAllowsAction(
+                    plugin: plugin,
+                    targetContext: targetContext,
+                    currentFocusedElement: currentFocusedElement,
+                    assessment: focusedElementAssessment,
+                    windowSnapshot: windowSnapshot
+                   ) else { return }
 
-            let window = PastePopupWindow()
-            window.onPasteClicked = { [weak self] in
-                guard let self, self.menuActionGate.consume() else { return }
-                self.dismissAllMenus {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        let currentFocusedElement = AccessibilityManager.shared.getFocusedElement(
-                            expectedProcessIdentifier: targetContext.processIdentifier
-                        )
-                        guard Self.shouldExecuteMenuAction(
-                            expectedProcessIdentifier: targetContext.processIdentifier,
-                            currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
-                            requiresOriginalFocusedElement: true,
-                            requiresEditableTarget: true,
-                            focusedElementMatches: AccessibilityManager.areSameAccessibilityElement(
-                                targetContext.focusedElement,
-                                currentFocusedElement
-                            ),
-                            isFocusedSelectionEditable: currentFocusedElement.map {
-                                AccessibilityManager.shared.isSelectionEditable($0)
-                            } ?? false
-                        ) else {
-                            NSLog("[ActionHalo] Paste cancelled because the original editable target changed.")
-                            return
-                        }
-                        PluginManager.shared.executePlugin(
-                            plugin,
-                            with: "",
-                            targetProcessIdentifier: targetContext.processIdentifier,
-                            targetFocusedElement: targetContext.focusedElement
-                        )
-                    }
+                let window = PastePopupWindow()
+                window.onPasteClicked = { [weak self, weak window] in
+                    guard let self, let window, self.pastePopupWindow === window,
+                          self.menuActionGate.consume() else { return }
+                    self.executePastePopupAction(
+                        plugin: plugin,
+                        targetContext: targetContext,
+                        windowSnapshot: windowSnapshot
+                    )
                 }
-            }
+                window.onClearClicked = { [weak self, weak window] in
+                    guard let self, let window, self.pastePopupWindow === window,
+                          self.menuActionGate.consume() else { return }
+                    NSPasteboard.general.clearContents()
+                    self.dismissAllMenus()
+                }
 
-            window.onClearClicked = { [weak self] in
-                guard let self, self.menuActionGate.consume() else { return }
-                NSPasteboard.general.clearContents()
-                self.dismissAllMenus()
+                self.menuActionGate.reset()
+                window.show(at: point)
+                self.pastePopupWindow = window
             }
-
-            self.menuActionGate.reset()
-            window.show(at: point)
-            self.pastePopupWindow = window
-            self.setupGlobalClickMonitor()
         }
     }
 
-    private func scheduleMenuPresentation(_ presentation: @escaping () -> Void) {
+    private func executePastePopupAction(
+        plugin: Plugin,
+        targetContext: MenuTargetContext,
+        windowSnapshot: TextSelectionMonitor.FrontmostWindowSnapshot
+    ) {
+        guard let windowID = windowSnapshot.windowID else { return }
+        cancelPendingPastePopupWork()
+        let requestID = UUID()
+        // Clicking the popup itself starts a physical interaction. Bind execution
+        // to that click, rather than to the older input-field click that showed it.
+        let generation = interactionGeneration
+        pendingPastePopupRequestID = requestID
+        let windowConstraint = AccessibilityManager.FocusedWindowConstraint(
+            windowID: windowID,
+            ownerPID: windowSnapshot.ownerPID,
+            bounds: windowSnapshot.bounds
+        )
+        dismissAllMenus(completion: { [weak self] in
+            guard let self, self.isCurrentPastePopupRequest(requestID, generation: generation) else { return }
+            self.pendingPastePopupTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                defer { self.finishPastePopupWork(requestID) }
+                do {
+                    try await Task<Never, Never>.sleep(nanoseconds: 50_000_000)
+                } catch {
+                    return
+                }
+                guard self.isCurrentPastePopupRequest(requestID, generation: generation) else { return }
+                let assessedFocus = await AccessibilityManager.shared.resolveAssessedFocusedElementWithRetry(
+                    expectedProcessIdentifier: targetContext.processIdentifier,
+                    windowConstraint: windowConstraint,
+                    bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+                    forEmptyInputClick: true
+                )
+                guard self.isCurrentPastePopupRequest(requestID, generation: generation),
+                      let assessedFocus,
+                      self.pastePopupContextAllowsAction(
+                        plugin: plugin,
+                        targetContext: targetContext,
+                        currentFocusedElement: assessedFocus.focusedElement,
+                        assessment: assessedFocus.assessment,
+                        windowSnapshot: windowSnapshot
+                      ) else { return }
+                PluginManager.shared.executePlugin(
+                    plugin,
+                    with: "",
+                    targetProcessIdentifier: targetContext.processIdentifier,
+                    targetFocusedElement: targetContext.focusedElement
+                )
+            }
+        }, cancelPendingPopupWork: false)
+    }
+
+    private func pastePopupContextAllowsAction(
+        plugin: Plugin,
+        targetContext: MenuTargetContext,
+        currentFocusedElement: AXUIElement,
+        assessment: AccessibilityManager.FocusedElementAssessment,
+        windowSnapshot: TextSelectionMonitor.FrontmostWindowSnapshot
+    ) -> Bool {
+        let frontmostApp = NSWorkspace.shared.frontmostApplication
+        guard assessment.isEditableTextInput == true,
+              !AccessibilityManager.shouldSuppressCopyFallback(
+                focusedElementAssessment: assessment.protection,
+                secureEventInputEnabled: AccessibilityManager.shared.isSecureEventInputEnabled(),
+                accessibilityEnabled: AccessibilityManager.shared.isAccessibilityEnabled,
+                allowMissingFocusedElement: false
+              ), Self.shouldExecuteMenuAction(
+                expectedProcessIdentifier: targetContext.processIdentifier,
+                currentProcessIdentifier: frontmostApp?.processIdentifier,
+                requiresOriginalFocusedElement: true,
+                requiresEditableTarget: true,
+                focusedElementMatches: AccessibilityManager.areSameAccessibilityElement(
+                    targetContext.focusedElement, currentFocusedElement
+                ),
+                isFocusedSelectionEditable: assessment.isSelectionEditable
+              ), Self.shouldAllowMenuPresentation(
+                isEnabled: isEnabled,
+                frontmostBundleID: frontmostApp?.bundleIdentifier,
+                frontmostLocalizedName: frontmostApp?.localizedName,
+                isFocusedSelectionEditable: assessment.isSelectionEditable
+              ), Self.emptyInputPastePlugin(
+                from: PluginManager.shared.plugins,
+                appBundleID: frontmostApp?.bundleIdentifier
+              )?.id == plugin.id else { return false }
+        return TextSelectionMonitor.focusedWindowRetryDisposition(
+            capturedWindow: windowSnapshot,
+            currentTopmostWindow: TextSelectionMonitor.currentFrontmostWindowSnapshot(
+                frontmostProcessID: frontmostApp?.processIdentifier
+            ),
+            accessibilityWindowMatches: true
+        ) == .accept
+    }
+
+    nonisolated static func shouldCompletePastePopupRequest(
+        requestID: UUID,
+        currentRequestID: UUID?,
+        expectedGeneration: UInt64,
+        currentGeneration: UInt64,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled && requestID == currentRequestID && isInteractionCurrent(
+            expectedGeneration: expectedGeneration,
+            currentGeneration: currentGeneration
+        )
+    }
+
+    private func isCurrentPastePopupRequest(_ requestID: UUID, generation: UInt64) -> Bool {
+        isEnabled && Self.shouldCompletePastePopupRequest(
+            requestID: requestID,
+            currentRequestID: pendingPastePopupRequestID,
+            expectedGeneration: generation,
+            currentGeneration: interactionGeneration,
+            isCancelled: Task.isCancelled
+        )
+    }
+
+    private func cancelPendingPastePopupWork() {
+        pendingPastePopupTask?.cancel()
+        pendingPastePopupTask = nil
+        pendingPastePopupRequestID = nil
+        if radialMenuWindow == nil, pastePopupWindow == nil {
+            removeGlobalClickMonitor()
+        }
+    }
+
+    private func finishPastePopupWork(_ requestID: UUID) {
+        guard pendingPastePopupRequestID == requestID else { return }
+        pendingPastePopupTask = nil
+        pendingPastePopupRequestID = nil
+        if radialMenuWindow == nil, pastePopupWindow == nil {
+            removeGlobalClickMonitor()
+        }
+    }
+
+    private func scheduleMenuPresentation(
+        pastePopupRequestID: UUID? = nil,
+        _ presentation: @escaping () -> Void
+    ) {
         // The newest hotkey/selection wins while an older panel is fading out.
+        cancelPendingPastePopupWork()
+        pendingPastePopupRequestID = pastePopupRequestID
+        if pastePopupRequestID != nil {
+            setupGlobalClickMonitor()
+        }
         pendingHotkeyFocusTask?.cancel()
         pendingHotkeyFocusTask = nil
         pendingHotkeyFocusRequestID = nil
         pendingMenuPresentation = presentation
-        dismissAllMenus(cancelPendingPresentation: false)
+        dismissAllMenus(cancelPendingPresentation: false, cancelPendingPopupWork: false)
     }
 
     private func presentPendingMenuIfNeeded() {
@@ -1489,8 +1684,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func dismissAllMenus(
         completion: (() -> Void)? = nil,
-        cancelPendingPresentation: Bool = true
+        cancelPendingPresentation: Bool = true,
+        cancelPendingPopupWork: Bool = true
     ) {
+        if cancelPendingPopupWork {
+            cancelPendingPastePopupWork()
+        }
         if cancelPendingPresentation {
             pendingMenuPresentation = nil
         }
@@ -1500,7 +1699,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let popupWindow = pastePopupWindow
         radialMenuWindow = nil
         pastePopupWindow = nil
-        removeGlobalClickMonitor()
+        // Keep outside-click/key cancellation alive while an approved paste is
+        // fading out or validating its target asynchronously.
+        if cancelPendingPopupWork || pendingPastePopupRequestID == nil {
+            removeGlobalClickMonitor()
+        }
 
         let dismissCount = (popupWindow == nil ? 0 : 1) + (radialWindow == nil ? 0 : 1)
         guard dismissCount > 0 else {
