@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.3.40
+
+- 普通点击检测、粘贴弹窗展示及粘贴前的辅助功能校验改为异步，避免慢速 AX 查询阻塞主线程；保留焦点、窗口与安全检查，并丢弃取消或过期的结果。
+- 修复大容量剪贴板恢复后依赖临时文件和应用进程、退出后可能丢失内容的问题。
+- 插件编辑保留原脚本路径并避免覆盖其他文件，关闭编辑器时提示未保存的更改；热键替换失败时保留原快捷键，重启等待旧进程确认退出。
+
+- Moved ordinary-click detection, paste-popup presentation, and pre-paste Accessibility validation off the main actor so slow AX queries do not block the UI. Focus, window, and protection checks remain in place, and cancelled or stale results are discarded.
+- Fixed restored large clipboard contents depending on temporary files and the app process, which could make them unavailable after the app exited.
+- Plugin editing preserves existing script paths, avoids overwriting unrelated files, and prompts before discarding unsaved changes. Failed hotkey replacements retain the working shortcut, and relaunch waits for the old process to exit after termination is approved.
+
 ## v0.3.39
 
 - 修复正常文本区域因窗口、应用祖先节点被误判而反复等待的问题；选区与拖选端点精确匹配时立即返回，并限制可选位置查询的等待时间。
