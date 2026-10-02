@@ -49,6 +49,11 @@ final class HotkeyManagerTests: GlobalStateTestCase {
 
             XCTAssertTrue(desc.contains("A"))
             XCTAssertTrue(desc.contains("⌘") || desc.contains("⇧") || desc.contains("⌥") || desc.contains("⌃"))
+
+            for (keyCode, keyName): (UInt32, String) in [(0x7A, "F1"), (0x5A, "F20"), (0x18, "="), (0x12, "1")] {
+                manager.hotkey = (keyCode, UInt32(controlKey))
+                XCTAssertEqual(manager.hotkeyDescription, "⌃" + keyName)
+            }
         }
     }
 

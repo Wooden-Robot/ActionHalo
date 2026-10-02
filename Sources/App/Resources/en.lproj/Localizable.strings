@@ -358,3 +358,6 @@
 "preparing the ActionHalo plugin folder" = "preparing the ActionHalo plugin folder";
 "migrating the login item" = "migrating the login item";
 "recording migration completion" = "recording migration completion";
+"ENTER · SELECT  ESC · CLOSE" = "ENTER · SELECT  ESC · CLOSE";
+"Use arrow keys or Tab to choose an action, Enter to run it, and Escape to close." = "Use arrow keys or Tab to choose an action, Enter to run it, and Escape to close.";
+"Another plugin operation is in progress. Please try again shortly." = "Another plugin operation is in progress. Please try again shortly.";

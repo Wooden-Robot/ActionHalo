@@ -1,4 +1,5 @@
-import Foundation
+import Cocoa
+import ApplicationServices
 import XCTest
 @testable import ActionHalo
 
@@ -106,6 +107,177 @@ final class TelegramSearchTests: XCTestCase {
             )
         )
         XCTAssertEqual(port.openCallCount, 0)
+    }
+
+    @MainActor
+    func testRecognizedFocusedSearchFieldAllowsQueryReplacement() {
+        let searchField = AXUIElementCreateApplication(101)
+        var text = "previous search"
+
+        let delivered = MacOSTelegramSearchAdapter.withVerifiedSearchField(
+            capturedField: searchField,
+            focusedField: searchField,
+            isWritable: true,
+            score: 100
+        ) { _ in
+            text = "needle"
+            return true
+        }
+
+        XCTAssertTrue(delivered)
+        XCTAssertEqual(text, "needle")
+    }
+
+    @MainActor
+    func testWritableComposerDoesNotAllowQueryReplacement() {
+        let composer = AXUIElementCreateApplication(102)
+        var draft = "unsent message"
+
+        let delivered = MacOSTelegramSearchAdapter.withVerifiedSearchField(
+            capturedField: composer,
+            focusedField: composer,
+            isWritable: true,
+            score: 0
+        ) { _ in
+            draft = "needle"
+            return true
+        }
+
+        XCTAssertFalse(delivered)
+        XCTAssertEqual(draft, "unsent message")
+    }
+
+    @MainActor
+    func testFocusChangeDuringWaitStopsQueryReplacement() async {
+        let searchField = AXUIElementCreateApplication(101)
+        let composer = AXUIElementCreateApplication(102)
+        var focusedField = searchField
+        var didWrite = false
+        XCTAssertTrue(MacOSTelegramSearchAdapter.withVerifiedSearchField(
+            capturedField: searchField, focusedField: focusedField, isWritable: true, score: 100,
+            operation: { _ in true }
+        ))
+
+        await Task.yield()
+        focusedField = composer
+        let delivered = MacOSTelegramSearchAdapter.withVerifiedSearchField(
+            capturedField: searchField, focusedField: focusedField, isWritable: true, score: 100
+        ) { _ in
+            didWrite = true
+            return true
+        }
+
+        XCTAssertFalse(delivered)
+        XCTAssertFalse(didWrite)
+    }
+
+    @MainActor
+    func testFocusChangeAfterDeliveryPreservesAppliedEffect() async {
+        let port = ScriptedTelegramSearchPort(
+            deliveryResults: [
+                .accessibility: .delivered,
+                .unicodeEvent: .failed(.targetChanged),
+            ],
+            readbacks: [nil]
+        )
+
+        let result = await TelegramSearch(port: port).search("needle")
+
+        XCTAssertEqual(result, .failure(TelegramSearchFailure(
+            stage: .input, reason: .targetChanged, effect: .queryMayHaveBeenApplied
+        )))
+        XCTAssertEqual(port.attemptedMethods, [.accessibility, .unicodeEvent])
+    }
+
+    @MainActor
+    func testClipboardContentionAfterPastePreservesAppliedEffect() async {
+        let port = ScriptedTelegramSearchPort(deliveryResults: [
+            .clipboard: .failed(.clipboardContended, effect: .queryMayHaveBeenApplied),
+        ])
+
+        let result = await TelegramSearch(port: port).search("needle")
+
+        XCTAssertEqual(result, .failure(TelegramSearchFailure(
+            stage: .input, reason: .clipboardContended, effect: .queryMayHaveBeenApplied
+        )))
+    }
+
+    @MainActor
+    func testQueryReadbackRestoresSnapshotAfterSingleCopy() throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
+        let initialState = pasteboardState(pasteboard)
+        let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(from: pasteboard))
+        defer { snapshot.discardTemporaryFiles() }
+
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("needle", forType: .string))
+        let copiedState = pasteboardState(pasteboard)
+        let readback = MacOSTelegramSearchAdapter.finishQueryReadback(
+            snapshot: snapshot, pasteboard: pasteboard,
+            initialState: initialState, copiedState: copiedState
+        )
+
+        XCTAssertEqual(readback, "needle")
+        XCTAssertEqual(pasteboard.string(forType: .string), "original clipboard")
+    }
+
+    @MainActor
+    func testQueryReadbackPreservesNewerClipboardWriteBeforeObservation() throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
+        let initialState = pasteboardState(pasteboard)
+        let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(from: pasteboard))
+        defer { snapshot.discardTemporaryFiles() }
+
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("needle", forType: .string))
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("new user copy", forType: .string))
+        let copiedState = pasteboardState(pasteboard)
+        let readback = MacOSTelegramSearchAdapter.finishQueryReadback(
+            snapshot: snapshot, pasteboard: pasteboard,
+            initialState: initialState, copiedState: copiedState
+        )
+
+        XCTAssertNil(readback)
+        XCTAssertEqual(pasteboard.string(forType: .string), "new user copy")
+        XCTAssertEqual(pasteboard.changeCount, copiedState.changeCount)
+    }
+
+    @MainActor
+    func testQueryReadbackPreservesNewerClipboardWriteAfterObservation() throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
+        let initialState = pasteboardState(pasteboard)
+        let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(from: pasteboard))
+        defer { snapshot.discardTemporaryFiles() }
+
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("needle", forType: .string))
+        let copiedState = pasteboardState(pasteboard)
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("new user copy", forType: .string))
+        let currentState = pasteboardState(pasteboard)
+        let readback = MacOSTelegramSearchAdapter.finishQueryReadback(
+            snapshot: snapshot, pasteboard: pasteboard,
+            initialState: initialState, copiedState: copiedState
+        )
+
+        XCTAssertNil(readback)
+        XCTAssertEqual(pasteboardState(pasteboard), currentState)
+    }
+
+    private func pasteboardState(_ pasteboard: NSPasteboard) -> AccessibilityManager.PasteboardState {
+        AccessibilityManager.PasteboardState(
+            changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
+        )
     }
 }
 

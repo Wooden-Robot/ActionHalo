@@ -15,6 +15,98 @@ final class RadialMenuWindowTests: GlobalStateTestCase {
         super.tearDown()
     }
 
+    func testOnlyExplicitKeyboardMenusRequestKeyFocus() throws {
+        UserDefaults.standard.set(false, forKey: "WheelBackdropEnabled")
+        for keyboardNavigation in [false, true] {
+            let window = RadialMenuWindow()
+            window.showMenu(
+                at: NSPoint(x: 400, y: 300),
+                items: makeItems(count: 4),
+                selectedText: "hello",
+                keyboardNavigation: keyboardNavigation
+            )
+            XCTAssertEqual(window.canBecomeKey, keyboardNavigation)
+            XCTAssertFalse(window.canBecomeMain)
+            XCTAssertTrue(window.styleMask.contains(.nonactivatingPanel))
+            if keyboardNavigation {
+                let menu = try XCTUnwrap(renderedMenuView(in: window))
+                XCTAssertTrue(window.firstResponder === menu)
+            }
+            window.hideMenu()
+            XCTAssertFalse(window.canBecomeKey)
+        }
+    }
+
+    func testKeyboardSelectionReleasesFocusBeforeActionCallback() throws {
+        UserDefaults.standard.set(true, forKey: "WheelBackdropEnabled")
+        let window = RadialMenuWindow()
+        window.showMenu(
+            at: NSPoint(x: 400, y: 300),
+            items: makeItems(count: 4),
+            selectedText: "hello",
+            keyboardNavigation: true
+        )
+        let menu = try XCTUnwrap(renderedMenuView(in: window))
+        let selected = expectation(description: "Action runs after keyboard focus is released")
+        var callbackRan = false
+        window.onItemSelected = { _ in
+            callbackRan = true
+            XCTAssertFalse(window.isVisible)
+            XCTAssertFalse(window.canBecomeKey)
+            selected.fulfill()
+        }
+
+        menu.onItemSelected?(try XCTUnwrap(menu.menuItems.first))
+        XCTAssertFalse(window.isVisible, "Do not keep key focus during the backdrop fade-out")
+        XCTAssertFalse(callbackRan, "Allow one main-loop turn for source focus to be published")
+        wait(for: [selected], timeout: 1)
+        window.hideMenu()
+    }
+
+    func testKeyboardPaginationKeepsMenuFocused() throws {
+        UserDefaults.standard.set(6, forKey: "maxRadialMenuItems")
+        UserDefaults.standard.set(false, forKey: "WheelBackdropEnabled")
+        let window = RadialMenuWindow()
+        window.showMenu(
+            at: NSPoint(x: 400, y: 300),
+            items: makeItems(count: 10),
+            selectedText: "hello",
+            keyboardNavigation: true
+        )
+        let menu = try XCTUnwrap(renderedMenuView(in: window))
+        menu.onItemSelected?(try XCTUnwrap(menu.menuItems.last))
+        XCTAssertTrue(matchesPagePrev(menu.menuItems.first))
+        XCTAssertTrue(window.canBecomeKey)
+        XCTAssertTrue(window.firstResponder === menu)
+        XCTAssertTrue(window.isVisible)
+        menu.onItemSelected?(try XCTUnwrap(menu.menuItems.first))
+        XCTAssertEqual(menu.menuItems.first?.title, "Item 1")
+        XCTAssertTrue(window.canBecomeKey)
+        XCTAssertTrue(window.firstResponder === menu)
+        window.hideMenu()
+    }
+
+    func testNewPresentationCancelsDeferredKeyboardSelection() throws {
+        UserDefaults.standard.set(false, forKey: "WheelBackdropEnabled")
+        let window = RadialMenuWindow()
+        let items = makeItems(count: 4)
+        window.showMenu(
+            at: NSPoint(x: 400, y: 300), items: items, selectedText: "old",
+            keyboardNavigation: true
+        )
+        let menu = try XCTUnwrap(renderedMenuView(in: window))
+        var selectionCount = 0
+        window.onItemSelected = { _ in selectionCount += 1 }
+        menu.onItemSelected?(try XCTUnwrap(menu.menuItems.first))
+        window.showMenu(at: NSPoint(x: 400, y: 300), items: items, selectedText: "new")
+        let nextTurn = expectation(description: "Deferred selection has been checked")
+        DispatchQueue.main.async { nextTurn.fulfill() }
+        wait(for: [nextTurn], timeout: 1)
+        XCTAssertEqual(selectionCount, 0)
+        XCTAssertFalse(window.canBecomeKey)
+        window.hideMenu()
+    }
+
     func testShowMenuWithoutPaginationKeepsOriginalItems() {
         UserDefaults.standard.set(6, forKey: "maxRadialMenuItems")
 

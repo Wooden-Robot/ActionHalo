@@ -138,6 +138,35 @@ final class PluginEditorWindowTests: XCTestCase {
     }
 
     @MainActor
+    func testSwitchingToNativeActionsAndBackPreservesUnsavedScript() throws {
+        let editor = PluginEditorWindow()
+        defer { editor.close() }
+        let contentView = try XCTUnwrap(editor.contentView)
+        let typePopUp = try XCTUnwrap(contentView.subviews.compactMap { $0 as? NSPopUpButton }
+            .first { $0.itemTitles.contains("Simulate Key Combo".localized) })
+        let scrollView = try XCTUnwrap(contentView.subviews.compactMap { $0 as? NSScrollView }.first)
+        let textView = try XCTUnwrap(scrollView.documentView as? NSTextView)
+
+        typePopUp.selectItem(at: 1)
+        XCTAssertTrue(typePopUp.sendAction(typePopUp.action, to: typePopUp.target))
+        textView.string = "echo unsaved-work"
+        editor.textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
+
+        for nativeIndex in 4...6 {
+            typePopUp.selectItem(at: nativeIndex)
+            XCTAssertTrue(typePopUp.sendAction(typePopUp.action, to: typePopUp.target))
+            XCTAssertTrue(scrollView.isHidden)
+
+            typePopUp.selectItem(at: 1)
+            XCTAssertTrue(typePopUp.sendAction(typePopUp.action, to: typePopUp.target))
+            XCTAssertFalse(scrollView.isHidden)
+            XCTAssertTrue(textView.isEditable)
+            XCTAssertEqual(textView.string, "echo unsaved-work")
+            XCTAssertTrue(editor.hasUnsavedChanges)
+        }
+    }
+
+    @MainActor
     func testShortcutRecorderReplacesExistingCombinationWhenRerecorded() throws {
         let recorder = ShortcutRecorderField(frame: .zero)
         recorder.stringValue = "Command+Q"
@@ -151,6 +180,61 @@ final class PluginEditorWindowTests: XCTestCase {
         recorder.keyDown(with: event)
 
         XCTAssertEqual(recorder.rawComboString, "Option+R")
+    }
+
+    @MainActor
+    func testRecordedShortcutsRoundTripThroughSavedAction() throws {
+        let recorder = ShortcutRecorderField(frame: .zero)
+        for (characters, keyCode, expectedKey): (String, UInt16, String) in [
+            ("+", 0x18, "="), ("?", 0x2C, "/"), ("!", 0x12, "1"),
+            ("K", 0x28, "k"), (" ", 0x31, "space"), ("\u{1B}", 0x35, "esc")
+        ] {
+            XCTAssertTrue(recorder.becomeFirstResponder())
+            recorder.keyDown(with: try makeKeyDownEvent(
+                modifiers: [.command, .shift], characters: characters, keyCode: keyCode
+            ))
+            let data = try JSONSerialization.data(withJSONObject:
+                PluginEditorWindow.keyComboActionUpdates(from: recorder.rawComboString)
+            )
+            let config = try JSONDecoder().decode(PluginActionConfig.self, from: data)
+            let combo = try XCTUnwrap(PluginKeyCombo(key: config.key, modifiers: config.modifiers))
+            XCTAssertEqual(config.key, expectedKey)
+            XCTAssertEqual(combo.keyCode, keyCode)
+            XCTAssertEqual(combo.modifierFlags, [.maskCommand, .maskShift])
+            XCTAssertNotNil(PluginAction(config: config, allowNativeCommands: false))
+        }
+
+        let savedCombo = recorder.rawComboString
+        recorder.keyDown(with: try makeKeyDownEvent(
+            modifiers: [.command], characters: "x", keyCode: 0xFF // Unknown virtual key code.
+        ))
+        XCTAssertEqual(recorder.rawComboString, savedCombo)
+    }
+
+    @MainActor
+    func testFunctionKeysCanBeRecordedAndExecuted() throws {
+        let keyCodes: [UInt16] = [
+            0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D,
+            0x67, 0x6F, 0x69, 0x6B, 0x71, 0x6A, 0x40, 0x4F, 0x50, 0x5A
+        ]
+        for globalHotkey in [false, true] {
+            for (index, keyCode) in keyCodes.enumerated() {
+                let recorder = ShortcutRecorderField(frame: .zero)
+                recorder.requiresGlobalHotkeyModifier = globalHotkey
+                var recordedCode: UInt32?
+                recorder.onKeyComboRecorded = { keyCode, _ in recordedCode = keyCode }
+                XCTAssertTrue(recorder.becomeFirstResponder())
+                recorder.keyDown(with: try makeKeyDownEvent(
+                    modifiers: [.control],
+                    characters: String(UnicodeScalar(0xF704 + index)!), keyCode: keyCode
+                ))
+
+                XCTAssertEqual(recordedCode, UInt32(keyCode))
+                XCTAssertEqual(recorder.rawComboString, "Control+F\(index + 1)")
+                let action = PluginEditorWindow.keyComboActionUpdates(from: recorder.rawComboString)
+                XCTAssertEqual(PluginKeyCombo(key: action["key"] as? String, modifiers: ["Control"])?.keyCode, keyCode)
+            }
+        }
     }
 
     @MainActor
@@ -174,6 +258,12 @@ final class PluginEditorWindowTests: XCTestCase {
 
         XCTAssertEqual(recordedKeyCode, 0x28)
         XCTAssertEqual(recordedModifiers, 0x1100)
+
+        recorder.keyDown(with: try makeKeyDownEvent(
+            modifiers: [.command, .shift], characters: "+", keyCode: 0x18
+        ))
+        XCTAssertEqual(recordedKeyCode, 0x18)
+        XCTAssertEqual(recordedModifiers, 0x0300)
     }
 
     func testValidationRejectsReservedCorePluginIdentifiersForNewPlugins() {
@@ -701,5 +791,88 @@ final class PluginEditorWindowTests: XCTestCase {
                 keyCode: keyCode
             )
         )
+    }
+}
+
+final class PluginEditorPersistenceTests: GlobalStateTestCase {
+    private var rootURL: URL!
+    private var previousUserPluginsURL: URL?
+    private var previousPlugins: [Plugin] = []
+
+    override func setUp() {
+        super.setUp()
+        rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        previousUserPluginsURL = PluginManager.shared.userPluginsDirectoryOverride
+        previousPlugins = PluginManager.shared.plugins
+        PluginManager.shared.userPluginsDirectoryOverride = rootURL
+    }
+
+    override func tearDown() {
+        PluginManager.shared.userPluginsDirectoryOverride = previousUserPluginsURL
+        PluginManager.shared.plugins = previousPlugins
+        try? FileManager.default.removeItem(at: rootURL)
+        super.tearDown()
+    }
+
+    @MainActor
+    func testSavingBlocksDeletionAndKeepsLaterDraftEdits() throws {
+        let (editor, plugin, saveButton, deleteButton) = try makeEditor()
+        defer { editor.close() }
+        let reload = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: PluginManager.shared)
+
+        XCTAssertTrue(saveButton.sendAction(saveButton.action, to: saveButton.target))
+        XCTAssertFalse(saveButton.isEnabled)
+        XCTAssertFalse(deleteButton.isEnabled)
+        XCTAssertFalse(editor.confirmClose { true })
+        editor.deletePluginAfterConfirmation(plugin)
+        editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+
+        wait(for: [reload], timeout: 5)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: plugin.directoryURL.path))
+        XCTAssertTrue(saveButton.isEnabled)
+        XCTAssertTrue(deleteButton.isEnabled)
+        XCTAssertTrue(editor.hasUnsavedChanges)
+    }
+
+    @MainActor
+    func testDeletingBlocksSavingAndRepeatedDeletion() throws {
+        let (editor, plugin, saveButton, deleteButton) = try makeEditor()
+        defer { editor.close() }
+        editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        let reload = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: PluginManager.shared)
+
+        editor.deletePluginAfterConfirmation(plugin)
+        XCTAssertFalse(saveButton.isEnabled)
+        XCTAssertFalse(deleteButton.isEnabled)
+        XCTAssertFalse(editor.confirmClose { true })
+        XCTAssertTrue(saveButton.sendAction(saveButton.action, to: saveButton.target))
+        editor.deletePluginAfterConfirmation(plugin)
+
+        wait(for: [reload], timeout: 5)
+        // The reload and deletion completion are separately queued on the main actor.
+        let deadline = Date().addingTimeInterval(5)
+        while !editor.confirmClose(discardChanges: { false }), Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: plugin.directoryURL.path))
+        XCTAssertFalse(editor.hasUnsavedChanges)
+        XCTAssertTrue(editor.confirmClose { false })
+    }
+
+    @MainActor
+    private func makeEditor() throws -> (PluginEditorWindow, Plugin, NSButton, NSButton) {
+        let packageURL = rootURL.appendingPathComponent("Persistence.actionhaloext")
+        try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
+        try #"{"name":"Persistence","identifier":"com.test.editor-persistence","action":{"type":"copy"}}"#
+            .write(to: packageURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+        let plugin = try XCTUnwrap(PluginLoader.load(from: packageURL))
+        PluginManager.shared.plugins = [plugin]
+        let editor = PluginEditorWindow(plugin: plugin)
+        let buttons = try XCTUnwrap(editor.contentView).subviews.compactMap { $0 as? NSButton }
+        let saveButton = try XCTUnwrap(buttons.first { $0.title == "Save".localized })
+        let deleteButton = try XCTUnwrap(buttons.first { $0.title == "Delete".localized })
+        return (editor, plugin, saveButton, deleteButton)
     }
 }

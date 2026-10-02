@@ -512,6 +512,14 @@ final class AccessibilityManager {
         var selectionMatchesGesture = false
         var isEditableTextInput: Bool? = nil
 
+        func canAcceptSelectionEarly(forEmptyInputClick: Bool, acceptExistingSelection: Bool) -> Bool {
+            forEmptyInputClick || selectionMatchesGesture || (
+                acceptExistingSelection && protection == .unprotected &&
+                selectionSnapshot?.canReadSelectedTextViaAccessibility == true &&
+                selectionSnapshot?.usableText != nil
+            )
+        }
+
         var hasConfirmedEmptySelection: Bool {
             guard let selectionSnapshot else { return false }
             if selectionSnapshot.hasReadableSelectedTextAttribute {
@@ -968,20 +976,32 @@ final class AccessibilityManager {
             
             // Wait for Electron/Chromium/WebView apps to detect the event, process the DOM,
             // and asynchronously write to the pasteboard.
-            var copyObservation = Self.pollPasteboardForCopiedText(
-                pasteboard: pasteboard,
-                initialState: initialState,
-                attempts: Self.copyFallbackPollAttempts
-            )
-
-            if !copyObservation.hasFreshCopiedText {
-                copyObservation = Self.pollPasteboardForCopiedText(
-                    pasteboard: pasteboard,
-                    initialState: initialState,
-                    startingState: copyObservation.state,
-                    attempts: Self.copyFallbackLatePollAttempts
+            let requestIsActive = { coordinator.isRequestActive(requestID) }
+            let canClaimClipboardChange = { (state: PasteboardState) in
+                Self.copyFallbackContextIsValid(
+                    coordinator: coordinator,
+                    requestID: requestID,
+                    expectedProcessIdentifier: expectedProcessIdentifier,
+                    expectedFocusedElement: transferredExpectedFocusedElement?.value,
+                    allowMissingFocusedElement: requestAllowsMissingFocusedElement,
+                    expectedBundleID: expectedBundleID,
+                    expectedWindowID: expectedWindowID,
+                    allowsAcquiredSelectionFocusFallback:
+                        allowsAcquiredSelectionFocusFallback && Self.shouldTreatCopiedTextAsFresh(
+                            initialChangeCount: initialState.changeCount,
+                            observedChangeCount: state.changeCount,
+                            initialString: initialState.string,
+                            observedString: state.string
+                        )
                 )
             }
+            let copyObservation = Self.pollPasteboardForCopiedText(
+                pasteboard: pasteboard,
+                initialState: initialState,
+                attempts: Self.copyFallbackPollAttempts + Self.copyFallbackLatePollAttempts,
+                requestIsActive: requestIsActive,
+                canClaimClipboardChange: canClaimClipboardChange
+            )
             
             // Restore only a single, still-current pasteboard generation. macOS
             // exposes no writer identity, so multi-generation clipboard-manager
@@ -1428,7 +1448,7 @@ final class AccessibilityManager {
         return contents.isEmpty || pasteboard.writeObjects(contents)
     }
 
-    private struct CopyObservation {
+    struct CopyObservation {
         let state: PasteboardState
         let hasFreshCopiedText: Bool
 
@@ -1465,23 +1485,51 @@ final class AccessibilityManager {
         )
     }
 
-    nonisolated private static func pollPasteboardForCopiedText(
+    nonisolated static func pollPasteboardForCopiedText(
         pasteboard: NSPasteboard,
         initialState: PasteboardState,
-        startingState: PasteboardState? = nil,
-        attempts: Int = copyFallbackPollAttempts
+        attempts: Int = copyFallbackPollAttempts,
+        requestIsActive: () -> Bool,
+        canClaimClipboardChange: (PasteboardState) -> Bool
     ) -> CopyObservation {
-        var latestState = startingState ?? initialState
+        var latestState = initialState
+        var unclaimedState: PasteboardState?
         var stableFreshCandidate = StableFreshPasteboardCandidate()
 
         for attempt in 0...attempts {
+            guard requestIsActive() else { break }
             if attempt > 0 {
                 usleep(useconds_t(copyFallbackPollInterval * 1_000_000))
             }
+            guard requestIsActive() else { break }
             guard let state = stablePasteboardState(from: pasteboard) else {
                 continue
             }
+            // Reading a lazy pasteboard provider can outlive cancellation. A
+            // new generation belongs to this request only while its original
+            // target is still valid; do not adopt a subsequent user copy.
+            guard requestIsActive() else { break }
+            if state != latestState {
+                if state == unclaimedState { continue }
+                let canClaim = canClaimClipboardChange(state)
+                guard requestIsActive() else { break }
+                if !canClaim {
+                    guard !shouldTreatCopiedTextAsFresh(
+                        initialChangeCount: initialState.changeCount,
+                        observedChangeCount: state.changeCount,
+                        initialString: initialState.string,
+                        observedString: state.string
+                    ) else { break }
+                    // A copy may declare a generation before supplying text.
+                    // Wait for that text without owning this intermediate state
+                    // or repeatedly querying its temporarily degraded AX focus.
+                    unclaimedState = state
+                    stableFreshCandidate = StableFreshPasteboardCandidate()
+                    continue
+                }
+            }
             latestState = state
+            unclaimedState = nil
 
             if stableFreshCandidate.observe(state, relativeTo: initialState) {
                 return CopyObservation(
@@ -2208,6 +2256,7 @@ final class AccessibilityManager {
         requireUsableSelection: Bool = false,
         forEmptyInputClick: Bool = false,
         selectionBaseline: AssessedFocusedElement? = nil,
+        acceptExistingSelection: Bool = false,
         retryDelays: [TimeInterval] = AccessibilityManager.focusedElementRetryDelays
     ) async -> AssessedFocusedElement? {
         let targetProcessIdentifier = expectedProcessIdentifier ??
@@ -2276,10 +2325,13 @@ final class AccessibilityManager {
                     !$0.assessment.pointAssessments.allSatisfy(\.isResolved)
             },
             canAcceptEarly: { focusedElement, assessedFocusedElement in
-                // A click already waited for focus to settle and the attempt
-                // rechecked the same window and element after reading attributes.
-                if forEmptyInputClick { return true }
-                if assessedFocusedElement.assessment.selectionMatchesGesture { return true }
+                // Every attempt confirms focus/window identity after reading.
+                // A manual hotkey can use the existing selection; drags still
+                // need proof that the gesture produced a fresh selection.
+                if assessedFocusedElement.assessment.canAcceptSelectionEarly(
+                    forEmptyInputClick: forEmptyInputClick,
+                    acceptExistingSelection: acceptExistingSelection
+                ) { return true }
                 guard let selectionBaseline,
                       Self.areSameAccessibilityElement(
                         selectionBaseline.focusedElement, focusedElement

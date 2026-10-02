@@ -130,12 +130,20 @@ final class PastePopupWindow: NSPanel {
         pasteButton.isEnabled = true
         clearButton.isEnabled = true
 
-        // Position slightly above the cursor
-        let adjustedPoint = NSPoint(x: screenPoint.x - (popupWidth / 2), y: screenPoint.y + 15)
-        setFrameOrigin(adjustedPoint)
+        let screen = NSScreen.screens.first { $0.frame.contains(screenPoint) } ?? NSScreen.main
+        setFrameOrigin(popupOrigin(at: screenPoint, visibleFrame: screen?.visibleFrame))
 
         self.alphaValue = 1.0
         self.makeKeyAndOrderFront(nil)
+    }
+
+    func popupOrigin(at screenPoint: NSPoint, visibleFrame: NSRect?) -> NSPoint {
+        let origin = NSPoint(x: screenPoint.x - popupWidth / 2, y: screenPoint.y + 15)
+        guard let visibleFrame else { return origin }
+        return NSPoint(
+            x: max(visibleFrame.minX, min(origin.x, visibleFrame.maxX - popupWidth)),
+            y: max(visibleFrame.minY, min(origin.y, visibleFrame.maxY - popupHeight))
+        )
     }
     
     func hidePopup(completion: (@MainActor @Sendable () -> Void)? = nil) {

@@ -471,27 +471,28 @@ enum LegacyInstallationCleanup {
                 _ = application.forceTerminate()
             }
         }
-        if waitUntilTerminated(applications, timeout: 2) {
+        if waitUntilTerminated(timeout: 2, isTerminated: { applications.allSatisfy(\.isTerminated) }) {
             return true
         }
 
         for application in applications where !application.isTerminated {
             _ = application.forceTerminate()
         }
-        return waitUntilTerminated(applications, timeout: 1)
+        return waitUntilTerminated(timeout: 1, isTerminated: { applications.allSatisfy(\.isTerminated) })
     }
 
-    private static func waitUntilTerminated(
-        _ applications: [NSRunningApplication],
-        timeout: TimeInterval
+    static func waitUntilTerminated(
+        timeout: TimeInterval,
+        isTerminated: () -> Bool
     ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if applications.allSatisfy(\.isTerminated) {
+            if isTerminated() {
                 return true
             }
-            Thread.sleep(forTimeInterval: 0.05)
+            // NSRunningApplication refreshes exit state on the main run loop.
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(0.05)))
         }
-        return applications.allSatisfy(\.isTerminated)
+        return isTerminated()
     }
 }

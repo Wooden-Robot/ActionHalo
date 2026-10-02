@@ -45,6 +45,7 @@ final class DiagnosticsWindow: NSWindowController {
         window.center()
         window.isReleasedWhenClosed = false
         window.backgroundColor = .windowBackgroundColor
+        window.contentMinSize = NSSize(width: 640, height: 500)
 
         super.init(window: window)
         setupUI()
@@ -76,14 +77,17 @@ final class DiagnosticsWindow: NSWindowController {
         titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         titleLabel.textColor = .secondaryLabelColor
         titleLabel.frame = NSRect(x: 20, y: 462, width: 420, height: 18)
+        titleLabel.autoresizingMask = [.width, .minYMargin]
         contentView.addSubview(titleLabel)
 
         summaryLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
         summaryLabel.textColor = .tertiaryLabelColor
         summaryLabel.frame = NSRect(x: 20, y: 440, width: 420, height: 18)
+        summaryLabel.autoresizingMask = [.width, .minYMargin]
         contentView.addSubview(summaryLabel)
 
         let refreshButton = NSButton(frame: NSRect(x: 520, y: 452, width: 100, height: 28))
+        refreshButton.autoresizingMask = [.minXMargin, .minYMargin]
         refreshButton.title = "Refresh".localized
         refreshButton.bezelStyle = .rounded
         refreshButton.target = self
@@ -91,6 +95,7 @@ final class DiagnosticsWindow: NSWindowController {
         contentView.addSubview(refreshButton)
 
         let copyButton = NSButton(frame: NSRect(x: 520, y: 418, width: 100, height: 28))
+        copyButton.autoresizingMask = [.minXMargin, .minYMargin]
         copyButton.title = "Copy Report".localized
         copyButton.bezelStyle = .rounded
         copyButton.target = self

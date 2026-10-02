@@ -5,6 +5,7 @@ import Cocoa
 final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSource {
     struct ReorderResult {
         let plugins: [Plugin]
+        let sourceRow: Int
         let targetRow: Int
     }
     
@@ -45,8 +46,8 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         NotificationCenter.default.removeObserver(self)
     }
 
-    static func reorderedPlugins(_ plugins: [Plugin], sourceRow: Int, proposedRow: Int) -> ReorderResult? {
-        guard plugins.indices.contains(sourceRow),
+    static func reorderedPlugins(_ plugins: [Plugin], sourcePluginID: String, proposedRow: Int) -> ReorderResult? {
+        guard let sourceRow = plugins.firstIndex(where: { $0.id == sourcePluginID }),
               proposedRow >= 0,
               proposedRow <= plugins.count else {
             return nil
@@ -61,11 +62,11 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         }
 
         reordered.insert(plugin, at: targetRow)
-        return ReorderResult(plugins: reordered, targetRow: targetRow)
+        return ReorderResult(plugins: reordered, sourceRow: sourceRow, targetRow: targetRow)
     }
 
     static func shouldAllowEditing(_ plugin: Plugin) -> Bool {
-        !PluginManager.isReservedCorePluginIdentifier(plugin.id)
+        !PluginManager.isReservedCorePluginIdentifier(plugin.id) && !plugin.action.isNativeCommand
     }
     
     private func setupUI() {
@@ -419,9 +420,6 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         guard row >= 0 && row < orderedPlugins.count else { return }
         let plugin = orderedPlugins[row]
         
-        let isBuiltIn = PluginManager.isBuiltInPluginDirectory(plugin.directoryURL)
-        let hasUserOverride = PluginManager.shared.userPluginURL(for: plugin.id) != nil
-        
         // If it's a core default plugin, it can never be deleted
         if PluginManager.coreDefaultPluginIDs.contains(plugin.id) {
             let alert = NSAlert()
@@ -437,11 +435,11 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
             return
         }
         
-        // Let PluginManager handle the actual file/soft deletion logic depending on whether it has an override
+        let prompt = PluginDeletionPrompt(plugin: plugin)
         let alert = NSAlert()
-        alert.messageText = isBuiltIn && !hasUserOverride ? "Delete Built-in Plugin?".localized : (hasUserOverride && isBuiltIn ? "Restore Default?".localized : "Delete Plugin?".localized)
-        alert.informativeText = isBuiltIn && !hasUserOverride ? "Are you sure you want to delete this built-in plugin? It will still exist but will be hidden from the list.".localized : (hasUserOverride && isBuiltIn ? "Are you sure you want to delete your modifications to this plugin? It will be restored to the built-in default state.".localized : "Are you sure you want to completely delete this plugin? This action is irreversible.".localized)
-        alert.addButton(withTitle: isBuiltIn && hasUserOverride ? "Restore Default".localized : "Confirm Delete".localized)
+        alert.messageText = prompt.title
+        alert.informativeText = prompt.message
+        alert.addButton(withTitle: prompt.confirmationTitle)
         alert.addButton(withTitle: "Cancel".localized)
         
         let response = self.window != nil ? alert.runModal() : alert.runModal()
@@ -460,8 +458,9 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
     // MARK: - Drag & Drop
     
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard orderedPlugins.indices.contains(row) else { return nil }
         let item = NSPasteboardItem()
-        item.setString(String(row), forType: dragType)
+        item.setString(orderedPlugins[row].id, forType: dragType)
         return item
     }
     
@@ -497,9 +496,8 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
     
     func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
         guard let item = info.draggingPasteboard.pasteboardItems?.first,
-              let rowStr = item.string(forType: dragType),
-              let sourceRow = Int(rowStr),
-              let reorderResult = Self.reorderedPlugins(orderedPlugins, sourceRow: sourceRow, proposedRow: row) else {
+              let sourcePluginID = item.string(forType: dragType),
+              let reorderResult = Self.reorderedPlugins(orderedPlugins, sourcePluginID: sourcePluginID, proposedRow: row) else {
             return false
         }
         
@@ -508,7 +506,7 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         // Suppress notification-triggered reload during reorder
         isReordering = true
         
-        tableView.moveRow(at: sourceRow, to: reorderResult.targetRow)
+        tableView.moveRow(at: reorderResult.sourceRow, to: reorderResult.targetRow)
         
         // Remember which row was at the top of the visible area
         let firstVisibleRow = tableView.rows(in: tableView.visibleRect).location
