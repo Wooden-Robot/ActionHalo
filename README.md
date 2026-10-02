@@ -84,12 +84,14 @@ ActionHalo has **two ways to open the wheel**, and they are easy to confuse if d
 1. **Mouse selection trigger**: select text normally, then release the mouse button. The wheel appears only after the selection is complete and the button is up.
 2. **Optional manual hotkey trigger**: if you set an `Open Menu Hotkey` in the menu bar, ActionHalo can open the wheel for the current selection without waiting for the mouse-release flow.
 
-Once the wheel is already visible, there are **two ways to execute an action**:
+Once the wheel is already visible, there are **two mouse interactions to execute an action**:
 
 1. **Release, then click**: let the wheel pop up, then click the slice you want.
 2. **Release, press, drag, then release**: let the wheel pop up, press down again right away, drag into the target slice, then release to fire it.
 
 The second execution style is the signature interaction: as soon as the wheel appears, you can go straight into a weapon-wheel-like press-drag-release motion instead of pausing to click a slice.
+
+When opened with the manual hotkey, the wheel also supports **arrow keys or Tab / Shift+Tab** to move between available actions, **Enter or Space** to execute, and **Esc** to close. Page controls work the same way. The wheel exposes action names, availability, and press actions to VoiceOver. Mouse-triggered wheels keep their existing focus behavior.
 
 If you need to debug why the wheel did or did not appear, see the dedicated [Diagnostics Guide](./DIAGNOSTICS.md).
 

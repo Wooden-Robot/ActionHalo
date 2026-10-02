@@ -24,6 +24,7 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
         window.center()
         window.isReleasedWhenClosed = false
         window.backgroundColor = .windowBackgroundColor
+        window.contentMinSize = NSSize(width: 440, height: 380)
 
         super.init(window: window)
         setupUI()
@@ -51,6 +52,7 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
         label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         label.textColor = .secondaryLabelColor
         label.frame = NSRect(x: 20, y: 340, width: 390, height: 32)
+        label.autoresizingMask = [.width, .minYMargin]
         label.lineBreakMode = .byWordWrapping
         label.maximumNumberOfLines = 2
         contentView.addSubview(label)
@@ -59,9 +61,11 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
         bundleLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         bundleLabel.textColor = .tertiaryLabelColor
         bundleLabel.frame = NSRect(x: 20, y: 320, width: 390, height: 16)
+        bundleLabel.autoresizingMask = [.width, .minYMargin]
         contentView.addSubview(bundleLabel)
 
         searchField.frame = NSRect(x: 20, y: 286, width: 400, height: 28)
+        searchField.autoresizingMask = [.width, .minYMargin]
         searchField.placeholderString = "Filter plugins in this app".localized
         searchField.delegate = self
         contentView.addSubview(searchField)

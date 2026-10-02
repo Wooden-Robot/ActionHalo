@@ -3,6 +3,23 @@ import QuartzCore
 
 /// The main radial menu view — draws a circular ring with segmented actions
 final class RadialMenuView: NSView {
+    private final class MenuAccessibilityElement: NSAccessibilityElement {
+        private let onPress: @MainActor @Sendable () -> Bool
+
+        init(onPress: @escaping @MainActor @Sendable () -> Bool) {
+            self.onPress = onPress
+            super.init()
+        }
+
+        override func accessibilityPerformPress() -> Bool {
+            let onPress = onPress
+            if Thread.isMainThread {
+                return MainActor.assumeIsolated { onPress() }
+            }
+            return DispatchQueue.main.sync { onPress() }
+        }
+    }
+
     private struct GeometrySignature: Equatable {
         let itemCount: Int
         let center: NSPoint
@@ -54,10 +71,13 @@ final class RadialMenuView: NSView {
     
     private var hoveredIndex: Int = -1
     private var acceptsInteraction = true
+    private var keyboardNavigationEnabled = false
     private let actionGate = SingleFireActionGate()
     private var sectorLayers: [CAShapeLayer] = []
     private var glowLayers: [CAShapeLayer] = []
     private var iconLayers: [CALayer] = []
+    private var accessibilityItems: [MenuAccessibilityElement] = []
+    private var accessibilityGeneration: UInt64 = 0
     
     // Cached hits for O(1) mouse movement calculations without doing division/geometry
     private var hitTestBounds: [(start: CGFloat, end: CGFloat)] = []
@@ -190,6 +210,9 @@ final class RadialMenuView: NSView {
     private func setupView() {
         wantsLayer = true
         layer?.masksToBounds = false
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("ActionHalo")
         setupTrackingArea()
     }
     
@@ -211,12 +234,47 @@ final class RadialMenuView: NSView {
 
     func beginInteractionSession() {
         acceptsInteraction = true
+        keyboardNavigationEnabled = false
+        setAccessibilityHelp(nil)
         actionGate.reset()
+        updateAccessibilityEnabledState()
     }
 
     func endInteractionSession() {
         acceptsInteraction = false
         _ = actionGate.consume()
+        updateAccessibilityEnabledState()
+    }
+
+    private func updateAccessibilityEnabledState() {
+        for (index, element) in accessibilityItems.enumerated() {
+            element.setAccessibilityEnabled(
+                acceptsInteraction && menuItems.indices.contains(index) && menuItems[index].isExecutable
+            )
+        }
+    }
+
+    private func rebuildAccessibilityItems() {
+        accessibilityGeneration &+= 1
+        let generation = accessibilityGeneration
+        accessibilityItems.forEach { $0.setAccessibilityEnabled(false) }
+        accessibilityItems = menuItems.enumerated().map { index, item in
+            let element = MenuAccessibilityElement { [weak self] in
+                guard let self, self.accessibilityGeneration == generation else { return false }
+                return self.activateItem(at: index)
+            }
+            element.setAccessibilityElement(true)
+            element.setAccessibilityRole(.button)
+            element.setAccessibilityLabel(item.title)
+            element.setAccessibilityParent(self)
+            element.setAccessibilityEnabled(acceptsInteraction && item.isExecutable)
+            element.setAccessibilityFrameInParentSpace(sectorLayers[index].path?.boundingBoxOfPath ?? .zero)
+            return element
+        }
+        setAccessibilityChildren(accessibilityItems)
+        if window?.isVisible == true {
+            NSAccessibility.post(element: self, notification: .layoutChanged, userInfo: [.uiElements: accessibilityItems])
+        }
     }
     
     override func updateTrackingAreas() {
@@ -230,9 +288,18 @@ final class RadialMenuView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         
-        defer { CATransaction.commit() }
+        defer {
+            CATransaction.commit()
+            rebuildAccessibilityItems()
+        }
         
         guard !menuItems.isEmpty else {
+            if sectorLayers.indices.contains(hoveredIndex) {
+                unhoverSector(at: hoveredIndex)
+            }
+            hoveredIndex = -1
+            hitTestBounds.removeAll(keepingCapacity: true)
+            lastGeometrySignature = nil
             // Hide everything if empty
             sectorLayers.forEach { $0.isHidden = true }
             glowLayers.forEach { $0.isHidden = true }
@@ -618,41 +685,87 @@ final class RadialMenuView: NSView {
         return path
     }
     
-    // MARK: - Mouse Handling
+    // MARK: - Keyboard and Mouse Handling
+
+    func prepareForKeyboardNavigation() {
+        keyboardNavigationEnabled = true
+        setAccessibilityHelp("Use arrow keys or Tab to choose an action, Enter to run it, and Escape to close.".localized)
+        // After paging, start on an action instead of immediately going back.
+        let firstAction = menuItems.indices.first {
+            if case .pagePrev = menuItems[$0].action { return false }
+            return menuItems[$0].isExecutable
+        }
+        highlightItem(at: firstAction ?? menuItems.firstIndex(where: \.isExecutable) ?? -1)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard acceptsInteraction, keyboardNavigationEnabled else { return }
+        guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty else {
+            super.keyDown(with: event)
+            return
+        }
+        switch event.keyCode {
+        case 123, 126: // Left / Up
+            moveKeyboardSelection(by: -1)
+        case 124, 125: // Right / Down
+            moveKeyboardSelection(by: 1)
+        case 48: // Tab / Shift+Tab
+            moveKeyboardSelection(by: event.modifierFlags.contains(.shift) ? -1 : 1)
+        case 36, 76, 49: // Return / keypad Enter / Space
+            if !event.isARepeat { activateItem(at: hoveredIndex) }
+        default:
+            // Like a menu, consume dismissal keys rather than editing the source.
+            endInteractionSession()
+            onDismissRequested?()
+        }
+    }
+
+    private func moveKeyboardSelection(by step: Int) {
+        guard !menuItems.isEmpty else { return }
+        let start = hoveredIndex >= 0 ? hoveredIndex : (step > 0 ? -1 : 0)
+        for offset in 1...menuItems.count {
+            let index = (start + step * offset + menuItems.count) % menuItems.count
+            if menuItems[index].isExecutable {
+                highlightItem(at: index)
+                return
+            }
+        }
+    }
+
+    private func announceKeyboardSelection() {
+        let element = accessibilityItems.indices.contains(hoveredIndex) ? accessibilityItems[hoveredIndex] : nil
+        accessibilityItems.forEach { $0.setAccessibilityFocused($0 === element) }
+        if let element {
+            NSAccessibility.post(element: element, notification: .focusedUIElementChanged)
+        } else {
+            NSAccessibility.post(element: self, notification: .focusedUIElementChanged)
+        }
+    }
+
+    private func highlightItem(at index: Int) {
+        guard index != hoveredIndex else { return }
+        if sectorLayers.indices.contains(hoveredIndex) {
+            unhoverSector(at: hoveredIndex)
+        }
+        if sectorLayers.indices.contains(index) {
+            hoverSector(at: index)
+        } else {
+            updateCenterLabel(text: "ActionHalo", color: .white)
+            updateCenterSubtitle(text: isGTAModeEnabled ? "HOLD AND RELEASE" : "", color: NSColor(white: 1.0, alpha: isGTAModeEnabled ? 0.42 : 0.0))
+        }
+        hoveredIndex = index
+        if keyboardNavigationEnabled { announceKeyboardSelection() }
+    }
     
     override func mouseMoved(with event: NSEvent) {
         guard acceptsInteraction else { return }
         let point = convert(event.locationInWindow, from: nil)
-        let newIndex = hitTestSector(at: point)
-        
-        if newIndex != hoveredIndex {
-            // Un-hover previous
-            if hoveredIndex >= 0 && hoveredIndex < sectorLayers.count {
-                unhoverSector(at: hoveredIndex)
-            }
-            
-            // Hover new
-            if newIndex >= 0 && newIndex < sectorLayers.count {
-                hoverSector(at: newIndex)
-            } else {
-                // Reset center label when not hovering any sector
-                updateCenterLabel(text: "ActionHalo", color: .white)
-                updateCenterSubtitle(text: isGTAModeEnabled ? "HOLD AND RELEASE" : "", color: NSColor(white: 1.0, alpha: isGTAModeEnabled ? 0.42 : 0.0))
-            }
-            
-            hoveredIndex = newIndex
-        }
+        highlightItem(at: hitTestSector(at: point))
     }
     
     override func mouseExited(with event: NSEvent) {
         guard acceptsInteraction else { return }
-        // Clear all hover effects when mouse leaves the view
-        if hoveredIndex >= 0 && hoveredIndex < sectorLayers.count {
-            unhoverSector(at: hoveredIndex)
-        }
-        hoveredIndex = -1
-        updateCenterLabel(text: "ActionHalo", color: .white)
-        updateCenterSubtitle(text: isGTAModeEnabled ? "HOLD AND RELEASE" : "", color: NSColor(white: 1.0, alpha: isGTAModeEnabled ? 0.42 : 0.0))
+        highlightItem(at: -1)
     }
     
     override var acceptsFirstResponder: Bool { true }
@@ -661,31 +774,13 @@ final class RadialMenuView: NSView {
         guard acceptsInteraction else { return }
         // Catch to ensure we receive mouseUp/mouseDragged
         let point = convert(event.locationInWindow, from: nil)
-        let index = hitTestSector(at: point)
-        if index != hoveredIndex {
-            if hoveredIndex >= 0 && hoveredIndex < sectorLayers.count {
-                unhoverSector(at: hoveredIndex)
-            }
-            if index >= 0 && index < sectorLayers.count {
-                hoverSector(at: index)
-            }
-            hoveredIndex = index
-        }
+        highlightItem(at: hitTestSector(at: point))
     }
     
     override func mouseDragged(with event: NSEvent) {
         guard acceptsInteraction else { return }
         let point = convert(event.locationInWindow, from: nil)
-        let index = hitTestSector(at: point)
-        if index != hoveredIndex {
-            if hoveredIndex >= 0 && hoveredIndex < sectorLayers.count {
-                unhoverSector(at: hoveredIndex)
-            }
-            if index >= 0 && index < sectorLayers.count {
-                hoverSector(at: index)
-            }
-            hoveredIndex = index
-        }
+        highlightItem(at: hitTestSector(at: point))
     }
     
     override func mouseUp(with event: NSEvent) {
@@ -701,7 +796,7 @@ final class RadialMenuView: NSView {
         // If they click far away, dismiss
         if distanceSquared > dismissRadius * dismissRadius {
             guard actionGate.consume() else { return }
-            acceptsInteraction = false
+            endInteractionSession()
             onDismissRequested?()
             return
         }
@@ -711,23 +806,28 @@ final class RadialMenuView: NSView {
         // without ruining the swiping feel.
         if distanceSquared < deadzoneSquared {
             guard actionGate.consume() else { return }
-            acceptsInteraction = false
+            endInteractionSession()
             onDismissRequested?()
             return
         }
         
-        let index = hitTestSector(at: point)
-        
-        if index >= 0 && index < menuItems.count {
-            let item = menuItems[index]
-            guard item.isExecutable else { return }
-            guard actionGate.consume() else { return }
-            acceptsInteraction = false
-            // Flash feedback and trigger immediately on mouse release
-            flashSector(at: index) { [weak self] in
-                self?.onItemSelected?(item)
-            }
+        activateItem(at: hitTestSector(at: point))
+    }
+
+    @discardableResult
+    func activateItem(at index: Int) -> Bool {
+        guard acceptsInteraction,
+              menuItems.indices.contains(index),
+              sectorLayers.indices.contains(index),
+              menuItems[index].isExecutable,
+              actionGate.consume() else { return false }
+
+        let item = menuItems[index]
+        endInteractionSession()
+        flashSector(at: index) { [weak self] in
+            self?.onItemSelected?(item)
         }
+        return true
     }
     
     // MARK: - Hover Effects
@@ -800,6 +900,7 @@ final class RadialMenuView: NSView {
     
     private func flashSector(at index: Int, completion: @escaping () -> Void) {
         let sector = sectorLayers[index]
+        let generation = accessibilityGeneration
         
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.05)
@@ -812,6 +913,7 @@ final class RadialMenuView: NSView {
         completion()
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            guard self.accessibilityGeneration == generation else { return }
             CATransaction.begin()
             CATransaction.setAnimationDuration(0.15)
             sector.fillColor = self.sectorHoverColor.cgColor
@@ -849,6 +951,7 @@ final class RadialMenuView: NSView {
     
     private func centerSubtitle(for item: RadialMenuItem, index: Int) -> String {
         guard isGTAModeEnabled else { return "" }
+        if keyboardNavigationEnabled { return "ENTER · SELECT  ESC · CLOSE".localized }
         let slot = String(format: "%02d", index + 1)
         
         switch item.action {

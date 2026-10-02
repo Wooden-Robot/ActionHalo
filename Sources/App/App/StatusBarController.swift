@@ -576,6 +576,7 @@ final class StatusBarController: NSObject {
             appName: app.localizedName ?? bundleID,
             bundleID: bundleID
         )
+        currentAppPluginsWindow?.close()
         currentAppPluginsWindow = window
         window.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)

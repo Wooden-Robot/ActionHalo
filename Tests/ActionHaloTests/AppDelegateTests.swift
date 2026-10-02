@@ -442,6 +442,34 @@ final class AppDelegateTests: XCTestCase {
         )
     }
 
+    func testMenuActionQueriesOnlyRequiredAccessibilityState() {
+        let cases: [(pid_t, Bool, Bool, Bool, Bool, Bool, Int, Int)] = [
+            (42, false, false, false, false, true, 0, 0),
+            (7, true, true, true, true, false, 0, 0),
+            (42, true, false, true, false, true, 1, 0),
+            (42, true, true, false, true, false, 1, 0),
+            (42, true, true, true, false, false, 1, 1),
+            (42, true, true, true, true, true, 1, 1)
+        ]
+        for (pid, needsFocus, needsEditing, focusMatches, editable, allowed, focusReads, editingReads) in cases {
+            var actualFocusReads = 0
+            var actualEditingReads = 0
+            func readFocus() -> Bool { actualFocusReads += 1; return focusMatches }
+            func readEditability() -> Bool { actualEditingReads += 1; return editable }
+
+            XCTAssertEqual(AppDelegate.shouldExecuteMenuAction(
+                expectedProcessIdentifier: 42,
+                currentProcessIdentifier: pid,
+                requiresOriginalFocusedElement: needsFocus,
+                requiresEditableTarget: needsEditing,
+                focusedElementMatches: readFocus(),
+                isFocusedSelectionEditable: readEditability()
+            ), allowed)
+            XCTAssertEqual(actualFocusReads, focusReads)
+            XCTAssertEqual(actualEditingReads, editingReads)
+        }
+    }
+
     func testCustomKeyComboRequiresOriginalFocusWithoutAssumingEditability() throws {
         let keyCombo = try makePlugin(
             name: "Command Palette",

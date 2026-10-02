@@ -102,6 +102,15 @@ final class PluginLoader {
                 return nil
             }
 
+            if let scriptReference = action.scriptReference,
+               PluginManager.resolvedPluginScriptSource(
+                   scriptReference,
+                   pluginDirectoryURL: directoryURL
+               ) == nil {
+                NSLog("[ActionHalo] Plugin script is missing or outside the package: \(directoryURL.lastPathComponent)")
+                return nil
+            }
+
             if case .url(let template) = action {
                 guard PluginManager.isAllowedPluginURLTemplate(template) else {
                     NSLog("[ActionHalo] Plugin uses an unsupported or invalid URL: \(directoryURL.lastPathComponent)")

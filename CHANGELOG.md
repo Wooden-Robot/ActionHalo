@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.3.41
+
+- 修复取消取词后覆盖用户新剪贴板内容的问题；Telegram 搜索重新校验搜索框、焦点与输入结果，避免覆盖草稿或误恢复剪贴板，并保留复制过程中的延迟文本兼容。
+- 插件保存、删除、安装与恢复清理增加跨窗口并发保护；修复旧插件迁移、缺失脚本校验、AppleScript 文本替换、编辑草稿保留、删除提示和拖拽排序问题。
+- 手动触发的圆环菜单支持键盘导航和辅助功能操作；快捷键录制支持 F1–F20，并正确保留 Shift 标点键的物理键位。
+- 改善管理窗口缩放和粘贴弹窗的屏幕边界处理，修复重复打开管理窗口及旧进程退出误判，减少已确认选区和只读操作中的辅助功能查询等待。
+
+- Prevented cancelled selection requests from overwriting newer clipboard contents. Telegram search revalidates its search field, focus, and input results to protect drafts and clipboard changes, while preserving delayed copy-text compatibility.
+- Coordinated plugin saves, deletion, installation, and recovery across windows. Fixed legacy migration, missing-script validation, AppleScript placeholder semantics, draft retention, deletion prompts, and drag reordering.
+- Added keyboard navigation and accessibility actions to manually opened radial menus. Shortcut recording now supports F1–F20 and preserves physical key codes for shifted punctuation.
+- Improved management-window resizing and paste-popup screen bounds, fixed repeated-window and legacy-process termination handling, and reduced Accessibility waits for confirmed selections and read-only actions.
+
 ## v0.3.40
 
 - 普通点击检测、粘贴弹窗展示及粘贴前的辅助功能校验改为异步，避免慢速 AX 查询阻塞主线程；保留焦点、窗口与安全检查，并丢弃取消或过期的结果。

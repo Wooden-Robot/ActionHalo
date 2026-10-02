@@ -1344,6 +1344,11 @@ struct LegacyDataImporter {
                 message: "Config.json does not match the ActionHalo plugin schema."
             )
         }
+        guard PluginAction(config: config.action, allowNativeCommands: false) != nil else {
+            throw IncompatiblePluginError(
+                message: "The plugin action is invalid or unavailable for an imported package."
+            )
+        }
         return ConvertedConfiguration(
             sourceIdentifier: sourceIdentifier,
             data: convertedData,

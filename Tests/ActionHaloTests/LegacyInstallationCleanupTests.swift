@@ -353,6 +353,21 @@ final class LegacyInstallationCleanupTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testTerminationWaitProcessesRunLoopUpdatesAndStillTimesOut() {
+        let terminated = LockedState(initialState: false)
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: false) { _ in
+            terminated.withLock { $0 = true }
+        }
+        defer { timer.invalidate() }
+
+        XCTAssertTrue(LegacyInstallationCleanup.waitUntilTerminated(timeout: 0.5) {
+            terminated.withLock { $0 }
+        })
+        XCTAssertTrue(LegacyInstallationCleanup.waitUntilTerminated(timeout: 0) { true })
+        XCTAssertFalse(LegacyInstallationCleanup.waitUntilTerminated(timeout: 0.01) { false })
+    }
+
     func testCleanupTerminatesBeforeTrashingAndResetsTCCOnlyAfterSuccess() {
         let systemAppURL = URL(fileURLWithPath: "/Applications/OpenFire.app", isDirectory: true)
         let userAppURL = URL(

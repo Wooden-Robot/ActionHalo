@@ -831,6 +831,60 @@ final class AccessibilityManagerTests: XCTestCase {
     }
 
     @MainActor
+    func testManualHotkeyAcceptsExistingSelectionWithoutSkippingUnreadySamplesOrDragRetries() async {
+        func assessment(
+            text: String? = "selected",
+            readable: Bool = true,
+            protection: AccessibilityManager.ProtectedTextAssessment = .unprotected
+        ) -> AccessibilityManager.FocusedElementAssessment {
+            .init(
+                protection: protection,
+                isSelectionEditable: false,
+                selectionSnapshot: .init(
+                    text: text, rangeLocation: 0, rangeLength: text?.count ?? 0,
+                    hasReadableSelectedTextAttribute: readable
+                ),
+                pointAssessments: []
+            )
+        }
+
+        let cases: [(String, Bool, AccessibilityManager.FocusedElementAssessment, Int)] = [
+            ("manual selection", true, assessment(), 1),
+            ("drag still needs freshness", false, assessment(), 3),
+            ("empty first sample", true, assessment(text: nil), 2),
+            ("whitespace first sample", true, assessment(text: " \n"), 2),
+            ("unreadable first sample", true, assessment(readable: false), 2),
+            ("indeterminate first sample", true, assessment(protection: .indeterminate), 2),
+            ("protected input stops immediately", true, assessment(protection: .protectedContent), 1)
+        ]
+        for (label, acceptsExisting, initial, expectedAttempts) in cases {
+            var attempts = 0
+            var delays: [TimeInterval] = []
+            let ready = assessment()
+            let result: (candidate: String, assessment: AccessibilityManager.FocusedElementAssessment)? = await AccessibilityManager.resolveFreshAssessedCandidateWithRetry(
+                retryDelays: AccessibilityManager.focusedElementRetryDelays,
+                attempt: {
+                    attempts += 1
+                    let current = attempts == 1 ? initial : ready
+                    return (candidate: "confirmed-focus", assessment: current)
+                },
+                isTerminal: { $0.protection == .protectedContent },
+                isRetryable: { $0.protection == .indeterminate },
+                canAcceptEarly: { _, value in
+                    value.canAcceptSelectionEarly(
+                        forEmptyInputClick: false,
+                        acceptExistingSelection: acceptsExisting
+                    )
+                },
+                wait: { delays.append($0); return true }
+            )
+            XCTAssertEqual(attempts, expectedAttempts, label)
+            XCTAssertEqual(delays, Array(AccessibilityManager.focusedElementRetryDelays.prefix(expectedAttempts - 1)), label)
+            XCTAssertEqual(result?.assessment.protection, initial.protection == .protectedContent ? .protectedContent : .unprotected, label)
+        }
+    }
+
+    @MainActor
     func testFreshAssessmentRetryCannotEarlyAcceptRetryableAssessment() async {
         var attempts = ["indeterminate", "ready"]
         var earlyAcceptanceChecks: [String] = []
@@ -1141,6 +1195,215 @@ final class AccessibilityManagerTests: XCTestCase {
             copiedText: copiedState.string,
             hasFreshCopiedText: true,
             contextIsValid: false
+        ))
+    }
+
+    func testCancelledCopyPollingDoesNotRestoreOverUsersFirstNewCopy() throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
+        let initialState = AccessibilityManager.PasteboardState(
+            changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
+        )
+        let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(from: pasteboard))
+        defer { snapshot.discardTemporaryFiles() }
+        let coordinator = CopyFallbackRequestCoordinator()
+        let requestID = coordinator.beginRequest()
+
+        // Synthetic Cmd+C produced nothing. A new gesture cancels the request,
+        // and the user's physical copy is the first new clipboard generation.
+        coordinator.cancelRequest(requestID)
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("new user copy", forType: .string))
+        let currentState = AccessibilityManager.PasteboardState(
+            changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
+        )
+        let observation = AccessibilityManager.pollPasteboardForCopiedText(
+            pasteboard: pasteboard, initialState: initialState, attempts: 3,
+            requestIsActive: { coordinator.isRequestActive(requestID) },
+            canClaimClipboardChange: { _ in true }
+        )
+        if AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialState: initialState, observedState: observation.state, currentState: currentState
+        ) {
+            _ = AccessibilityManager.restorePasteboardSnapshot(
+                snapshot, to: pasteboard, ifCurrentStateMatches: currentState
+            )
+        }
+
+        XCTAssertFalse(observation.hasFreshCopiedText)
+        XCTAssertEqual(pasteboard.string(forType: .string), "new user copy")
+        XCTAssertEqual(pasteboard.changeCount, currentState.changeCount)
+    }
+
+    func testCopyPollingDoesNotClaimClipboardChangeFromDifferentTarget() throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
+        let initialState = AccessibilityManager.PasteboardState(
+            changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
+        )
+        let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(from: pasteboard))
+        defer { snapshot.discardTemporaryFiles() }
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("copied in another application", forType: .string))
+        let currentState = AccessibilityManager.PasteboardState(
+            changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
+        )
+
+        let observation = AccessibilityManager.pollPasteboardForCopiedText(
+            pasteboard: pasteboard, initialState: initialState, attempts: 3,
+            requestIsActive: { true }, canClaimClipboardChange: { _ in false }
+        )
+        if AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialState: initialState, observedState: observation.state, currentState: currentState
+        ) {
+            _ = AccessibilityManager.restorePasteboardSnapshot(
+                snapshot, to: pasteboard, ifCurrentStateMatches: currentState
+            )
+        }
+
+        XCTAssertFalse(observation.hasFreshCopiedText)
+        XCTAssertEqual(pasteboard.string(forType: .string), "copied in another application")
+        XCTAssertEqual(pasteboard.changeCount, currentState.changeCount)
+    }
+
+    func testCopyPollingRechecksCancellationAfterTargetValidation() {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
+        let initialState = AccessibilityManager.PasteboardState(
+            changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
+        )
+        let coordinator = CopyFallbackRequestCoordinator()
+        let requestID = coordinator.beginRequest()
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("new user copy", forType: .string))
+
+        let observation = AccessibilityManager.pollPasteboardForCopiedText(
+            pasteboard: pasteboard, initialState: initialState, attempts: 3,
+            requestIsActive: { coordinator.isRequestActive(requestID) },
+            canClaimClipboardChange: { _ in
+                coordinator.cancelRequest(requestID)
+                return true
+            }
+        )
+
+        XCTAssertFalse(observation.hasFreshCopiedText)
+        XCTAssertEqual(observation.state, initialState)
+        XCTAssertEqual(pasteboard.string(forType: .string), "new user copy")
+    }
+
+    func testCopyPollingWaitsForTextInPreviouslyUnclaimedGeneration() {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
+        let initialState = AccessibilityManager.PasteboardState(
+            changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
+        )
+        let copyGeneration = pasteboard.clearContents()
+        var contextCheckCount = 0
+
+        let observation = AccessibilityManager.pollPasteboardForCopiedText(
+            pasteboard: pasteboard, initialState: initialState, attempts: 3,
+            requestIsActive: { true },
+            canClaimClipboardChange: { state in
+                contextCheckCount += 1
+                if state.string == nil {
+                    // Telegram may expose its owning AXWindow before its copy
+                    // supplies text. Fresh text enables the existing fallback.
+                    XCTAssertTrue(pasteboard.setString("selected text", forType: .string))
+                    return false
+                }
+                return state.string == "selected text"
+            }
+        )
+
+        XCTAssertTrue(observation.hasFreshCopiedText)
+        XCTAssertEqual(observation.copiedText, "selected text")
+        XCTAssertEqual(observation.state.changeCount, copyGeneration)
+        XCTAssertEqual(contextCheckCount, 2)
+    }
+
+    func testCopyPollingPreservesClaimedStateAcrossUnclaimedIntermediateStates() {
+        for suppliesTextAgain in [false, true] {
+            let pasteboard = NSPasteboard.withUniqueName()
+            defer { pasteboard.releaseGlobally() }
+            pasteboard.clearContents()
+            XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
+            let initialState = AccessibilityManager.PasteboardState(
+                changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
+            )
+            pasteboard.clearContents()
+            XCTAssertTrue(pasteboard.setString("selected text", forType: .string))
+            let claimedState = AccessibilityManager.PasteboardState(
+                changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
+            )
+            var contextCheckCount = 0
+
+            let observation = AccessibilityManager.pollPasteboardForCopiedText(
+                pasteboard: pasteboard, initialState: initialState, attempts: 3,
+                requestIsActive: { true },
+                canClaimClipboardChange: { state in
+                    contextCheckCount += 1
+                    if state == claimedState {
+                        XCTAssertTrue(pasteboard.setString("", forType: .string))
+                        return true
+                    }
+                    if suppliesTextAgain {
+                        XCTAssertTrue(pasteboard.setString("selected text", forType: .string))
+                    }
+                    return false
+                }
+            )
+
+            XCTAssertEqual(observation.state, claimedState, "Do not replace the state owned for rollback.")
+            XCTAssertEqual(contextCheckCount, 2, "Repeated unclaimed samples should not repeat AX checks.")
+            XCTAssertFalse(observation.hasFreshCopiedText, "Text reappearing after a gap needs three new stable samples.")
+        }
+    }
+
+    func testCopyPollingConfirmedBeforeCancellationStillRestoresOriginalClipboard() throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
+        let initialState = AccessibilityManager.PasteboardState(
+            changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
+        )
+        let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(from: pasteboard))
+        defer { snapshot.discardTemporaryFiles() }
+        let coordinator = CopyFallbackRequestCoordinator()
+        let requestID = coordinator.beginRequest()
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString("selected text", forType: .string))
+        let copiedState = AccessibilityManager.PasteboardState(
+            changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
+        )
+        var contextCheckCount = 0
+        let observation = AccessibilityManager.pollPasteboardForCopiedText(
+            pasteboard: pasteboard, initialState: initialState, attempts: 3,
+            requestIsActive: { coordinator.isRequestActive(requestID) },
+            canClaimClipboardChange: { _ in contextCheckCount += 1; return true }
+        )
+        coordinator.cancelRequest(requestID)
+
+        XCTAssertTrue(observation.hasFreshCopiedText)
+        XCTAssertEqual(contextCheckCount, 1, "Stable samples should reuse the verified generation.")
+        XCTAssertTrue(AccessibilityManager.shouldRestorePasteboardSnapshot(
+            initialState: initialState, observedState: observation.state, currentState: copiedState
+        ))
+        XCTAssertTrue(AccessibilityManager.restorePasteboardSnapshot(
+            snapshot, to: pasteboard, ifCurrentStateMatches: copiedState
+        ))
+        XCTAssertEqual(pasteboard.string(forType: .string), "original clipboard")
+        XCTAssertNil(AccessibilityManager.copyFallbackResult(
+            copiedText: observation.copiedText, hasFreshCopiedText: observation.hasFreshCopiedText,
+            contextIsValid: coordinator.isRequestActive(requestID)
         ))
     }
 

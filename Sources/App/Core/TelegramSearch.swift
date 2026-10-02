@@ -56,7 +56,7 @@ enum TelegramSearchOpenResult: Equatable, Sendable {
 enum TelegramSearchDeliveryResult: Equatable, Sendable {
     case delivered
     case unavailable
-    case failed(TelegramSearchFailure.Reason)
+    case failed(TelegramSearchFailure.Reason, effect: TelegramSearchFailure.Effect = .none)
 }
 
 struct TelegramSearchReadback: Equatable, Sendable {
@@ -129,12 +129,12 @@ final class TelegramSearch {
             switch await port.replaceQuery(query, using: method) {
             case .unavailable:
                 continue
-            case .failed(let reason):
+            case .failed(let reason, let effect):
                 return .failure(
                     TelegramSearchFailure(
                         stage: .input,
                         reason: reason,
-                        effect: queryMayHaveBeenApplied ? .queryMayHaveBeenApplied : .none
+                        effect: queryMayHaveBeenApplied ? .queryMayHaveBeenApplied : effect
                     )
                 )
             case .delivered:
@@ -202,6 +202,7 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
     private var searchField: AXUIElement?
 
     func openGlobalSearch() async -> TelegramSearchOpenResult {
+        searchField = nil
         guard NSWorkspace.shared.urlForApplication(
             withBundleIdentifier: Self.telegramBundleIdentifier
         ) != nil else {
@@ -213,6 +214,7 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
 
         let deadline = Date().addingTimeInterval(3)
         repeat {
+            guard !Task.isCancelled else { return .failed(.targetChanged) }
             if let runningApplication = NSRunningApplication.runningApplications(
                 withBundleIdentifier: Self.telegramBundleIdentifier
             ).first {
@@ -221,6 +223,9 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
                 if NSWorkspace.shared.frontmostApplication?.processIdentifier ==
                     runningApplication.processIdentifier {
                     await settle(for: 0.20)
+                    guard activeTelegramProcessIdentifier() == runningApplication.processIdentifier else {
+                        return .failed(.targetChanged)
+                    }
                     guard AXIsProcessTrusted() else {
                         return .failed(.permissionDenied)
                     }
@@ -233,6 +238,9 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
                     searchField = locateSearchField(
                         processIdentifier: runningApplication.processIdentifier
                     )
+                    guard withConfirmedSearchField(processIdentifier: runningApplication.processIdentifier, operation: { _ in true }) else {
+                        return .failed(.targetChanged)
+                    }
                     return .ready
                 }
             }
@@ -287,33 +295,28 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
         switch method {
         case .accessibility:
             guard AXIsProcessTrusted() else { return .unavailable }
-            let field = searchField ?? locateSearchField(processIdentifier: processIdentifier)
-            guard let field, isWritableTextElement(field) else { return .unavailable }
-            _ = AXUIElementSetAttributeValue(
-                field,
-                kAXFocusedAttribute as CFString,
-                kCFBooleanTrue
-            )
-            guard AXUIElementSetAttributeValue(
-                field,
-                kAXValueAttribute as CFString,
-                query as CFString
-            ) == .success else {
-                return .unavailable
+            var valueWasSet = false
+            guard withConfirmedSearchField(processIdentifier: processIdentifier, operation: { field in
+                valueWasSet = AXUIElementSetAttributeValue(
+                    field, kAXValueAttribute as CFString, query as CFString
+                ) == .success
+                return true
+            }) else {
+                return .failed(.targetChanged)
             }
-            searchField = field
+            guard valueWasSet else { return .unavailable }
             await settle(for: 0.08)
             return .delivered
 
         case .unicodeEvent:
-            postKey(
+            guard postKey(
                 keyCode: 0x00,
                 flags: .maskCommand,
                 processIdentifier: processIdentifier
-            )
+            ) else { return .failed(.targetChanged) }
             await settle(for: 0.03)
             guard postUnicode(query, processIdentifier: processIdentifier) else {
-                return .unavailable
+                return .failed(.targetChanged)
             }
             await settle(for: 0.15)
             return .delivered
@@ -326,9 +329,12 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
     func readQuery() async -> TelegramSearchReadback? {
         guard let processIdentifier = activeTelegramProcessIdentifier() else { return nil }
 
-        if let field = searchField ?? locateSearchField(processIdentifier: processIdentifier),
-           let value = stringAttribute(kAXValueAttribute, from: field) {
-            searchField = field
+        var value: String?
+        guard withConfirmedSearchField(processIdentifier: processIdentifier, operation: { field in
+            value = stringAttribute(kAXValueAttribute, from: field)
+            return true
+        }) else { return nil }
+        if let value {
             return TelegramSearchReadback(text: value, verification: .accessibility)
         }
 
@@ -344,7 +350,8 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
     }
 
     private func activeTelegramProcessIdentifier() -> pid_t? {
-        guard let application,
+        guard !Task.isCancelled,
+              let application,
               !application.isTerminated,
               NSWorkspace.shared.frontmostApplication?.processIdentifier ==
                 application.processIdentifier else {
@@ -353,13 +360,48 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
         return application.processIdentifier
     }
 
+    static func withVerifiedSearchField(
+        capturedField: AXUIElement?,
+        focusedField: AXUIElement?,
+        isWritable: Bool,
+        score: Int,
+        operation: (AXUIElement) -> Bool
+    ) -> Bool {
+        guard let capturedField, isWritable, score > 0,
+              AccessibilityManager.areSameAccessibilityElement(capturedField, focusedField) else {
+            return false
+        }
+        return operation(capturedField)
+    }
+
+    private func withConfirmedSearchField(
+        processIdentifier: pid_t,
+        operation: (AXUIElement) -> Bool
+    ) -> Bool {
+        guard activeTelegramProcessIdentifier() == processIdentifier,
+              AXIsProcessTrusted(),
+              !AccessibilityManager.shared.isSecureEventInputEnabled(),
+              let searchField else { return false }
+        let focusedField = elementAttribute(
+            kAXFocusedUIElementAttribute,
+            from: AXUIElementCreateApplication(processIdentifier)
+        )
+        return Self.withVerifiedSearchField(
+            capturedField: searchField,
+            focusedField: focusedField,
+            isWritable: isWritableTextElement(searchField),
+            score: searchFieldScore(searchField),
+            operation: operation
+        )
+    }
+
     private func locateSearchField(processIdentifier: pid_t) -> AXUIElement? {
         let applicationElement = AXUIElementCreateApplication(processIdentifier)
 
         if let focused = elementAttribute(
             kAXFocusedUIElementAttribute,
             from: applicationElement
-        ), isWritableTextElement(focused) {
+        ), isWritableTextElement(focused), searchFieldScore(focused) > 0 {
             return focused
         }
 
@@ -467,21 +509,30 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
         keyCode: CGKeyCode,
         flags: CGEventFlags,
         processIdentifier: pid_t
-    ) {
+    ) -> Bool {
         let source = CGEventSource(stateID: .hidSystemState)
-        let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
-        let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
-        down?.flags = flags
-        up?.flags = flags
-        down?.postToPid(processIdentifier)
-        up?.postToPid(processIdentifier)
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false) else {
+            return false
+        }
+        down.flags = flags
+        up.flags = flags
+        return withConfirmedSearchField(processIdentifier: processIdentifier) { _ in
+            down.postToPid(processIdentifier)
+            up.postToPid(processIdentifier)
+            return true
+        }
     }
 
     private func postUnicode(_ text: String, processIdentifier: pid_t) -> Bool {
         let source = CGEventSource(stateID: .hidSystemState)
         let units = Array(text.utf16)
-        guard !units.isEmpty else { return false }
+        guard !units.isEmpty,
+              withConfirmedSearchField(processIdentifier: processIdentifier, operation: { _ in true }) else {
+            return false
+        }
 
+        var postedAny = false
         for offset in stride(from: 0, to: units.count, by: 20) {
             let end = min(offset + 20, units.count)
             var chunk = Array(units[offset..<end])
@@ -494,7 +545,7 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
                 virtualKey: 0,
                 keyDown: false
             ) else {
-                return false
+                return postedAny
             }
             chunk.withUnsafeMutableBufferPointer { buffer in
                 down.keyboardSetUnicodeString(
@@ -508,6 +559,7 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
             }
             down.postToPid(processIdentifier)
             up.postToPid(processIdentifier)
+            postedAny = true
         }
         return true
     }
@@ -517,50 +569,73 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
         processIdentifier: pid_t
     ) async -> TelegramSearchDeliveryResult {
         let pasteboard = NSPasteboard.general
-        guard let snapshot = AccessibilityManager.capturePasteboardSnapshot(from: pasteboard),
-              stablePasteboardState(pasteboard) != nil else {
+        guard let initialState = Self.stablePasteboardState(pasteboard),
+              let snapshot = AccessibilityManager.capturePasteboardSnapshot(from: pasteboard) else {
             return .failed(.clipboardUnavailable)
         }
         defer { snapshot.discardTemporaryFiles() }
+        guard Self.stablePasteboardState(pasteboard) == initialState else {
+            return .failed(.clipboardContended)
+        }
+        guard withConfirmedSearchField(processIdentifier: processIdentifier, operation: { _ in true }) else {
+            return .failed(.targetChanged)
+        }
 
-        pasteboard.clearContents()
+        let ownedChangeCount = pasteboard.clearContents()
         guard pasteboard.setString(query, forType: .string),
-              let ownedState = stablePasteboardState(pasteboard) else {
-            _ = AccessibilityManager.restorePasteboardSnapshot(snapshot, to: pasteboard)
+              let ownedState = Self.stablePasteboardState(pasteboard),
+              ownedState.changeCount == ownedChangeCount,
+              ownedState.string == query else {
+            if let currentState = Self.stablePasteboardState(pasteboard),
+               currentState.changeCount == ownedChangeCount {
+                _ = AccessibilityManager.restorePasteboardSnapshot(
+                    snapshot, to: pasteboard, ifCurrentStateMatches: currentState
+                )
+            }
             return .failed(.clipboardUnavailable)
         }
 
-        postKey(keyCode: 0x00, flags: .maskCommand, processIdentifier: processIdentifier)
-        await settle(for: 0.02)
-        postKey(keyCode: 0x09, flags: .maskCommand, processIdentifier: processIdentifier)
-        await settle(for: 0.35)
+        var delivered = false
+        if postKey(keyCode: 0x00, flags: .maskCommand, processIdentifier: processIdentifier) {
+            await settle(for: 0.02)
+            if Self.stablePasteboardState(pasteboard) == ownedState,
+               postKey(keyCode: 0x09, flags: .maskCommand, processIdentifier: processIdentifier) {
+                delivered = true
+                await settle(for: 0.35)
+            }
+        }
 
         guard AccessibilityManager.restorePasteboardSnapshot(
             snapshot,
             to: pasteboard,
             ifCurrentStateMatches: ownedState
         ) else {
-            return .failed(.clipboardContended)
+            return .failed(.clipboardContended, effect: delivered ? .queryMayHaveBeenApplied : .none)
         }
-        return .delivered
+        return delivered ? .delivered : .failed(.targetChanged)
     }
 
     private func copyFocusedQuery(processIdentifier: pid_t) async -> String? {
         let pasteboard = NSPasteboard.general
-        guard let snapshot = AccessibilityManager.capturePasteboardSnapshot(from: pasteboard),
-              let initialState = stablePasteboardState(pasteboard) else {
+        guard let initialState = Self.stablePasteboardState(pasteboard),
+              let snapshot = AccessibilityManager.capturePasteboardSnapshot(from: pasteboard) else {
             return nil
         }
         defer { snapshot.discardTemporaryFiles() }
+        guard Self.stablePasteboardState(pasteboard) == initialState else { return nil }
 
-        postKey(keyCode: 0x00, flags: .maskCommand, processIdentifier: processIdentifier)
+        guard postKey(keyCode: 0x00, flags: .maskCommand, processIdentifier: processIdentifier) else { return nil }
         await settle(for: 0.02)
-        postKey(keyCode: 0x08, flags: .maskCommand, processIdentifier: processIdentifier)
+        guard Self.stablePasteboardState(pasteboard) == initialState,
+              postKey(keyCode: 0x08, flags: .maskCommand, processIdentifier: processIdentifier) else { return nil }
 
         var copiedState: AccessibilityManager.PasteboardState?
         for _ in 0..<12 {
             await settle(for: 0.025)
-            guard let state = stablePasteboardState(pasteboard) else { continue }
+            guard withConfirmedSearchField(processIdentifier: processIdentifier, operation: { _ in true }) else {
+                return nil
+            }
+            guard let state = Self.stablePasteboardState(pasteboard) else { continue }
             if state.changeCount != initialState.changeCount, state.string != nil {
                 copiedState = state
                 break
@@ -568,16 +643,30 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
         }
         guard let copiedState else { return nil }
 
-        let copiedText = copiedState.string
-        _ = AccessibilityManager.restorePasteboardSnapshot(
-            snapshot,
-            to: pasteboard,
-            ifCurrentStateMatches: copiedState
+        let copiedText = Self.finishQueryReadback(
+            snapshot: snapshot, pasteboard: pasteboard,
+            initialState: initialState, copiedState: copiedState
         )
-        return copiedText
+        return withConfirmedSearchField(processIdentifier: processIdentifier, operation: { _ in true })
+            ? copiedText : nil
     }
 
-    private func stablePasteboardState(
+    static func finishQueryReadback(
+        snapshot: AccessibilityManager.PasteboardSnapshot,
+        pasteboard: NSPasteboard,
+        initialState: AccessibilityManager.PasteboardState,
+        copiedState: AccessibilityManager.PasteboardState
+    ) -> String? {
+        guard let currentState = stablePasteboardState(pasteboard),
+              AccessibilityManager.shouldRestorePasteboardSnapshot(
+                initialState: initialState, observedState: copiedState, currentState: currentState
+              ), AccessibilityManager.restorePasteboardSnapshot(
+                snapshot, to: pasteboard, ifCurrentStateMatches: currentState
+              ) else { return nil }
+        return copiedState.string
+    }
+
+    private static func stablePasteboardState(
         _ pasteboard: NSPasteboard
     ) -> AccessibilityManager.PasteboardState? {
         AccessibilityManager.stablePasteboardState(

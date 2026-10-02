@@ -79,6 +79,7 @@ final class PluginManager: Sendable {
     }
 
     enum PluginInstallFailure: Equatable, Sendable {
+        case operationInProgress
         case invalidPackage
         case invalidIdentifier(String)
         case destinationIdentifierConflict(existingIdentifier: String)
@@ -88,6 +89,8 @@ final class PluginManager: Sendable {
 
         func localizedMessage(sourcePath: String) -> String {
             switch self {
+            case .operationInProgress:
+                return PluginMutationError.busy.localizedDescription
             case .invalidPackage:
                 return "Invalid plugin package. Make sure the .actionhaloext folder contains a valid Config.json.".localized
             case .invalidIdentifier(let message):
@@ -110,6 +113,22 @@ final class PluginManager: Sendable {
             }
         }
     }
+
+    enum PluginMutationError: LocalizedError, Sendable {
+        case busy
+
+        var errorDescription: String? {
+            "Another plugin operation is in progress. Please try again shortly.".localized
+        }
+    }
+
+    // ponytail: One nonblocking lock serializes all in-process plugin writes,
+    // even for different plugins. Recursive entry keeps nested cleanup atomic;
+    // external file editors are outside this guarantee.
+    private static let pluginMutationLock = NSRecursiveLock()
+
+    static func tryBeginPluginMutation() -> Bool { pluginMutationLock.try() }
+    static func endPluginMutation() { pluginMutationLock.unlock() }
 
     enum PluginInstallResult: Equatable, Sendable {
         case installed
@@ -570,6 +589,8 @@ final class PluginManager: Sendable {
     }
 
     static func repairHiddenUserPluginPackages(in userPluginsURL: URL, fileManager: FileManager = .default) {
+        guard tryBeginPluginMutation() else { return }
+        defer { endPluginMutation() }
         let contents = (try? fileManager.contentsOfDirectory(
             at: userPluginsURL,
             includingPropertiesForKeys: [.isDirectoryKey],
@@ -605,6 +626,8 @@ final class PluginManager: Sendable {
         minimumAge: TimeInterval = pendingOperationRecoveryMinimumAge,
         now: Date = Date()
     ) -> PendingOperationRecoveryResult {
+        guard tryBeginPluginMutation() else { return PendingOperationRecoveryResult() }
+        defer { endPluginMutation() }
         var result = PendingOperationRecoveryResult()
         let contents = (try? fileManager.contentsOfDirectory(
             at: userPluginsURL,
@@ -1108,6 +1131,15 @@ final class PluginManager: Sendable {
         return userPluginURLs(for: identifier).first
     }
 
+    static func builtInPluginURL(
+        for identifier: String,
+        in directoryURL: URL = PluginManager.shared.builtInPluginsURL
+    ) -> URL? {
+        pluginPackageDirectories(in: directoryURL).first { packageURL in
+            PluginLoader.load(from: packageURL, source: .bundled)?.id == identifier
+        }
+    }
+
     func userPluginURLs(for identifier: String) -> [URL] {
         guard Self.pluginIdentifierValidationMessage(
             identifier,
@@ -1146,6 +1178,8 @@ final class PluginManager: Sendable {
     }
 
     func removeDuplicateUserPlugins(for identifier: String, keeping preservedURL: URL? = nil) {
+        guard Self.tryBeginPluginMutation() else { return }
+        defer { Self.endPluginMutation() }
         for url in userPluginURLs(for: identifier) where !Self.shouldPreservePluginURL(url, preservedURL: preservedURL) {
             guard Self.isPluginDirectory(url, inside: userPluginsURL) else { continue }
             try? FileManager.default.removeItem(at: url)
@@ -1162,6 +1196,8 @@ final class PluginManager: Sendable {
         if PluginManager.coreDefaultPluginIDs.contains(plugin.id) {
             return
         }
+        guard Self.tryBeginPluginMutation() else { throw PluginMutationError.busy }
+        defer { Self.endPluginMutation() }
         
         let isBuiltIn = Self.isBuiltInPluginDirectory(plugin.directoryURL, builtInPluginsURL: builtInPluginsURL)
         let actualUserPluginURL = Self.isPluginDirectory(
@@ -1777,27 +1813,64 @@ final class PluginManager: Sendable {
         guard source.contains("{text}") else { return source }
 
         let literal = appleScriptStringLiteralExpression(for: text)
+        let stringContent = appleScriptStringLiteralContent(for: text)
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\n", with: "\\n")
         let token = "{text}"
         var result = ""
         var index = source.startIndex
         var insideString = false
         var escaping = false
+        var insideLineComment = false
+        var blockCommentDepth = 0
 
         while index < source.endIndex {
-            if source[index...].hasPrefix(token) {
-                result += insideString ? "\" & \(literal) & \"" : literal
-                index = source.index(index, offsetBy: token.count)
-                escaping = false
+            let remaining = source[index...]
+            let character = source[index]
+
+            if insideLineComment {
+                result.append(character)
+                if character.isNewline {
+                    insideLineComment = false
+                }
+                index = source.index(after: index)
                 continue
             }
 
-            let character = source[index]
+            if !insideString {
+                if remaining.hasPrefix("--") || (blockCommentDepth == 0 && character == "#") {
+                    insideLineComment = true
+                    continue
+                }
+                if remaining.hasPrefix("(*") {
+                    blockCommentDepth += 1
+                    result += "(*"
+                    index = source.index(index, offsetBy: 2)
+                    continue
+                }
+                if blockCommentDepth > 0 && remaining.hasPrefix("*)") {
+                    blockCommentDepth -= 1
+                    result += "*)"
+                    index = source.index(index, offsetBy: 2)
+                    continue
+                }
+            }
+
+            if blockCommentDepth == 0 && !escaping && remaining.hasPrefix(token) {
+                // Preserve the surrounding expression's precedence, including
+                // `character 1 of "{text}"` and `quoted form of "{text}"`.
+                result += insideString ? stringContent : "(\(literal))"
+                index = source.index(index, offsetBy: token.count)
+                continue
+            }
+
             result.append(character)
 
             if character == "\"" && !escaping {
                 insideString.toggle()
             }
-            escaping = character == "\\" && !escaping
+            escaping = insideString && character == "\\" && !escaping
             if character != "\\" {
                 escaping = false
             }
@@ -2016,6 +2089,8 @@ final class PluginManager: Sendable {
         from sourceURL: URL,
         expectedPreviewFingerprint: String? = nil
     ) -> PluginInstallResult {
+        guard Self.tryBeginPluginMutation() else { return .failed(.operationInProgress) }
+        defer { Self.endPluginMutation() }
         // macOS hands us a security-scoped URL when double-clicked outside our sandbox
         let accessGranted = sourceURL.startAccessingSecurityScopedResource()
         defer {

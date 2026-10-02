@@ -21,6 +21,7 @@ final class RadialMenuWindow: NSPanel {
     private var presentationGeneration: UInt64 = 0
     private var isDismissing = false
     private var dismissalRequested = false
+    private var keyboardNavigationEnabled = false
     private let dismissDeadzoneRadius: CGFloat = 16
     private let outsideDismissPadding: CGFloat = 60
     private let compactWindowPadding: CGFloat = 28
@@ -83,14 +84,29 @@ final class RadialMenuWindow: NSPanel {
                 self.currentPage += 1
                 self.renderCurrentPage(allowCursorWarp: false)
                 self.radialMenuView.beginInteractionSession()
+                if self.keyboardNavigationEnabled {
+                    self.radialMenuView.prepareForKeyboardNavigation()
+                }
             case .pagePrev:
                 self.currentPage -= 1
                 self.renderCurrentPage(allowCursorWarp: false)
                 self.radialMenuView.beginInteractionSession()
+                if self.keyboardNavigationEnabled {
+                    self.radialMenuView.prepareForKeyboardNavigation()
+                }
             default:
+                let releaseKeyboardFocus = self.keyboardNavigationEnabled
+                let selectionGeneration = self.presentationGeneration
                 self.dismissalRequested = true
                 self.disableInput()
-                self.onItemSelected?(item)
+                if releaseKeyboardFocus {
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, self.presentationGeneration == selectionGeneration else { return }
+                        self.onItemSelected?(item)
+                    }
+                } else {
+                    self.onItemSelected?(item)
+                }
             }
         }
         
@@ -103,10 +119,16 @@ final class RadialMenuWindow: NSPanel {
     
     // MARK: - Show / Hide
     
-    func showMenu(at screenPoint: NSPoint, items: [RadialMenuItem], selectedText: String) {
+    func showMenu(
+        at screenPoint: NSPoint,
+        items: [RadialMenuItem],
+        selectedText: String,
+        keyboardNavigation: Bool = false
+    ) {
         presentationGeneration &+= 1
         isDismissing = false
         dismissalRequested = false
+        keyboardNavigationEnabled = keyboardNavigation
         ignoresMouseEvents = false
         radialMenuView.beginInteractionSession()
         self.allItems = items
@@ -134,7 +156,13 @@ final class RadialMenuWindow: NSPanel {
         CATransaction.commit()
 
         renderCurrentPage(allowCursorWarp: true)
-        orderFront(nil)
+        if keyboardNavigationEnabled {
+            makeKeyAndOrderFront(nil)
+            makeFirstResponder(radialMenuView)
+            radialMenuView.prepareForKeyboardNavigation()
+        } else {
+            orderFront(nil)
+        }
     }
     
     private func renderCurrentPage(allowCursorWarp: Bool) {
@@ -359,6 +387,11 @@ final class RadialMenuWindow: NSPanel {
         ignoresMouseEvents = true
         radialMenuView.endInteractionSession()
         tearDownDismissMonitors()
+        if keyboardNavigationEnabled {
+            // Restore the source application's keyboard focus before action validation.
+            keyboardNavigationEnabled = false
+            orderOut(nil)
+        }
     }
 
     // MARK: - Screen positioning
@@ -384,8 +417,9 @@ final class RadialMenuWindow: NSPanel {
         
         // Local monitor to catch ESC key even though we are .nonactivatingPanel
         localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === self else { return event }
             if event.keyCode == 53 /* Esc */ {
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     guard let self, self.presentationGeneration == monitorGeneration else { return }
                     self.requestDismissal()
                 }
@@ -425,6 +459,7 @@ final class RadialMenuWindow: NSPanel {
         }
     }
     
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { keyboardNavigationEnabled }
+    override var canBecomeMain: Bool { false }
     
 }

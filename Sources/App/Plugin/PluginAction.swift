@@ -67,6 +67,10 @@ struct PluginKeyCombo: Equatable, Sendable {
         self.modifierFlags = modifierFlags
     }
 
+    static func keyName(for keyCode: CGKeyCode) -> String? {
+        keyCodes.filter { $0.value == keyCode }.keys.min()
+    }
+
     private static let keyCodes: [String: CGKeyCode] = [
         "a": 0x00, "b": 0x0B, "c": 0x08, "d": 0x02, "e": 0x0E,
         "f": 0x03, "g": 0x05, "h": 0x04, "i": 0x22, "j": 0x26,
@@ -81,6 +85,10 @@ struct PluginKeyCombo: Equatable, Sendable {
         "return": 0x24, "tab": 0x30, "space": 0x31,
         "delete": 0x33, "esc": 0x35, "escape": 0x35, "left": 0x7B, "right": 0x7C,
         "up": 0x7E, "down": 0x7D,
+        "f1": 0x7A, "f2": 0x78, "f3": 0x63, "f4": 0x76, "f5": 0x60,
+        "f6": 0x61, "f7": 0x62, "f8": 0x64, "f9": 0x65, "f10": 0x6D,
+        "f11": 0x67, "f12": 0x6F, "f13": 0x69, "f14": 0x6B, "f15": 0x71,
+        "f16": 0x6A, "f17": 0x40, "f18": 0x4F, "f19": 0x50, "f20": 0x5A,
     ]
 }
 

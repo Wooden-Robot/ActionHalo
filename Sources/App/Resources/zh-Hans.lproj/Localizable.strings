@@ -348,3 +348,6 @@
 "preparing the ActionHalo plugin folder" = "准备 ActionHalo 插件目录";
 "migrating the login item" = "迁移登录项";
 "recording migration completion" = "记录迁移完成状态";
+"ENTER · SELECT  ESC · CLOSE" = "回车执行 · Esc 关闭";
+"Use arrow keys or Tab to choose an action, Enter to run it, and Escape to close." = "使用方向键或 Tab 选择动作，按回车执行，按 Esc 关闭。";
+"Another plugin operation is in progress. Please try again shortly." = "另一个插件操作正在进行，请稍后重试。";

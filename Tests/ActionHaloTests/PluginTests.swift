@@ -305,7 +305,7 @@ final class PluginTests: XCTestCase {
         )
         let unsupportedKey = try makePluginBundle(
             identifier: "com.test.unsupported-key",
-            actionJSON: #"{ "type": "key-combo", "key": "f13" }"#
+            actionJSON: #"{ "type": "key-combo", "key": "not-a-key" }"#
         )
         let unsupportedModifier = try makePluginBundle(
             identifier: "com.test.unsupported-modifier",
@@ -315,6 +315,50 @@ final class PluginTests: XCTestCase {
         XCTAssertNil(PluginLoader.load(from: missingScript))
         XCTAssertNil(PluginLoader.load(from: unsupportedKey))
         XCTAssertNil(PluginLoader.load(from: unsupportedModifier))
+    }
+
+    func testPluginLoaderRequiresReferencedScriptsInPackagesAndStaging() throws {
+        for (type, scriptName, scriptContent) in [
+            ("shell-script", "script.sh", "echo test"),
+            ("applescript", "script.applescript", "return 1"),
+        ] {
+            let bundleURL = try makePluginBundle(
+                identifier: "com.test.script-file",
+                actionJSON: #"{ "type": "\#(type)", "script": "\#(scriptName)" }"#
+            )
+            let stagingURL = bundleURL.appendingPathExtension("pending")
+            temporaryDirectories.append(stagingURL)
+            try FileManager.default.copyItem(at: bundleURL, to: stagingURL)
+
+            for packageURL in [bundleURL, stagingURL] {
+                XCTAssertNil(PluginLoader.load(from: packageURL))
+                XCTAssertNil(PluginLoader.load(from: packageURL, source: .bundled))
+
+                try scriptContent.write(
+                    to: packageURL.appendingPathComponent(scriptName),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                XCTAssertEqual(PluginLoader.load(from: packageURL)?.action.scriptReference, scriptName)
+                XCTAssertNotNil(PluginLoader.load(from: packageURL, source: .bundled))
+            }
+        }
+    }
+
+    func testPluginLoaderPreservesLegacyAndExplicitInlineScripts() throws {
+        for (type, content) in [
+            ("shell-script", "echo test"),
+            ("applescript", "return 1"),
+        ] {
+            for field in ["script", "inline"] {
+                let bundleURL = try makePluginBundle(
+                    identifier: "com.test.inline-script",
+                    actionJSON: #"{ "type": "\#(type)", "\#(field)": "\#(content)" }"#
+                )
+
+                XCTAssertNotNil(PluginLoader.load(from: bundleURL))
+            }
+        }
     }
 
     func testNativeCommandsAreRestrictedToBundledPackages() throws {

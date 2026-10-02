@@ -357,6 +357,68 @@ final class LegacyDataImporterTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: outsideFile.path))
     }
 
+    func testInvalidActionsAreSkippedWhileOtherLegacyPluginsImport() throws {
+        let store = InMemoryDefaultsDomainStore()
+        let paths = try makeImportPaths(
+            createSourceDirectory: true,
+            createDestinationDirectory: true
+        )
+        let invalidActions = [
+            #"{ "type": "shell-script" }"#,
+            #"{ "type": "applescript", "inline": " " }"#,
+            #"{ "type": "url", "url": "" }"#,
+            #"{ "type": "key-combo", "key": "invalid" }"#,
+            #"{ "type": "native-command", "command": "telegram-search" }"#,
+            #"{ "type": "native-command", "command": "unknown" }"#,
+            #"{ "type": "telegram-search" }"#,
+        ]
+        var preservedConfigs: [(url: URL, data: Data)] = []
+        for (directoryIndex, directory) in [paths.source, paths.destination].enumerated() {
+            for (actionIndex, actionJSON) in invalidActions.enumerated() {
+                let package = try makePackage(
+                    in: directory,
+                    name: "Broken-\(directoryIndex)-\(actionIndex).openfireext",
+                    identifier: "com.openfire.broken-\(directoryIndex)-\(actionIndex)",
+                    actionJSON: actionJSON
+                )
+                let configURL = package.appendingPathComponent("Config.json")
+                preservedConfigs.append((configURL, try Data(contentsOf: configURL)))
+            }
+        }
+        let goodPackage = try makePackage(
+            in: paths.source,
+            name: "Good.openfireext",
+            identifier: "com.openfire.good",
+            actionJSON: #"{ "type": "copy" }"#
+        )
+        let goodConfigURL = goodPackage.appendingPathComponent("Config.json")
+        preservedConfigs.append((goodConfigURL, try Data(contentsOf: goodConfigURL)))
+
+        let result = makeImporter(store: store, paths: paths).importIfNeeded()
+        let destinationDomain = try store.persistentDomain(
+            forName: LegacyDataImporter.destinationDefaultsDomain
+        )
+
+        XCTAssertEqual(result.state, .completed)
+        XCTAssertTrue(result.markerWritten)
+        XCTAssertTrue(result.isFullySuccessful)
+        XCTAssertEqual(result.skippedPlugins.count, invalidActions.count * 2)
+        XCTAssertTrue(result.skippedPlugins.allSatisfy {
+            if case .incompatible = $0.reason { return true }
+            return false
+        })
+        XCTAssertEqual(result.importedPlugins.map(\.identifier), ["com.actionhalo.good"])
+        let imported = try XCTUnwrap(result.importedPlugins.first)
+        XCTAssertEqual(PluginLoader.load(from: imported.destinationURL)?.id, imported.identifier)
+        XCTAssertEqual(
+            destinationDomain[LegacyDataImporter.importMarkerKey] as? Int,
+            LegacyDataImporter.currentImportVersion
+        )
+        for original in preservedConfigs {
+            XCTAssertEqual(try Data(contentsOf: original.url), original.data)
+        }
+    }
+
     func testImportsActionHaloExtensionFromLegacyDirectory() throws {
         let store = InMemoryDefaultsDomainStore()
         let paths = try makeImportPaths(createSourceDirectory: true)

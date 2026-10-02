@@ -19,6 +19,7 @@ final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableVie
         window.center()
         window.isReleasedWhenClosed = false
         window.backgroundColor = .windowBackgroundColor
+        window.contentMinSize = NSSize(width: 400, height: 300)
         
         super.init(window: window)
         setupUI()
@@ -37,10 +38,12 @@ final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableVie
         label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         label.textColor = .secondaryLabelColor
         label.frame = NSRect(x: 20, y: 260, width: 320, height: 20)
+        label.autoresizingMask = [.width, .minYMargin]
         contentView.addSubview(label)
         
         // Add App Button (+)
         let addBtn = NSButton(frame: NSRect(x: 350, y: 257, width: 30, height: 24))
+        addBtn.autoresizingMask = [.minXMargin, .minYMargin]
         addBtn.bezelStyle = .inline
         addBtn.isBordered = false
         addBtn.title = ""

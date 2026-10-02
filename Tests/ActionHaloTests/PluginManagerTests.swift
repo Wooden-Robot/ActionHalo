@@ -24,6 +24,21 @@ private final class ThreadRecordingFileManager: FileManager, @unchecked Sendable
     }
 }
 
+private final class BlockingPluginSaveFileManager: FileManager, @unchecked Sendable {
+    let didStagePackage = DispatchSemaphore(value: 0)
+    let resumeSave = DispatchSemaphore(value: 0)
+
+    override func copyItem(at sourceURL: URL, to destinationURL: URL) throws {
+        try super.copyItem(at: sourceURL, to: destinationURL)
+        if destinationURL.lastPathComponent.hasPrefix(".save-") {
+            didStagePackage.signal()
+            guard resumeSave.wait(timeout: .now() + 10) == .success else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+        }
+    }
+}
+
 final class PluginManagerTests: GlobalStateTestCase {
     private var temporaryDirectories: [URL] = []
     private let defaultsKeys = [
@@ -1039,6 +1054,83 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertEqual(manager.installPluginDetailed(from: invalidURL), .failed(.invalidPackage))
     }
 
+    func testSavingRejectsConcurrentPluginMutationsWithoutChangingFilesAndAllowsRetry() throws {
+        let manager = PluginManager.shared
+        let identifier = "com.test.concurrent-save"
+        let sourceURL = try makePluginBundle(identifier: identifier, name: "Installed")
+        try FileManager.default.createDirectory(at: manager.userPluginsURL, withIntermediateDirectories: true)
+        let destinationURL = manager.userPluginsURL.appendingPathComponent(
+            PluginManager.visibleUserPluginFileName(for: identifier)
+        )
+        try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+        let duplicateURL = manager.userPluginsURL.appendingPathComponent("Duplicate.actionhaloext")
+        try FileManager.default.copyItem(at: sourceURL, to: duplicateURL)
+        let originalConfig = try Data(contentsOf: destinationURL.appendingPathComponent("Config.json"))
+        let plugin = try XCTUnwrap(PluginLoader.load(from: destinationURL))
+        let editedConfig = Data(pluginConfig(identifier: identifier, name: "Saved").utf8)
+        let fileManager = BlockingPluginSaveFileManager()
+        let saveFinished = DispatchSemaphore(value: 0)
+        let saveError = LockedState<String?>(initialState: nil)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer { saveFinished.signal() }
+            do {
+                try PluginEditorWindow.writePluginPackageAtomically(
+                    bundleURL: destinationURL, templateURL: destinationURL,
+                    configData: editedConfig, scriptFileName: nil, scriptContent: nil,
+                    customIconSourceURL: nil, shouldKeepCustomIcon: false,
+                    fileManager: fileManager
+                )
+            } catch {
+                saveError.withLock { $0 = error.localizedDescription }
+            }
+        }
+        var saveDidFinish = false
+        defer {
+            fileManager.resumeSave.signal()
+            if !saveDidFinish { _ = saveFinished.wait(timeout: .now() + 5) }
+        }
+        XCTAssertEqual(fileManager.didStagePackage.wait(timeout: .now() + 5), .success)
+        let filesDuringSave = try FileManager.default.contentsOfDirectory(atPath: manager.userPluginsURL.path).sorted()
+
+        XCTAssertThrowsError(try manager.deletePlugin(plugin)) {
+            XCTAssertTrue($0 is PluginManager.PluginMutationError)
+        }
+        XCTAssertEqual(manager.installPluginDetailed(from: sourceURL), .failed(.operationInProgress))
+        XCTAssertThrowsError(try PluginEditorWindow.writePluginPackageAtomically(
+            bundleURL: destinationURL, templateURL: destinationURL,
+            configData: editedConfig, scriptFileName: nil, scriptContent: nil,
+            customIconSourceURL: nil, shouldKeepCustomIcon: false
+        )) {
+            XCTAssertTrue($0 is PluginManager.PluginMutationError)
+        }
+        manager.removeDuplicateUserPlugins(for: identifier, keeping: destinationURL)
+        XCTAssertFalse(PluginManager.recoverInterruptedPluginOperations(
+            in: manager.userPluginsURL, minimumAge: 0
+        ).didRecoverAnything)
+        PluginManager.repairHiddenUserPluginPackages(in: manager.userPluginsURL)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: manager.userPluginsURL.path).sorted(),
+            filesDuringSave
+        )
+        XCTAssertEqual(try Data(contentsOf: destinationURL.appendingPathComponent("Config.json")), originalConfig)
+
+        fileManager.resumeSave.signal()
+        saveDidFinish = saveFinished.wait(timeout: .now() + 5) == .success
+        XCTAssertTrue(saveDidFinish)
+        XCTAssertNil(saveError.withLock { $0 })
+        XCTAssertEqual(PluginLoader.load(from: destinationURL)?.config.name, "Saved")
+        let installReload = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: manager)
+        XCTAssertEqual(manager.installPluginDetailed(from: sourceURL), .installed)
+        wait(for: [installReload], timeout: 5)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: duplicateURL.path))
+        XCTAssertEqual(PluginLoader.load(from: destinationURL)?.config.name, "Installed")
+        let deleteReload = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: manager)
+        XCTAssertNoThrow(try manager.deletePlugin(plugin))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
+        wait(for: [deleteReload], timeout: 5)
+    }
+
     func testInstallPackagePreflightRejectsFileCountAndByteLimits() throws {
         let pluginURL = try makePluginBundle(identifier: "com.test.install-limits", name: "Limits")
         try "helper".write(
@@ -1801,7 +1893,7 @@ final class PluginManagerTests: GlobalStateTestCase {
             text: #"a "quoted" value"#
         )
 
-        XCTAssertEqual(rendered, #"set query to "prefix " & "a \"quoted\" value" & " suffix""#)
+        XCTAssertEqual(rendered, #"set query to "prefix a \"quoted\" value suffix""#)
     }
 
     func testRenderedAppleScriptSourceUsesLiteralExpressionOutsideString() {
@@ -1810,7 +1902,83 @@ final class PluginManagerTests: GlobalStateTestCase {
             text: "line 1\nline 2"
         )
 
-        XCTAssertEqual(rendered, #"set query to "line 1" & linefeed & "line 2""#)
+        XCTAssertEqual(rendered, #"set query to ("line 1" & linefeed & "line 2")"#)
+    }
+
+    func testRenderedAppleScriptSourcePreservesStringExpressionResults() throws {
+        let cases: [(source: String, text: String, expected: String)] = [
+            (#"return length of "{text}""#, "hello", "5"),
+            (#"return character 1 of "{text}""#, "hello", #""h""#),
+            (
+                #"return quoted form of "{text}""#,
+                "O'Reilly; sample",
+                PluginManager.appleScriptStringLiteralExpression(for: "'O'\\''Reilly; sample'")
+            ),
+            ("return length of {text}", "hello\nworld", "11"),
+            (
+                #"return "prefix {text} suffix""#,
+                "a \"quoted\" \\ value\r\n第二行\rthird",
+                PluginManager.appleScriptStringLiteralExpression(
+                    for: "prefix a \"quoted\" \\ value\n第二行\nthird suffix"
+                )
+            ),
+            (#"return "{text}{text}""#, "hello", #""hellohello""#),
+            (
+                #"return "\"{text}\\""#,
+                #"a\b""#,
+                PluginManager.appleScriptStringLiteralExpression(for: "\"a\\b\"\\")
+            ),
+            (
+                #"return "\\{text}""#,
+                #""quoted""#,
+                PluginManager.appleScriptStringLiteralExpression(for: "\\\"quoted\"")
+            ),
+            ("-- an unmatched \" and {text}\nreturn \"{text}\"", "hello", #""hello""#),
+            ("# an unmatched \" and {text}\nreturn \"{text}\"", "hello", #""hello""#),
+            (
+                "(* outer \"*)\" (* nested \"{text}\" *) -- quote \"\n finish *)\nreturn \"{text}\"",
+                "hello",
+                #""hello""#
+            ),
+            (#"return "(* -- # {text} *)""#, "hello", #""(* -- # hello *)""#),
+        ]
+        let source = cases.enumerated().map { index, testCase in
+            let rendered = PluginManager.renderedAppleScriptSource(
+                testCase.source,
+                text: testCase.text
+            )
+            return """
+            on evaluatePlaceholder\(index)()
+                \(rendered)
+            end evaluatePlaceholder\(index)
+            set actualResult to evaluatePlaceholder\(index)()
+            if actualResult is not (\(testCase.expected)) then
+                error "Placeholder case \(index) changed its expression result." number 1702
+            end if
+            """
+        }.joined(separator: "\n")
+
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(temporaryDirectory)
+        try FileManager.default.createDirectory(
+            at: temporaryDirectory,
+            withIntermediateDirectories: true
+        )
+        let scriptFile = temporaryDirectory.appendingPathComponent("placeholder-expressions.applescript")
+        try source.write(to: scriptFile, atomically: true, encoding: .utf8)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = [scriptFile.path]
+
+        XCTAssertEqual(
+            PluginManager.shared.runProcessWithTimeout(
+                process,
+                timeout: 5,
+                logPrefix: "AppleScript placeholder expression probe"
+            ),
+            0
+        )
     }
 
     private func makePlugin(name: String, identifier: String, order: Int, directory: String) -> Plugin {

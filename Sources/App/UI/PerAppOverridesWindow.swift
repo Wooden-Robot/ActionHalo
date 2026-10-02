@@ -26,6 +26,7 @@ final class PerAppOverridesWindow: NSWindowController, NSTableViewDelegate, NSTa
         window.center()
         window.isReleasedWhenClosed = false
         window.backgroundColor = .windowBackgroundColor
+        window.contentMinSize = NSSize(width: 520, height: 360)
 
         super.init(window: window)
         setupUI()
@@ -53,11 +54,13 @@ final class PerAppOverridesWindow: NSWindowController, NSTableViewDelegate, NSTa
         label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         label.textColor = .secondaryLabelColor
         label.frame = NSRect(x: 20, y: 320, width: 470, height: 32)
+        label.autoresizingMask = [.width, .minYMargin]
         label.lineBreakMode = .byWordWrapping
         label.maximumNumberOfLines = 2
         contentView.addSubview(label)
 
         searchField.frame = NSRect(x: 20, y: 286, width: 480, height: 28)
+        searchField.autoresizingMask = [.width, .minYMargin]
         searchField.placeholderString = "Filter by plugin or app".localized
         searchField.delegate = self
         contentView.addSubview(searchField)

@@ -152,22 +152,15 @@ class ShortcutRecorderField: NSView {
         if flags.contains(.shift) { mods.append("Shift") }
         if flags.contains(.command) { mods.append("Command") }
         
-        var keyName = ""
-        if keycode == 53 { keyName = "Esc" }
-        else if keycode == 36 { keyName = "Return" }
-        else if keycode == 48 { keyName = "Tab" }
-        else if keycode == 49 { keyName = "Space" }
-        else if keycode == 51 { keyName = "Delete" }
-        else if keycode == 123 { keyName = "Left" }
-        else if keycode == 124 { keyName = "Right" }
-        else if keycode == 125 { keyName = "Down" }
-        else if keycode == 126 { keyName = "Up" }
-        else if let chars = event.charactersIgnoringModifiers, !chars.isEmpty, chars.first!.isASCII {
+        // Use the execution map's base key; Shift's "+" or "?" is not a saved key.
+        var keyName = PluginKeyCombo.keyName(for: keycode)?.capitalized ?? ""
+        if keyName.isEmpty, requiresGlobalHotkeyModifier,
+           let chars = event.charactersIgnoringModifiers, !chars.isEmpty, chars.first!.isASCII {
             keyName = chars.uppercased()
         }
         
-        // As a fallback for some layouts, use the un-modifier characters
-        if keyName.isEmpty, let chars = event.characters, !chars.isEmpty, chars.first!.isASCII {
+        if keyName.isEmpty, requiresGlobalHotkeyModifier,
+           let chars = event.characters, !chars.isEmpty, chars.first!.isASCII {
             keyName = chars.uppercased()
         }
         
@@ -223,6 +216,61 @@ struct PluginEditorDirtyState: Equatable, Sendable {
     }
 }
 
+enum PluginDeletionPrompt: Equatable {
+    case restoreDefault
+    case hideBuiltIn
+    case delete
+
+    init(
+        plugin: Plugin,
+        builtInPluginsURL: URL = PluginManager.shared.builtInPluginsURL
+    ) {
+        let manager = PluginManager.shared
+        let hasUserOverride = PluginManager.isPluginDirectory(
+            plugin.directoryURL,
+            inside: manager.userPluginsURL
+        ) || manager.userPluginURL(for: plugin.id) != nil
+        if hasUserOverride {
+            let hiddenBuiltIns = UserDefaults.standard.stringArray(forKey: "deletedBuiltInPlugins") ?? []
+            let restoresDefault = !hiddenBuiltIns.contains(plugin.id) &&
+                PluginManager.builtInPluginURL(for: plugin.id, in: builtInPluginsURL) != nil
+            self = restoresDefault ? .restoreDefault : .delete
+        } else {
+            self = PluginManager.isBuiltInPluginDirectory(
+                plugin.directoryURL,
+                builtInPluginsURL: builtInPluginsURL
+            ) ? .hideBuiltIn : .delete
+        }
+    }
+
+    var buttonTitle: String {
+        self == .restoreDefault ? "Restore Default".localized : "Delete".localized
+    }
+
+    var confirmationTitle: String {
+        self == .restoreDefault ? "Restore Default".localized : "Confirm Delete".localized
+    }
+
+    var title: String {
+        switch self {
+        case .restoreDefault: return "Restore Default?".localized
+        case .hideBuiltIn: return "Delete Built-in Plugin?".localized
+        case .delete: return "Delete Plugin?".localized
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .restoreDefault:
+            return "Are you sure you want to delete your modifications to this plugin? It will be restored to the built-in default state.".localized
+        case .hideBuiltIn:
+            return "Are you sure you want to delete this built-in plugin? It will still exist but will be hidden from the list.".localized
+        case .delete:
+            return "Are you sure you want to completely delete this plugin? This action is irreversible.".localized
+        }
+    }
+}
+
 /// A visual editor window for creating and modifying ActionHalo plugins
 final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate, NSTextViewDelegate {
     static let maximumEditableScriptBytes = 1 * 1024 * 1024
@@ -261,6 +309,7 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
     private let riskLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let saveButton = NSButton()
+    private var deleteButton: NSButton?
     private var riskLabelHeightConstraint: NSLayoutConstraint?
     private var statusLabelHeightConstraint: NSLayoutConstraint?
     private var contentViewMinHeightConstraint: NSLayoutConstraint?
@@ -269,7 +318,7 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
     private var editingPluginTrustStatus: Bool?
     private var trustStatusGeneration: UInt64 = 0
     private var dirtyState = PluginEditorDirtyState()
-    private var isSaving = false
+    private var isPersisting = false
 
     var hasUnsavedChanges: Bool {
         dirtyState.hasUnsavedChanges
@@ -512,17 +561,14 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
         cancelBtn.bezelStyle = .rounded
         cv.addSubview(cancelBtn)
         
-        var deleteBtn: NSButton?
         if let p = editingPlugin {
-            let isBuiltIn = PluginManager.isBuiltInPluginDirectory(p.directoryURL)
-            
-            let btnTitle = isBuiltIn ? "Restore Default".localized : "Delete".localized
-            let btn = NSButton(title: btnTitle, target: self, action: #selector(deleteClicked))
+            let prompt = PluginDeletionPrompt(plugin: p)
+            let btn = NSButton(title: prompt.buttonTitle, target: self, action: #selector(deleteClicked))
             btn.translatesAutoresizingMaskIntoConstraints = false
             btn.bezelStyle = .rounded
             btn.contentTintColor = .systemRed
             cv.addSubview(btn)
-            deleteBtn = btn
+            deleteButton = btn
         }
         
         // Layout Constraints
@@ -615,7 +661,7 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
             cancelBtn.widthAnchor.constraint(equalTo: saveButton.widthAnchor)
         ])
         
-        if let deleteBtn = deleteBtn {
+        if let deleteBtn = deleteButton {
             NSLayoutConstraint.activate([
                 deleteBtn.centerYAnchor.constraint(equalTo: saveButton.centerYAnchor),
                 deleteBtn.leadingAnchor.constraint(equalTo: cv.leadingAnchor, constant: 20),
@@ -790,25 +836,21 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
             infoLabel.stringValue = "Native Action: Copy\nWrites the original text directly to the clipboard\n(No content configuration needed)".localized
             contentViewMinHeightConstraint?.constant = 44
             contentTextView.isEditable = false
-            contentTextView.string = ""
             contentViewScroll.isHidden = true
         case 5: // Paste
             infoLabel.stringValue = "Native Action: Paste\nTriggers the system Cmd+V paste operation\n(No content configuration needed)".localized
             contentViewMinHeightConstraint?.constant = 44
             contentTextView.isEditable = false
-            contentTextView.string = ""
             contentViewScroll.isHidden = true
         case 6: // Reveal in Finder
             infoLabel.stringValue = "Native Action: Reveal in Finder\nOpens the selected file path in Finder\n(Supports /, ~, and file:// paths)".localized
             contentViewMinHeightConstraint?.constant = 44
             contentTextView.isEditable = false
-            contentTextView.string = ""
             contentViewScroll.isHidden = true
         case 7: // Telegram Search
             infoLabel.stringValue = "Internal Command: Telegram Search\nOnly the bundled ActionHalo plugin can use this command".localized
             contentViewMinHeightConstraint?.constant = 44
             contentTextView.isEditable = false
-            contentTextView.string = ""
             contentViewScroll.isHidden = true
         default:
             break
@@ -835,7 +877,7 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
     }
 
     func confirmClose(discardChanges: () -> Bool) -> Bool {
-        guard !isSaving else { return false }
+        guard !isPersisting else { return false }
         guard hasUnsavedChanges else { return true }
         guard discardChanges() else { return false }
         discardUnsavedChanges()
@@ -954,7 +996,8 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
 
     private func updateSaveAvailability() {
         let validationMessage = currentValidationMessage()
-        saveButton.isEnabled = !isSaving && validationMessage == nil
+        saveButton.isEnabled = !isPersisting && validationMessage == nil
+        deleteButton?.isEnabled = !isPersisting
         saveButton.toolTip = validationMessage
 
         let baseStatus = {
@@ -978,7 +1021,7 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
     }
     
     @objc private func saveClicked() {
-        guard !isSaving else { return }
+        guard !isPersisting else { return }
 
         let name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
         let enName = enNameField.stringValue.trimmingCharacters(in: .whitespaces)
@@ -1035,12 +1078,7 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
             actionUpdates["script"] = scriptFileName
         case 3: // Key Combo
             if content.isEmpty { return showError("Key combo cannot be empty".localized) }
-            let parts = content.components(separatedBy: "+")
-            let key = parts.last?.lowercased() ?? ""
-            let mods = parts.dropLast().map { $0.capitalized } // e.g., ["Command", "Shift"]
-            actionUpdates["type"] = "key-combo"
-            actionUpdates["key"] = key
-            actionUpdates["modifiers"] = mods
+            actionUpdates = Self.keyComboActionUpdates(from: content)
         case 4: // Copy
             actionUpdates["type"] = "copy"
         case 5: // Paste
@@ -1089,13 +1127,13 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
 
         let persistenceRevision = dirtyState.currentRevision
         let identifierWasEnabled = identifierField.isEnabled
-        isSaving = true
+        isPersisting = true
         identifierField.isEnabled = false
         updateSaveAvailability()
 
         let finishSave: @MainActor @Sendable (String?) -> Void = { [weak self] errorMessage in
             guard let self else { return }
-            self.isSaving = false
+            self.isPersisting = false
             if let errorMessage {
                 self.identifierField.isEnabled = identifierWasEnabled
                 self.updateSaveAvailability()
@@ -1122,6 +1160,10 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
 
         DispatchQueue.global(qos: .userInitiated).async {
             do {
+                guard PluginManager.tryBeginPluginMutation() else {
+                    throw PluginManager.PluginMutationError.busy
+                }
+                defer { PluginManager.endPluginMutation() }
                 if editingPluginWasNil, FileManager.default.fileExists(atPath: bundleURL.path) {
                     Task { @MainActor in
                         finishSave("A plugin with this identifier already exists".localized)
@@ -1189,6 +1231,15 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
             suffix += 1
         }
         return name
+    }
+
+    static func keyComboActionUpdates(from content: String) -> [String: Any] {
+        let parts = content.components(separatedBy: "+")
+        return [
+            "type": "key-combo",
+            "key": parts.last?.lowercased() ?? "",
+            "modifiers": parts.dropLast().map { $0.capitalized }
+        ]
     }
 
     static func existingConfigDictionary(from packageURL: URL?) -> [String: Any] {
@@ -1276,6 +1327,10 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
         shouldKeepCustomIcon: Bool,
         fileManager: FileManager = .default
     ) throws {
+        guard PluginManager.tryBeginPluginMutation() else {
+            throw PluginManager.PluginMutationError.busy
+        }
+        defer { PluginManager.endPluginMutation() }
         let parentURL = bundleURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: parentURL, withIntermediateDirectories: true)
         guard PluginManager.isPluginDirectory(bundleURL, inside: parentURL) else {
@@ -1401,7 +1456,7 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
     }
     
     @objc private func deleteClicked() {
-        guard let p = editingPlugin else { return }
+        guard !isPersisting, let p = editingPlugin else { return }
         
         // If it's a core default plugin, it can never be deleted
         if PluginManager.coreDefaultPluginIDs.contains(p.id) {
@@ -1413,37 +1468,44 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
             return
         }
         
-        let isBuiltIn = PluginManager.isBuiltInPluginDirectory(p.directoryURL)
-        let hasUserOverride = PluginManager.shared.userPluginURL(for: p.id) != nil
-        
-        // Let PluginManager handle the actual file/soft deletion logic depending on whether it has an override
+        let prompt = PluginDeletionPrompt(plugin: p)
         let alert = NSAlert()
-        alert.messageText = isBuiltIn && !hasUserOverride ? "Delete Built-in Plugin?".localized : (hasUserOverride && isBuiltIn ? "Restore Default?".localized : "Delete Plugin?".localized)
-        alert.informativeText = isBuiltIn && !hasUserOverride ? "Are you sure you want to delete this built-in plugin? It will still exist but will be hidden from the list.".localized : (hasUserOverride && isBuiltIn ? "Are you sure you want to delete your modifications to this plugin? It will be restored to the built-in default state.".localized : "Are you sure you want to completely delete this plugin? This action is irreversible.".localized)
-        alert.addButton(withTitle: isBuiltIn && hasUserOverride ? "Restore Default".localized : "Confirm Delete".localized)
+        alert.messageText = prompt.title
+        alert.informativeText = prompt.message
+        alert.addButton(withTitle: prompt.confirmationTitle)
         alert.addButton(withTitle: "Cancel".localized)
         
         if alert.runModal() == .alertFirstButtonReturn {
-            let finishDelete: @MainActor @Sendable (String?) -> Void = { [weak self] errorMessage in
-                guard let self else { return }
-                if let errorMessage {
-                    self.showError(String(format: "Delete Failed: %@".localized, errorMessage))
-                } else {
-                    self.discardUnsavedChanges()
-                    self.close()
-                }
+            deletePluginAfterConfirmation(p)
+        }
+    }
+
+    func deletePluginAfterConfirmation(_ plugin: Plugin) {
+        guard !isPersisting else { return }
+        isPersisting = true
+        updateSaveAvailability()
+
+        let finishDelete: @MainActor @Sendable (String?) -> Void = { [weak self] errorMessage in
+            guard let self else { return }
+            self.isPersisting = false
+            if let errorMessage {
+                self.updateSaveAvailability()
+                self.showError(String(format: "Delete Failed: %@".localized, errorMessage))
+            } else {
+                self.discardUnsavedChanges()
+                self.close()
             }
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    try PluginManager.shared.deletePlugin(p)
-                    Task { @MainActor in
-                        finishDelete(nil)
-                    }
-                } catch {
-                    let message = error.localizedDescription
-                    Task { @MainActor in
-                        finishDelete(message)
-                    }
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try PluginManager.shared.deletePlugin(plugin)
+                Task { @MainActor in
+                    finishDelete(nil)
+                }
+            } catch {
+                let message = error.localizedDescription
+                Task { @MainActor in
+                    finishDelete(message)
                 }
             }
         }
