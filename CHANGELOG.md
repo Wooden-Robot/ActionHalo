@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.3.42
+
+- 关闭功能、失去权限或退出时取消仍在等待的取词请求，隔离旧菜单回调，并按应用和窗口校验取词缓存，避免过期结果展示和跨窗口误判重复选区。
+- 修复插件启停设置丢失、损坏包恢复时误删备份和重复插件删除不完整的问题；插件安装、保存与删除在退出或重启期间停止写入。
+- 插件编辑和旧数据迁移支持只读文件与目录，并保留原权限；支持 UTF-16/UTF-32 脚本读取，执行快照保留相对路径与资源，补全嵌套脚本路径监听。
+- 消除脚本标准错误输出提前关闭后的 CPU 空转，修复 URL 模板空白及嵌套链接识别，防止 Telegram 搜索输入拆分 Unicode 字符。
+- 插件管理列表使用原生复选框，改善键盘和辅助功能操作；修复 Return 快捷键录制、切换语言后的自定义图标选择和菜单辅助功能翻页状态。
+- 改善权限恢复与诊断刷新，准确展示功能开关、可用插件和当前窗口取词状态。
+
+- Cancelled pending selection requests when disabling the feature, losing permission, or quitting. Isolated stale menu callbacks and scoped selection caches to their application and window to prevent outdated menus and false duplicate detection.
+- Preserved plugin enablement preferences, retained recovery backups for damaged packages, and removed duplicate plugin packages during deletion. Plugin installation, saving, and deletion stop writing during quit or relaunch.
+- Supported read-only files and directories in plugin editing and legacy migration while preserving permissions. Added UTF-16/UTF-32 script reading, preserved relative paths and resources in execution snapshots, and improved nested script-path monitoring.
+- Eliminated CPU spinning after early script stderr closure, fixed whitespace and nested-link handling in URL templates, and prevented Telegram search input from splitting Unicode characters.
+- Added native checkboxes to plugin management lists for keyboard and accessibility support. Fixed Return-key shortcut recording, custom-icon selection after language changes, and accessibility pagination state in menus.
+- Improved permission recovery and diagnostics refresh to reflect feature enablement, available plugins, and selection state for the current window.
+
 ## v0.3.41
 
 - 修复取消取词后覆盖用户新剪贴板内容的问题；Telegram 搜索重新校验搜索框、焦点与输入结果，避免覆盖草稿或误恢复剪贴板，并保留复制过程中的延迟文本兼容。
