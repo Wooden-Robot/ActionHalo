@@ -526,16 +526,14 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
 
     private func postUnicode(_ text: String, processIdentifier: pid_t) -> Bool {
         let source = CGEventSource(stateID: .hidSystemState)
-        let units = Array(text.utf16)
-        guard !units.isEmpty,
+        let chunks = Self.unicodeEventChunks(text)
+        guard !chunks.isEmpty,
               withConfirmedSearchField(processIdentifier: processIdentifier, operation: { _ in true }) else {
             return false
         }
 
         var postedAny = false
-        for offset in stride(from: 0, to: units.count, by: 20) {
-            let end = min(offset + 20, units.count)
-            var chunk = Array(units[offset..<end])
+        for var chunk in chunks {
             guard let down = CGEvent(
                 keyboardEventSource: source,
                 virtualKey: 0,
@@ -562,6 +560,22 @@ final class MacOSTelegramSearchAdapter: TelegramSearchDesktopPort {
             postedAny = true
         }
         return true
+    }
+
+    nonisolated static func unicodeEventChunks(_ text: String) -> [[UniChar]] {
+        let units = Array(text.utf16)
+        var chunks: [[UniChar]] = []
+        var offset = 0
+        while offset < units.count {
+            var end = min(offset + 20, units.count)
+            // Each event must contain valid UTF-16; never split a surrogate pair.
+            if end < units.count, (0xD800...0xDBFF).contains(units[end - 1]) {
+                end -= 1
+            }
+            chunks.append(Array(units[offset..<end]))
+            offset = end
+        }
+        return chunks
     }
 
     private func pasteQuery(

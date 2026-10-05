@@ -190,7 +190,14 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
     // MARK: - Actions
     
     @objc private func rowClicked() {
-        let row = tableView.clickedRow
+        togglePlugin(at: tableView.clickedRow)
+    }
+
+    @objc private func enabledButtonClicked(_ sender: NSButton) {
+        togglePlugin(at: tableView.row(for: sender))
+    }
+
+    private func togglePlugin(at row: Int) {
         guard row >= 0 && row < orderedPlugins.count else { return }
         let plugin = orderedPlugins[row]
         PluginManager.shared.setPluginEnabled(plugin.id, enabled: !plugin.isEnabled)
@@ -287,12 +294,12 @@ final class PluginListMenuView: NSView, NSTableViewDelegate, NSTableViewDataSour
         numLabel.tag = 999
         cell.addSubview(numLabel)
         
-        // Enabled indicator
-        let indicator = NSTextField(labelWithString: plugin.isEnabled ? "●" : "○")
-        indicator.frame = NSRect(x: 24, y: 5, width: 14, height: 18)
-        indicator.font = NSFont.systemFont(ofSize: 10)
-        indicator.textColor = plugin.isEnabled ? NSColor.systemBlue : .tertiaryLabelColor
-        cell.addSubview(indicator)
+        let enabledButton = NSButton(checkboxWithTitle: "", target: self, action: #selector(enabledButtonClicked(_:)))
+        enabledButton.frame = NSRect(x: 22, y: 5, width: 20, height: 18)
+        enabledButton.controlSize = .small
+        enabledButton.state = plugin.isEnabled ? .on : .off
+        enabledButton.setAccessibilityLabel(plugin.name)
+        cell.addSubview(enabledButton)
         
         // Icon
         let iconView = NSImageView(frame: NSRect(x: iconLeadingX, y: 3, width: 22, height: 22))

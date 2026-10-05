@@ -98,6 +98,35 @@ final class PluginListMenuViewTests: GlobalStateTestCase {
         XCTAssertTrue(PluginListMenuView.shouldAllowEditing(customPlugin))
     }
 
+    @MainActor
+    func testPluginCheckboxTogglesOnceAndRefreshesItsAccessibleState() throws {
+        isolateStandardUserDefaults(keys: ["disabledPlugins", "userEnabledPlugins"])
+        let plugin = makePlugin(name: "Toggle Test", identifier: "com.test.toggle", order: 1)
+        PluginManager.shared.plugins = [plugin]
+        let listView = PluginListMenuView(frame: .zero)
+        listView.reloadPlugins()
+        let scrollView = try XCTUnwrap(listView.subviews.compactMap { $0 as? NSScrollView }.first)
+        let table = try XCTUnwrap(scrollView.documentView as? NSTableView)
+        let cell = try XCTUnwrap(table.view(atColumn: 0, row: 0, makeIfNecessary: true))
+        let button = try XCTUnwrap(cell.subviews.compactMap { $0 as? NSButton }.first {
+            $0.accessibilityLabel() == plugin.name
+        })
+        XCTAssertEqual(button.state, .on)
+
+        button.performClick(nil)
+        XCTAssertFalse(plugin.isEnabled)
+        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: "disabledPlugins"), [plugin.id])
+        let reloadedCell = try XCTUnwrap(table.view(atColumn: 0, row: 0, makeIfNecessary: true))
+        let reloadedButton = try XCTUnwrap(reloadedCell.subviews.compactMap { $0 as? NSButton }.first {
+            $0.accessibilityLabel() == plugin.name
+        })
+        XCTAssertEqual(reloadedButton.state, .off)
+
+        _ = reloadedButton.accessibilityPerformPress()
+        XCTAssertTrue(plugin.isEnabled)
+        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: "disabledPlugins"), [])
+    }
+
     private func makePlugin(name: String, identifier: String, order: Int) -> Plugin {
         let json = """
         {

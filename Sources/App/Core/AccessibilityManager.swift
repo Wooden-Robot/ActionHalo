@@ -91,6 +91,12 @@ final class AccessibilityManager {
             ? 0 : copyFallbackPreflightDelay
     }
     nonisolated static let copyFallbackKeyGap: TimeInterval = 0.01
+    nonisolated static let copyFallbackEventMarker: Int64 = 0x4148_434f_5059
+
+    nonisolated static func isCopyFallbackEvent(_ event: CGEvent?) -> Bool {
+        event?.getIntegerValueField(.eventSourceUserData) == copyFallbackEventMarker
+    }
+
     nonisolated static let copyFallbackPollAttempts = 12
     nonisolated static let copyFallbackLatePollAttempts = 8
     nonisolated static let copyFallbackPollInterval: TimeInterval = 0.025
@@ -450,6 +456,15 @@ final class AccessibilityManager {
         let source: SelectionAcquisitionSource
         let timestamp: Date
         let textLength: Int
+        let processIdentifier: pid_t?
+        let windowID: CGWindowID?
+
+        func matchesContext(
+            processIdentifier currentProcessIdentifier: pid_t?, windowID currentWindowID: CGWindowID?
+        ) -> Bool {
+            guard let processIdentifier, let windowID else { return false }
+            return processIdentifier == currentProcessIdentifier && windowID == currentWindowID
+        }
     }
 
     struct SelectionSnapshot: Equatable, Sendable {
@@ -942,6 +957,8 @@ final class AccessibilityManager {
 
             cmdDown?.flags = .maskCommand
             cmdUp?.flags = .maskCommand
+            cmdDown?.setIntegerValueField(.eventSourceUserData, value: Self.copyFallbackEventMarker)
+            cmdUp?.setIntegerValueField(.eventSourceUserData, value: Self.copyFallbackEventMarker)
 
             // Snapshotting may spill a large clipboard to disk. Revalidate both
             // the pasteboard and original target immediately before sending
@@ -1247,11 +1264,18 @@ final class AccessibilityManager {
         }
     }
 
-    func recordSelectionAcquisition(source: SelectionAcquisitionSource, text: String) {
+    func recordSelectionAcquisition(
+        source: SelectionAcquisitionSource,
+        text: String,
+        processIdentifier: pid_t?,
+        windowID: CGWindowID?
+    ) {
         lastSelectionAcquisitionStatus = SelectionAcquisitionStatus(
             source: source,
             timestamp: Date(),
-            textLength: text.count
+            textLength: text.count,
+            processIdentifier: processIdentifier,
+            windowID: windowID
         )
         lastSelectionAcquiredText = text
         lastSelectionAttemptStatus = nil

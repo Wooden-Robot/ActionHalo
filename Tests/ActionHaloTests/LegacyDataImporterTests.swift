@@ -225,6 +225,56 @@ final class LegacyDataImporterTests: XCTestCase {
         )
     }
 
+    func testReadOnlyLegacyFilesConvertWithoutChangingSourceOrPermissions() throws {
+        for convertInPlace in [false, true] {
+            let store = InMemoryDefaultsDomainStore()
+            let paths = try makeImportPaths(
+                createSourceDirectory: !convertInPlace,
+                createDestinationDirectory: convertInPlace
+            )
+            let sourcePackage = try makePackage(
+                in: convertInPlace ? paths.destination : paths.source,
+                name: "Read Only.openfireext",
+                identifier: "com.openfire.readonly",
+                actionJSON: #"{"type":"shell-script","script":"script.sh"}"#,
+                script: "printf '%s' \"$OPENFIRE_TEXT\"\n"
+            )
+            let configURL = sourcePackage.appendingPathComponent("Config.json")
+            let scriptURL = sourcePackage.appendingPathComponent("script.sh")
+            let originalConfig = try Data(contentsOf: configURL)
+            let originalScript = try Data(contentsOf: scriptURL)
+            try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: configURL.path)
+            try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: scriptURL.path)
+
+            let result = makeImporter(store: store, paths: paths).importIfNeeded()
+            let imported = try XCTUnwrap(result.importedPlugins.first)
+            XCTAssertEqual(result.state, .completed)
+            XCTAssertTrue(result.failedPlugins.isEmpty)
+            XCTAssertEqual(PluginLoader.load(from: imported.destinationURL)?.id, "com.actionhalo.readonly")
+            let importedScript = try String(
+                contentsOf: imported.destinationURL.appendingPathComponent("script.sh"), encoding: .utf8
+            )
+            XCTAssertTrue(importedScript.contains("ACTIONHALO_TEXT"))
+            XCTAssertFalse(importedScript.contains("OPENFIRE_TEXT"))
+            for (fileName, mode) in [("Config.json", 0o444), ("script.sh", 0o555)] {
+                let importedMode = try XCTUnwrap(FileManager.default.attributesOfItem(
+                    atPath: imported.destinationURL.appendingPathComponent(fileName).path
+                )[.posixPermissions] as? NSNumber).intValue
+                XCTAssertEqual(importedMode & 0o777, mode)
+            }
+            if !convertInPlace {
+                XCTAssertEqual(try Data(contentsOf: configURL), originalConfig)
+                XCTAssertEqual(try Data(contentsOf: scriptURL), originalScript)
+                XCTAssertEqual(
+                    try FileManager.default.attributesOfItem(atPath: configURL.path)[.posixPermissions] as? NSNumber,
+                    NSNumber(value: 0o444)
+                )
+            }
+            XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: paths.destination.path)
+                .contains { $0.hasSuffix(".pending") })
+        }
+    }
+
     func testExistingActionHaloPluginWinsWithoutBeingOverwritten() throws {
         let store = InMemoryDefaultsDomainStore()
         let paths = try makeImportPaths(

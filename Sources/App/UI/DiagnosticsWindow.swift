@@ -9,6 +9,7 @@ final class DiagnosticsWindow: NSWindowController {
     }
 
     enum ReadinessBlocker: Equatable {
+        case autoTriggerDisabled
         case missingAccessibilityPermission
         case appExcluded
         case frontmostAppSuppressed
@@ -58,9 +59,7 @@ final class DiagnosticsWindow: NSWindowController {
     override func showWindow(_ sender: Any?) {
         // Capture before showing/activating ActionHalo so refreshes keep diagnosing
         // the application and focused element the user actually invoked us from.
-        if window?.isVisible != true {
-            capturedContext = captureCurrentContext()
-        }
+        capturedContext = captureCurrentContext()
         refreshReport()
         super.showWindow(sender)
     }
@@ -153,6 +152,8 @@ final class DiagnosticsWindow: NSWindowController {
         accessibilitySelectedText: String,
         lastSelectionAcquiredText: String?,
         acquisitionStatus: AccessibilityManager.SelectionAcquisitionStatus?,
+        currentProcessIdentifier: pid_t?,
+        currentWindowID: CGWindowID?,
         now: Date = Date()
     ) -> String {
         let accessibilityText = accessibilitySelectedText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -161,6 +162,9 @@ final class DiagnosticsWindow: NSWindowController {
         }
 
         guard let acquisitionStatus,
+              acquisitionStatus.matchesContext(
+                processIdentifier: currentProcessIdentifier, windowID: currentWindowID
+              ),
               now.timeIntervalSince(acquisitionStatus.timestamp) <= recentAcquisitionContextWindow,
               let lastSelectionAcquiredText else {
             return ""
@@ -179,6 +183,7 @@ final class DiagnosticsWindow: NSWindowController {
     }
 
     static func readinessState(
+        isEnabled: Bool = true,
         accessibilityEnabled: Bool,
         isAppExcluded: Bool,
         isFrontmostAppSuppressed: Bool,
@@ -187,6 +192,9 @@ final class DiagnosticsWindow: NSWindowController {
     ) -> (isReady: Bool, blockers: [ReadinessBlocker]) {
         var blockers: [ReadinessBlocker] = []
 
+        if !isEnabled {
+            blockers.append(.autoTriggerDisabled)
+        }
         if !accessibilityEnabled {
             blockers.append(.missingAccessibilityPermission)
         }
@@ -207,6 +215,9 @@ final class DiagnosticsWindow: NSWindowController {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let accessibilitySelectedText = AccessibilityManager.shared.getSelectedText() ?? ""
         let acquisitionStatus = AccessibilityManager.shared.lastSelectionAcquisitionStatus
+        let currentWindowID = TextSelectionMonitor.currentFrontmostWindowSnapshot(
+            frontmostApplication: frontApp
+        )?.windowID
         let emptyInputCheckLocation = TextSelectionMonitor.shared.lastEmptyInputCheckLocation ?? NSEvent.mouseLocation
 
         return CapturedContext(
@@ -216,7 +227,9 @@ final class DiagnosticsWindow: NSWindowController {
             selectedText: Self.diagnosticContextText(
                 accessibilitySelectedText: accessibilitySelectedText,
                 lastSelectionAcquiredText: AccessibilityManager.shared.lastSelectionAcquiredText,
-                acquisitionStatus: acquisitionStatus
+                acquisitionStatus: acquisitionStatus,
+                currentProcessIdentifier: frontApp?.processIdentifier,
+                currentWindowID: currentWindowID
             ),
             focusedRole: AccessibilityManager.shared.focusedElementRoleDescription() ?? "Unavailable".localized,
             focusedSelectionEditable: AccessibilityManager.shared.isFocusedSelectionEditable(),
@@ -237,6 +250,7 @@ final class DiagnosticsWindow: NSWindowController {
         let frontAppName = context.appName
         let frontAppBundleID = context.appBundleID ?? "Unavailable".localized
         let isAppExcluded = AppExclusionStore.isExcluded(context.appBundleID)
+        let isEnabled = StatusBarController.enabledState()
         let accessibilityEnabled = AccessibilityManager.shared.isAccessibilityEnabled
         let acquisitionStatus = context.acquisitionStatus
         let attemptStatus = context.attemptStatus
@@ -252,13 +266,14 @@ final class DiagnosticsWindow: NSWindowController {
         let clipboardHasText = TextSelectionMonitor.hasUsableClipboardText(
             NSPasteboard.general.string(forType: .string)
         )
-        let emptyInputShortcutReady = accessibilityEnabled &&
+        let emptyInputShortcutReady = isEnabled && accessibilityEnabled &&
             !isAppExcluded &&
             !isFrontmostAppSuppressed &&
             selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             clipboardHasText &&
             context.isTextInputAtEmptyInputCheckLocation
         let readiness = Self.readinessState(
+            isEnabled: isEnabled,
             accessibilityEnabled: accessibilityEnabled,
             isAppExcluded: isAppExcluded,
             isFrontmostAppSuppressed: isFrontmostAppSuppressed,
@@ -267,7 +282,9 @@ final class DiagnosticsWindow: NSWindowController {
         )
 
         let diagnostics = PluginManager.shared.visibilityDiagnostics(for: selectedText, appBundleID: context.appBundleID)
-        let shownPlugins = PluginManager.shared.presentationPlugins(appBundleID: context.appBundleID)
+        let shownPlugins = AppDelegate.radialMenuPlugins(
+            from: PluginManager.shared.presentationPlugins(appBundleID: context.appBundleID)
+        )
         let shownPluginIDs = Set(shownPlugins.map(\.id))
         let executablePluginIDs = Set(
             shownPlugins
@@ -404,6 +421,8 @@ final class DiagnosticsWindow: NSWindowController {
 
     private func localizedReadinessBlocker(_ blocker: ReadinessBlocker) -> String {
         switch blocker {
+        case .autoTriggerDisabled:
+            return "Auto trigger is disabled".localized
         case .missingAccessibilityPermission:
             return "Accessibility permission is missing".localized
         case .appExcluded:

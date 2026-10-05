@@ -156,11 +156,13 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
         let globallyEnabled = plugin.isEnabled
         let enabledInApp = PluginManager.shared.isPluginEnabled(plugin.id, forAppBundleID: bundleID)
 
-        let indicator = NSTextField(labelWithString: globallyEnabled ? (enabledInApp ? "●" : "○") : "–")
-        indicator.frame = NSRect(x: 12, y: 7, width: 16, height: 18)
-        indicator.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        indicator.textColor = globallyEnabled ? (enabledInApp ? .systemBlue : .tertiaryLabelColor) : .quaternaryLabelColor
-        cell.addSubview(indicator)
+        let enabledButton = NSButton(checkboxWithTitle: "", target: self, action: #selector(enabledButtonClicked(_:)))
+        enabledButton.frame = NSRect(x: 10, y: 7, width: 20, height: 18)
+        enabledButton.controlSize = .small
+        enabledButton.state = globallyEnabled && enabledInApp ? .on : .off
+        enabledButton.isEnabled = globallyEnabled
+        enabledButton.setAccessibilityLabel(plugin.name)
+        cell.addSubview(enabledButton)
 
         let nameLabel = NSTextField(labelWithString: plugin.name)
         nameLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
@@ -176,6 +178,7 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
         } else {
             detailText = "Disabled in this app".localized
         }
+        enabledButton.setAccessibilityHelp(detailText)
 
         let detailLabel = NSTextField(labelWithString: detailText)
         detailLabel.font = NSFont.systemFont(ofSize: 11)
@@ -194,7 +197,14 @@ final class CurrentAppPluginsWindow: NSWindowController, NSTableViewDelegate, NS
     }
 
     @objc private func rowClicked() {
-        let row = tableView.clickedRow
+        togglePlugin(at: tableView.clickedRow)
+    }
+
+    @objc private func enabledButtonClicked(_ sender: NSButton) {
+        togglePlugin(at: tableView.row(for: sender))
+    }
+
+    private func togglePlugin(at row: Int) {
         guard row >= 0 && row < filteredPlugins.count else { return }
 
         let plugin = filteredPlugins[row]

@@ -4,6 +4,32 @@ import XCTest
 @testable import ActionHalo
 
 final class TelegramSearchTests: XCTestCase {
+    @MainActor
+    func testUnicodeInputEventsPreserveSurrogatePairsAtChunkBoundaries() throws {
+        let queries = [
+            String(repeating: "a", count: 19) + "😀",
+            String(repeating: "🧑‍💻é", count: 8),
+            String(repeating: "中文 abc ", count: 8),
+        ]
+        for query in queries {
+            var roundtrip = ""
+            for var chunk in MacOSTelegramSearchAdapter.unicodeEventChunks(query) {
+                XCTAssertLessThanOrEqual(chunk.count, 20)
+                let event = try XCTUnwrap(CGEvent(
+                    keyboardEventSource: nil, virtualKey: 0, keyDown: true
+                ))
+                chunk.withUnsafeMutableBufferPointer { buffer in
+                    event.keyboardSetUnicodeString(
+                        stringLength: buffer.count, unicodeString: buffer.baseAddress
+                    )
+                }
+                roundtrip += try XCTUnwrap(NSEvent(cgEvent: event)?.characters)
+            }
+            XCTAssertEqual(roundtrip, query)
+        }
+        XCTAssertTrue(MacOSTelegramSearchAdapter.unicodeEventChunks("").isEmpty)
+    }
+
     func testBundledTelegramSearchUsesNativeVerifiedAction() throws {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

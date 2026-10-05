@@ -111,8 +111,11 @@ final class RadialMenuWindow: NSPanel {
         }
         
         radialMenuView.onDismissRequested = { [weak self] in
-            DispatchQueue.main.async {
-                self?.requestDismissal()
+            guard let self else { return }
+            let dismissalGeneration = self.presentationGeneration
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.presentationGeneration == dismissalGeneration else { return }
+                self.requestDismissal()
             }
         }
     }
@@ -327,6 +330,7 @@ final class RadialMenuWindow: NSPanel {
     func hideMenu(completion: (@MainActor @Sendable () -> Void)? = nil) {
         guard !isDismissing else { return }
         isDismissing = true
+        presentationGeneration &+= 1
         disableInput()
         let hidingGeneration = presentationGeneration
 

@@ -2,6 +2,18 @@ import AppKit
 import XCTest
 @testable import ActionHalo
 
+private final class FailingEditorCommitFileManager: FileManager, @unchecked Sendable {
+    private(set) var didRejectCommit = false
+
+    override func moveItem(at sourceURL: URL, to destinationURL: URL) throws {
+        if sourceURL.lastPathComponent.hasPrefix(".save-") {
+            didRejectCommit = true
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try super.moveItem(at: sourceURL, to: destinationURL)
+    }
+}
+
 final class PluginEditorWindowTests: XCTestCase {
     private var temporaryDirectories: [URL] = []
 
@@ -436,6 +448,29 @@ final class PluginEditorWindowTests: XCTestCase {
         )
     }
 
+    func testEditableUnicodeScriptsKeepByteLimitAndRejectInvalidEncoding() throws {
+        let bundleURL = try makePluginPackage(
+            config: #"{"name":"Script","identifier":"com.test.script","action":{"type":"shell-script","script":"script.sh"}}"#
+        )
+        let scriptURL = bundleURL.appendingPathComponent("script.sh")
+        for encoding in [String.Encoding.utf16, .utf32] {
+            for text in ["printf '中文😀'", ""] {
+                let data = try XCTUnwrap(text.data(using: encoding))
+                try data.write(to: scriptURL)
+                let action = try XCTUnwrap(PluginLoader.load(from: bundleURL)).config.action
+                XCTAssertEqual(PluginEditorWindow.editableScriptContent(
+                    for: action, pluginDirectoryURL: bundleURL, maximumFileBytes: data.count
+                ), text)
+                XCTAssertNil(PluginEditorWindow.editableScriptContent(
+                    for: action, pluginDirectoryURL: bundleURL, maximumFileBytes: data.count - 1
+                ))
+            }
+        }
+        try Data([0xff, 0xfe, 0x00, 0xd8]).write(to: scriptURL)
+        let action = try XCTUnwrap(PluginLoader.load(from: bundleURL)).config.action
+        XCTAssertNil(PluginEditorWindow.editableScriptContent(for: action, pluginDirectoryURL: bundleURL))
+    }
+
     func testEditableScriptContentRejectsInlineSourceOverEditorLimit() throws {
         let bundleURL = try makePluginPackage(
             config: #"{"name":"Inline","identifier":"com.test.inline","action":{"type":"shell-script","inline":"12345"}}"#
@@ -533,6 +568,80 @@ final class PluginEditorWindowTests: XCTestCase {
         XCTAssertEqual(config.name, "New")
         XCTAssertEqual(script, "new script")
         XCTAssertTrue(FileManager.default.fileExists(atPath: bundleURL.appendingPathComponent("extra.txt").path))
+    }
+
+    func testSavingReadOnlyScriptDirectoriesPreservesSourceAndCleansBackup() throws {
+        let sourceURL = try makeReadOnlyScriptPackage()
+        let rootURL = sourceURL.deletingLastPathComponent()
+        let destinationURL = rootURL.appendingPathComponent("Saved.actionhaloext")
+        defer {
+            for package in [sourceURL, destinationURL] {
+                for relativePath in ["", "scripts", "scripts/nested"] {
+                    try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: package.appendingPathComponent(relativePath).path)
+                }
+            }
+        }
+        let originalFingerprint = try XCTUnwrap(PluginLoader.load(from: sourceURL)?.packageFingerprint)
+        let config = Data(#"{"name":"Edited","identifier":"com.test.readonly-editor","action":{"type":"shell-script","script":"scripts/nested/main.sh"}}"#.utf8)
+
+        for destination in [destinationURL, sourceURL] {
+            try PluginEditorWindow.writePluginPackageAtomically(
+                bundleURL: destination, templateURL: sourceURL, configData: config,
+                scriptFileName: "scripts/nested/main.sh", scriptContent: "printf 'edited'",
+                customIconSourceURL: nil, shouldKeepCustomIcon: false
+            )
+            XCTAssertEqual(PluginLoader.load(from: destination)?.config.name, "Edited")
+            XCTAssertEqual(try String(contentsOf: destination.appendingPathComponent("scripts/nested/main.sh"), encoding: .utf8), "printf 'edited'")
+            for package in [sourceURL, destination] {
+                for relativePath in ["", "scripts", "scripts/nested"] {
+                    XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: package.appendingPathComponent(relativePath).path)[.posixPermissions] as? Int, 0o555)
+                }
+            }
+            if destination == destinationURL {
+                XCTAssertEqual(PluginLoader.load(from: sourceURL)?.packageFingerprint, originalFingerprint)
+                XCTAssertEqual(try String(contentsOf: sourceURL.appendingPathComponent("scripts/nested/main.sh"), encoding: .utf8), "printf 'original'")
+            }
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: rootURL.path).sorted(), ["Saved.actionhaloext", "Source.actionhaloext"])
+        }
+    }
+
+    func testFailedSaveOfReadOnlyScriptDirectoriesRestoresOriginalWithoutResidue() throws {
+        let sourceURL = try makeReadOnlyScriptPackage()
+        defer {
+            for relativePath in ["", "scripts", "scripts/nested"] {
+                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: sourceURL.appendingPathComponent(relativePath).path)
+            }
+        }
+        let originalFingerprint = try XCTUnwrap(PluginLoader.load(from: sourceURL)?.packageFingerprint)
+        let fileManager = FailingEditorCommitFileManager()
+        XCTAssertThrowsError(try PluginEditorWindow.writePluginPackageAtomically(
+            bundleURL: sourceURL, templateURL: sourceURL,
+            configData: Data(#"{"name":"Edited","identifier":"com.test.readonly-editor","action":{"type":"shell-script","script":"scripts/nested/main.sh"}}"#.utf8),
+            scriptFileName: "scripts/nested/main.sh", scriptContent: "printf 'edited'",
+            customIconSourceURL: nil, shouldKeepCustomIcon: false, fileManager: fileManager
+        ))
+        XCTAssertTrue(fileManager.didRejectCommit, "The save must reach replacement before the injected failure")
+        XCTAssertEqual(PluginLoader.load(from: sourceURL)?.packageFingerprint, originalFingerprint)
+        XCTAssertEqual(PluginLoader.load(from: sourceURL)?.config.name, "Original")
+        XCTAssertEqual(try String(contentsOf: sourceURL.appendingPathComponent("scripts/nested/main.sh"), encoding: .utf8), "printf 'original'")
+        for relativePath in ["", "scripts", "scripts/nested"] {
+            XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: sourceURL.appendingPathComponent(relativePath).path)[.posixPermissions] as? Int, 0o555)
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: sourceURL.deletingLastPathComponent().path), ["Source.actionhaloext"])
+    }
+
+    private func makeReadOnlyScriptPackage() throws -> URL {
+        let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(rootURL)
+        let sourceURL = rootURL.appendingPathComponent("Source.actionhaloext")
+        try FileManager.default.createDirectory(at: sourceURL.appendingPathComponent("scripts/nested"), withIntermediateDirectories: true)
+        try Data(#"{"name":"Original","identifier":"com.test.readonly-editor","action":{"type":"shell-script","script":"scripts/nested/main.sh"}}"#.utf8)
+            .write(to: sourceURL.appendingPathComponent("Config.json"))
+        try "printf 'original'".write(to: sourceURL.appendingPathComponent("scripts/nested/main.sh"), atomically: true, encoding: .utf8)
+        for relativePath in ["", "scripts", "scripts/nested"] {
+            try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: sourceURL.appendingPathComponent(relativePath).path)
+        }
+        return sourceURL
     }
 
     func testScriptSavePreservesOriginalEntryPointAndAuxiliaryFiles() throws {
@@ -792,6 +901,31 @@ final class PluginEditorWindowTests: XCTestCase {
             )
         )
     }
+
+    @MainActor
+    func testGlobalHotkeyRecorderKeyEquivalentsKeepModifierRequirement() throws {
+        let window = HotkeyRecorderWindow()
+        defer { window.close() }
+        let recorder = try XCTUnwrap(try XCTUnwrap(window.contentView).subviews
+            .compactMap { $0 as? ShortcutRecorderField }.first)
+        XCTAssertTrue(window.makeFirstResponder(recorder))
+        var recordedKeyCode: UInt32?
+        window.onHotkeyRecorded = { keyCode, _ in recordedKeyCode = keyCode }
+
+        for (characters, keyCode): (String, UInt16) in [("\r", 0x24), ("\u{1B}", 0x35)] {
+            XCTAssertTrue(window.performKeyEquivalent(with: try makeKeyDownEvent(
+                modifiers: [], characters: characters, keyCode: keyCode
+            )))
+            XCTAssertNil(recordedKeyCode)
+            XCTAssertEqual(recorder.rawComboString, "")
+        }
+
+        XCTAssertTrue(window.performKeyEquivalent(with: try makeKeyDownEvent(
+            modifiers: [.option], characters: "\r", keyCode: 0x24
+        )))
+        XCTAssertEqual(recordedKeyCode, 0x24)
+        XCTAssertEqual(recorder.rawComboString, "Option+Return")
+    }
 }
 
 final class PluginEditorPersistenceTests: GlobalStateTestCase {
@@ -821,6 +955,7 @@ final class PluginEditorPersistenceTests: GlobalStateTestCase {
         let reload = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: PluginManager.shared)
 
         XCTAssertTrue(saveButton.sendAction(saveButton.action, to: saveButton.target))
+        XCTAssertTrue(editor.isPersisting)
         XCTAssertFalse(saveButton.isEnabled)
         XCTAssertFalse(deleteButton.isEnabled)
         XCTAssertFalse(editor.confirmClose { true })
@@ -830,9 +965,39 @@ final class PluginEditorPersistenceTests: GlobalStateTestCase {
         wait(for: [reload], timeout: 5)
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: plugin.directoryURL.path))
+        XCTAssertFalse(editor.isPersisting)
         XCTAssertTrue(saveButton.isEnabled)
         XCTAssertTrue(deleteButton.isEnabled)
         XCTAssertTrue(editor.hasUnsavedChanges)
+    }
+
+    @MainActor
+    func testUnicodeScriptOpensAndSavesThroughEditor() throws {
+        for (actionType, encoding) in [("shell-script", String.Encoding.utf16), ("applescript", .utf32)] {
+            let script = actionType == "shell-script" ? "printf '中文😀'" : "return \"中文😀\""
+            let (editor, plugin, saveButton, _) = try makeEditor(
+                actionJSON: "{\"type\":\"\(actionType)\",\"script\":\"script.txt\"}",
+                scriptData: script.data(using: encoding)
+            )
+            defer { editor.close() }
+            let contentView = try XCTUnwrap(editor.contentView)
+            let scriptView = try XCTUnwrap(contentView.subviews.compactMap { ($0 as? NSScrollView)?.documentView as? NSTextView }.first)
+            XCTAssertEqual(scriptView.string, script)
+            XCTAssertTrue(saveButton.isEnabled)
+            let nameField = try XCTUnwrap(contentView.subviews.compactMap { $0 as? NSTextField }
+                .first { $0.isEditable && $0.stringValue == "Persistence" })
+            nameField.stringValue = "Renamed"
+            editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+            let reload = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: PluginManager.shared)
+
+            XCTAssertTrue(saveButton.sendAction(saveButton.action, to: saveButton.target))
+            XCTAssertTrue(editor.isPersisting)
+            wait(for: [reload], timeout: 5)
+
+            XCTAssertFalse(editor.isPersisting)
+            XCTAssertEqual(PluginLoader.load(from: plugin.directoryURL)?.config.name, "Renamed")
+            XCTAssertEqual(try String(contentsOf: plugin.directoryURL.appendingPathComponent("script.txt"), encoding: .utf8), script)
+        }
     }
 
     @MainActor
@@ -843,6 +1008,7 @@ final class PluginEditorPersistenceTests: GlobalStateTestCase {
         let reload = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: PluginManager.shared)
 
         editor.deletePluginAfterConfirmation(plugin)
+        XCTAssertTrue(editor.isPersisting)
         XCTAssertFalse(saveButton.isEnabled)
         XCTAssertFalse(deleteButton.isEnabled)
         XCTAssertFalse(editor.confirmClose { true })
@@ -857,16 +1023,132 @@ final class PluginEditorPersistenceTests: GlobalStateTestCase {
         }
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: plugin.directoryURL.path))
+        XCTAssertFalse(editor.isPersisting)
         XCTAssertFalse(editor.hasUnsavedChanges)
         XCTAssertTrue(editor.confirmClose { false })
     }
 
     @MainActor
-    private func makeEditor() throws -> (PluginEditorWindow, Plugin, NSButton, NSButton) {
+    func testFocusedShortcutRecorderHandlesReturnBeforeSaveButton() throws {
+        let (editor, plugin, _, _) = try makeEditor(
+            actionJSON: #"{"type":"key-combo","key":"c","modifiers":["Command"]}"#
+        )
+        defer { editor.close() }
+        let contentView = try XCTUnwrap(editor.contentView)
+        let recorder = try XCTUnwrap(contentView.subviews.compactMap { $0 as? ShortcutRecorderField }.first)
+        XCTAssertTrue(editor.makeFirstResponder(recorder))
+        let returnEvent = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: editor.windowNumber, context: nil, characters: "\r",
+            charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 0x24
+        ))
+
+        XCTAssertTrue(editor.performKeyEquivalent(with: returnEvent))
+        XCTAssertEqual(recorder.rawComboString, "Return")
+        XCTAssertTrue(editor.hasUnsavedChanges)
+        XCTAssertFalse(editor.isPersisting, "Recording Return must not invoke the default Save button")
+        XCTAssertEqual(PluginLoader.load(from: plugin.directoryURL)?.config.action.key, "c")
+
+        let nameField = try XCTUnwrap(contentView.subviews.compactMap { $0 as? NSTextField }
+            .first { $0.isEditable && $0.stringValue == "Persistence" })
+        XCTAssertTrue(editor.makeFirstResponder(nameField))
+        let reload = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: PluginManager.shared)
+        XCTAssertTrue(editor.performKeyEquivalent(with: returnEvent))
+        XCTAssertTrue(editor.isPersisting, "Return in ordinary text fields must still invoke Save")
+        wait(for: [reload], timeout: 5)
+        XCTAssertFalse(editor.isPersisting)
+        XCTAssertEqual(PluginLoader.load(from: plugin.directoryURL)?.config.action.key, "return")
+    }
+
+    @MainActor
+    func testSavingCustomIconAfterLanguageChangePreservesImageAndSymbolName() throws {
+        let defaults = UserDefaults.standard
+        let previousArguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+        defer { defaults.setVolatileDomain(previousArguments, forName: UserDefaults.argumentDomain) }
+        defaults.setVolatileDomain(
+            previousArguments.merging(["AppLanguage": "en"]) { _, new in new },
+            forName: UserDefaults.argumentDomain
+        )
+
+        let imageData = try XCTUnwrap(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=="
+        ))
+        let (editor, plugin, saveButton, _) = try makeEditor(customIconData: imageData)
+        defer { editor.close() }
+        let iconPopUp = try iconPopUp(in: editor)
+        XCTAssertEqual(iconPopUp.titleOfSelectedItem, "Custom Image".localized)
+        XCTAssertFalse(editor.hasUnsavedChanges)
+
+        defaults.setVolatileDomain(
+            previousArguments.merging(["AppLanguage": "zh-Hans"]) { _, new in new },
+            forName: UserDefaults.argumentDomain
+        )
+        XCTAssertNotEqual(iconPopUp.titleOfSelectedItem, "Custom Image".localized)
+        let reload = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: PluginManager.shared)
+        XCTAssertTrue(saveButton.sendAction(saveButton.action, to: saveButton.target))
+        wait(for: [reload], timeout: 5)
+
+        let savedPlugin = try XCTUnwrap(PluginLoader.load(from: plugin.directoryURL))
+        XCTAssertEqual(savedPlugin.iconName, plugin.iconName)
+        XCTAssertEqual(try Data(contentsOf: plugin.directoryURL.appendingPathComponent("icon.png")), imageData)
+    }
+
+    @MainActor
+    func testChoosingCustomIconAfterLanguageChangeReplacesExistingMenuItem() throws {
+        let defaults = UserDefaults.standard
+        let previousArguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+        defer { defaults.setVolatileDomain(previousArguments, forName: UserDefaults.argumentDomain) }
+        defaults.setVolatileDomain(
+            previousArguments.merging(["AppLanguage": "en"]) { _, new in new },
+            forName: UserDefaults.argumentDomain
+        )
+
+        let imageData = try XCTUnwrap(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=="
+        ))
+        let (editor, _, _, _) = try makeEditor(customIconData: imageData)
+        defer { editor.close() }
+        let iconPopUp = try iconPopUp(in: editor)
+        let initialItemCount = iconPopUp.numberOfItems
+        let previousCustomItem = try XCTUnwrap(iconPopUp.selectedItem)
+        let replacementURL = rootURL.appendingPathComponent("Replacement.png")
+        try imageData.write(to: replacementURL)
+
+        defaults.setVolatileDomain(
+            previousArguments.merging(["AppLanguage": "zh-Hans"]) { _, new in new },
+            forName: UserDefaults.argumentDomain
+        )
+        editor.selectCustomIcon(at: replacementURL)
+
+        XCTAssertEqual(iconPopUp.numberOfItems, initialItemCount)
+        XCTAssertFalse(iconPopUp.itemArray.contains { $0 === previousCustomItem })
+        XCTAssertEqual(iconPopUp.titleOfSelectedItem, "Custom Image".localized)
+    }
+
+    @MainActor
+    private func iconPopUp(in editor: PluginEditorWindow) throws -> NSPopUpButton {
+        try XCTUnwrap(try XCTUnwrap(editor.contentView).subviews
+            .compactMap { $0 as? NSPopUpButton }
+            .first { $0.itemTitles.contains("bolt.fill") })
+    }
+
+    @MainActor
+    private func makeEditor(
+        customIconData: Data? = nil,
+        actionJSON: String = #"{"type":"copy"}"#,
+        scriptData: Data? = nil
+    ) throws -> (PluginEditorWindow, Plugin, NSButton, NSButton) {
         let packageURL = rootURL.appendingPathComponent("Persistence.actionhaloext")
         try FileManager.default.createDirectory(at: packageURL, withIntermediateDirectories: true)
-        try #"{"name":"Persistence","identifier":"com.test.editor-persistence","action":{"type":"copy"}}"#
-            .write(to: packageURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+        try """
+        {"name":"Persistence","identifier":"com.test.editor-persistence","action":\(actionJSON)}
+        """.write(to: packageURL.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+        if let customIconData {
+            try customIconData.write(to: packageURL.appendingPathComponent("icon.png"))
+        }
+        if let scriptData {
+            try scriptData.write(to: packageURL.appendingPathComponent("script.txt"))
+        }
         let plugin = try XCTUnwrap(PluginLoader.load(from: packageURL))
         PluginManager.shared.plugins = [plugin]
         let editor = PluginEditorWindow(plugin: plugin)

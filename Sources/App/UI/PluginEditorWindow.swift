@@ -130,6 +130,14 @@ class ShortcutRecorderField: NSView {
         
         super.flagsChanged(with: event)
     }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard isRecording, window?.firstResponder === self else {
+            return super.performKeyEquivalent(with: event)
+        }
+        keyDown(with: event)
+        return true
+    }
     
     override func keyDown(with event: NSEvent) {
         guard isRecording else {
@@ -314,11 +322,12 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
     private var statusLabelHeightConstraint: NSLayoutConstraint?
     private var contentViewMinHeightConstraint: NSLayoutConstraint?
 
+    private static let customIconItemTag = 1
     private var customIconURL: URL?
     private var editingPluginTrustStatus: Bool?
     private var trustStatusGeneration: UInt64 = 0
     private var dirtyState = PluginEditorDirtyState()
-    private var isPersisting = false
+    private(set) var isPersisting = false
 
     var hasUnsavedChanges: Bool {
         dirtyState.hasUnsavedChanges
@@ -683,14 +692,7 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
         let iconName = p.iconName
         let customIconPath = p.directoryURL.appendingPathComponent("icon.png")
         if FileManager.default.fileExists(atPath: customIconPath.path) {
-            self.customIconURL = customIconPath
-            let item = NSMenuItem(title: "Custom Image".localized, action: nil, keyEquivalent: "")
-            if let img = NSImage(contentsOf: customIconPath) {
-                img.size = NSSize(width: 14, height: 14)
-                item.image = img
-            }
-            iconPopUp.menu?.insertItem(item, at: 0)
-            iconPopUp.selectItem(at: 0)
+            selectCustomIcon(at: customIconPath)
         } else {
             if iconPopUp.itemTitles.contains(iconName) {
                 iconPopUp.selectItem(withTitle: iconName)
@@ -1050,7 +1052,7 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
             return showError(validationMessage)
         }
         
-        let isCustomIcon = (iconPopUp.titleOfSelectedItem == "Custom Image".localized)
+        let isCustomIcon = iconPopUp.selectedItem?.tag == Self.customIconItemTag
         let iconToSave = isCustomIcon ? (editingPlugin?.iconName ?? "bolt.fill") : (icon.isEmpty ? "bolt.fill" : icon)
         
         let existingConfigDict = Self.existingConfigDictionary(
@@ -1374,9 +1376,9 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
         var shouldRemoveBackup = true
 
         defer {
-            try? fileManager.removeItem(at: stagingURL)
+            PluginManager.removeDisposablePluginDirectory(stagingURL, fileManager: fileManager)
             if shouldRemoveBackup {
-                try? fileManager.removeItem(at: backupURL)
+                PluginManager.removeDisposablePluginDirectory(backupURL, fileManager: fileManager)
             }
         }
 
@@ -1406,25 +1408,25 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
                     throw PluginPackageWriteError.invalidConfiguration
                 }
             }
-            try scriptContent.write(
-                to: scriptURL,
-                atomically: true,
-                encoding: .utf8
-            )
+            try withWritableStagingDirectory(scriptURL.deletingLastPathComponent(), fileManager: fileManager) {
+                try scriptContent.write(to: scriptURL, atomically: true, encoding: .utf8)
+            }
         }
 
-        try configData.write(to: stagingURL.appendingPathComponent("Config.json"), options: .atomic)
+        try withWritableStagingDirectory(stagingURL, fileManager: fileManager) {
+            try configData.write(to: stagingURL.appendingPathComponent("Config.json"), options: .atomic)
 
-        let iconDestURL = stagingURL.appendingPathComponent("icon.png")
-        if shouldKeepCustomIcon {
-            if let customIconSourceURL {
-                if fileManager.fileExists(atPath: iconDestURL.path) {
-                    try fileManager.removeItem(at: iconDestURL)
+            let iconDestURL = stagingURL.appendingPathComponent("icon.png")
+            if shouldKeepCustomIcon {
+                if let customIconSourceURL {
+                    if fileManager.fileExists(atPath: iconDestURL.path) {
+                        try fileManager.removeItem(at: iconDestURL)
+                    }
+                    try fileManager.copyItem(at: customIconSourceURL, to: iconDestURL)
                 }
-                try fileManager.copyItem(at: customIconSourceURL, to: iconDestURL)
+            } else if fileManager.fileExists(atPath: iconDestURL.path) {
+                try fileManager.removeItem(at: iconDestURL)
             }
-        } else if fileManager.fileExists(atPath: iconDestURL.path) {
-            try fileManager.removeItem(at: iconDestURL)
         }
 
         guard PluginManager.isInstallPackageWithinLimits(
@@ -1453,6 +1455,27 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
             )
             throw error
         }
+    }
+
+    nonisolated private static func withWritableStagingDirectory(
+        _ directoryURL: URL,
+        fileManager: FileManager,
+        write: () throws -> Void
+    ) throws {
+        let attributes = try fileManager.attributesOfItem(atPath: directoryURL.path)
+        guard let permissions = attributes[.posixPermissions] as? Int,
+              permissions & 0o200 == 0 else {
+            try write()
+            return
+        }
+        try fileManager.setAttributes([.posixPermissions: permissions | 0o200], ofItemAtPath: directoryURL.path)
+        do {
+            try write()
+        } catch {
+            try? fileManager.setAttributes([.posixPermissions: permissions], ofItemAtPath: directoryURL.path)
+            throw error
+        }
+        try fileManager.setAttributes([.posixPermissions: permissions], ofItemAtPath: directoryURL.path)
     }
     
     @objc private func deleteClicked() {
@@ -1520,22 +1543,25 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
         panel.prompt = "Choose Icon".localized
         
         if panel.runModal() == .OK, let url = panel.url {
-            self.customIconURL = url
-            
-            // Add or update "自定义图片" item in popup
-            if let existing = iconPopUp.item(withTitle: "Custom Image".localized) {
-                iconPopUp.menu?.removeItem(existing)
-            }
-            
-            let item = NSMenuItem(title: "Custom Image".localized, action: nil, keyEquivalent: "")
-            if let img = NSImage(contentsOf: url) {
-                img.size = NSSize(width: 14, height: 14)
-                item.image = img
-            }
-            iconPopUp.menu?.insertItem(item, at: 0)
-            iconPopUp.selectItem(at: 0)
+            selectCustomIcon(at: url)
             recordUserEdit()
         }
+    }
+
+    func selectCustomIcon(at url: URL) {
+        customIconURL = url
+        if let existing = iconPopUp.itemArray.first(where: { $0.tag == Self.customIconItemTag }) {
+            iconPopUp.menu?.removeItem(existing)
+        }
+
+        let item = NSMenuItem(title: "Custom Image".localized, action: nil, keyEquivalent: "")
+        item.tag = Self.customIconItemTag
+        if let image = NSImage(contentsOf: url) {
+            image.size = NSSize(width: 14, height: 14)
+            item.image = image
+        }
+        iconPopUp.menu?.insertItem(item, at: 0)
+        iconPopUp.selectItem(at: 0)
     }
 
     private func showError(_ msg: String) {

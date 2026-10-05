@@ -3,6 +3,26 @@ import XCTest
 
 final class AccessibilityManagerTests: XCTestCase {
     @MainActor
+    func testCopyFallbackMarkerSurvivesNSEventBridgeWithoutTreatingUnmarkedCommandCAsSynthetic() throws {
+        let source = CGEventSource(stateID: .hidSystemState)
+        for isKeyDown in [true, false] {
+            let event = try XCTUnwrap(CGEvent(
+                keyboardEventSource: source, virtualKey: 8, keyDown: isKeyDown
+            ))
+            event.flags = .maskCommand
+            let unmarked = try XCTUnwrap(NSEvent(cgEvent: event))
+            XCTAssertFalse(AccessibilityManager.isCopyFallbackEvent(unmarked.cgEvent))
+
+            event.setIntegerValueField(
+                .eventSourceUserData, value: AccessibilityManager.copyFallbackEventMarker
+            )
+            let marked = try XCTUnwrap(NSEvent(cgEvent: event))
+            XCTAssertTrue(AccessibilityManager.isCopyFallbackEvent(marked.cgEvent))
+        }
+        XCTAssertFalse(AccessibilityManager.isCopyFallbackEvent(nil))
+    }
+
+    @MainActor
     func testAccessibilityScreenPointUsesPrimaryGlobalCoordinates() throws {
         guard let primaryScreen = NSScreen.screens.first else {
             throw XCTSkip("No main screen available")

@@ -117,6 +117,40 @@ final class RadialMenuAccessibilityTests: GlobalStateTestCase {
         XCTAssertTrue(newChild.accessibilityPerformPress())
     }
 
+    func testAccessibilityPagingClearsTheActivatedSectorsHighlightOnTheNewPage() throws {
+        let firstPage = [
+            RadialMenuItem(title: "First", iconName: "doc.on.doc", action: .builtIn(.copy)),
+            RadialMenuItem(title: "Next", iconName: "arrow.right", action: .pageNext)
+        ]
+        let secondPage = [
+            RadialMenuItem(title: "Previous", iconName: "arrow.left", action: .pagePrev),
+            RadialMenuItem(title: "Second", iconName: "doc.on.doc", action: .builtIn(.copy))
+        ]
+        let (window, view) = makeView(items: firstPage)
+        defer { window.close() }
+        let shapes = try XCTUnwrap(view.layer?.sublayers?.compactMap { $0 as? CAShapeLayer })
+        let baseColors = shapes.map(\.fillColor)
+        view.onItemSelected = { [weak view] item in
+            guard let view else { return }
+            switch item.action {
+            case .pageNext: view.menuItems = secondPage
+            case .pagePrev: view.menuItems = firstPage
+            default: XCTFail("Only page controls should be activated")
+            }
+            view.buildMenu()
+            view.beginInteractionSession()
+        }
+
+        // VoiceOver can press without producing a preceding mouse hover.
+        XCTAssertTrue(try accessibilityItems(in: view)[1].accessibilityPerformPress())
+        XCTAssertEqual(view.menuItems.map(\.title), secondPage.map(\.title))
+        XCTAssertEqual(shapes.map(\.fillColor), baseColors)
+
+        XCTAssertTrue(try accessibilityItems(in: view)[0].accessibilityPerformPress())
+        XCTAssertEqual(view.menuItems.map(\.title), firstPage.map(\.title))
+        XCTAssertEqual(shapes.map(\.fillColor), baseColors)
+    }
+
     private func accessibilityItems(in view: RadialMenuView) throws -> [NSAccessibilityElement] {
         try XCTUnwrap(view.accessibilityChildren() as? [NSAccessibilityElement])
     }

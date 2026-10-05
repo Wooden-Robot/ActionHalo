@@ -74,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let cutPluginID = "com.actionhalo.cut"
     static let deletePluginID = "com.actionhalo.delete"
     static let pastePluginID = "com.actionhalo.builtin.paste"
-    static let menuDismissEventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .keyDown]
+    static let menuDismissEventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .keyDown, .scrollWheel]
     static let resetAccessibilityOnUpdateKey = "ResetAccessibilityPermissionsOnUpdate"
     static let lastAccessibilityResetVersionKey = "LastAccessibilityResetVersion"
     static let excludedAppsDefaultsKey = AppExclusionStore.defaultsKey
@@ -113,10 +113,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingHotkeyFocusRequestID: UUID?
     private var pendingPastePopupTask: Task<Void, Never>?
     private var pendingPastePopupRequestID: UUID?
-    private var interactionGeneration: UInt64 = 0
+    private(set) var interactionGeneration: UInt64 = 0
     private let menuActionGate = SingleFireActionGate()
     private var startupPermissionTimer: Timer?
-    private var permissionRecoveryTimer: Timer?
+    private(set) var permissionRecoveryTimer: Timer?
+    private var permissionRecoveryNeedsPermissionChange = false
     private let pluginInstallQueue = DispatchQueue(
         label: "com.actionhalo.plugin-install",
         qos: .userInitiated
@@ -517,7 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @discardableResult
-    private func beginNewInteraction() -> UInt64 {
+    func beginNewInteraction() -> UInt64 {
         interactionGeneration &+= 1
         cancelPendingPastePopupWork()
         pendingHotkeyFocusTask?.cancel()
@@ -579,7 +580,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let text = focusedElementAssessment?.selectionSnapshot?.usableText,
            !text.isEmpty {
             let mouseLocation = NSEvent.mouseLocation
-            AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
+            AccessibilityManager.shared.recordSelectionAcquisition(
+                source: .accessibility, text: text,
+                processIdentifier: expectedProcessIdentifier, windowID: expectedWindowID
+            )
             self.currentSelectedText = text
             showRadialMenu(
                 at: mouseLocation,
@@ -635,7 +639,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             let mouseLocation = NSEvent.mouseLocation
-            AccessibilityManager.shared.recordSelectionAcquisition(source: .copyFallback, text: text)
+            AccessibilityManager.shared.recordSelectionAcquisition(
+                source: .copyFallback, text: text,
+                processIdentifier: expectedProcessIdentifier, windowID: expectedWindowID
+            )
             self.currentSelectedText = text
             self.showRadialMenu(
                 at: mouseLocation,
@@ -652,13 +659,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let unsavedEditors = sender.windows.compactMap { window -> PluginEditorWindow? in
-            guard let editor = window as? PluginEditorWindow,
-                  editor.isVisible || editor.isMiniaturized,
-                  editor.hasUnsavedChanges else {
-                return nil
+        applicationShouldTerminate(sender, presentAlert: { $0.runModal() })
+    }
+
+    func applicationShouldTerminate(
+        _ sender: NSApplication,
+        presentAlert: (NSAlert) -> NSApplication.ModalResponse
+    ) -> NSApplication.TerminateReply {
+        let editors = sender.windows.compactMap { $0 as? PluginEditorWindow }
+        var pluginOperationInProgress = !pendingPluginInstallPaths.isEmpty ||
+            editors.contains { $0.isPersisting }
+        if !pluginOperationInProgress {
+            if PluginManager.tryBeginPluginMutation() {
+                PluginManager.endPluginMutation()
+            } else {
+                pluginOperationInProgress = true
             }
-            return editor
+        }
+        if pluginOperationInProgress {
+            relaunchRequested = false
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Plugin Operation in Progress".localized
+            alert.informativeText = "Wait for the current plugin save, installation, or deletion to finish before quitting or restarting ActionHalo.".localized
+            alert.addButton(withTitle: "OK".localized)
+            sender.activate(ignoringOtherApps: true)
+            _ = presentAlert(alert)
+            return .terminateCancel
+        }
+        let unsavedEditors = editors.filter {
+            ($0.isVisible || $0.isMiniaturized) && $0.hasUnsavedChanges
         }
 
         guard !unsavedEditors.isEmpty else {
@@ -674,7 +704,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         discardButton.hasDestructiveAction = true
 
         sender.activate(ignoringOtherApps: true)
-        let discardConfirmed = alert.runModal() == .alertSecondButtonReturn
+        let discardConfirmed = presentAlert(alert) == .alertSecondButtonReturn
         guard Self.shouldTerminate(
             hasVisibleUnsavedPluginEditors: true,
             discardConfirmed: discardConfirmed
@@ -731,10 +761,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        cancelPendingPastePopupWork()
-        pendingHotkeyFocusTask?.cancel()
-        pendingHotkeyFocusTask = nil
-        pendingHotkeyFocusRequestID = nil
+        beginNewInteraction()
         TextSelectionMonitor.shared.onPhysicalMouseDown = nil
         TextSelectionMonitor.shared.stopMonitoring()
         PluginManager.shared.stopWatchingPluginDirectories()
@@ -922,24 +949,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     // MARK: - Services
     
-    private func startServices() {
+    @discardableResult
+    private func startServices(showMonitoringFailure: Bool = true) -> Bool {
         NSLog("[ActionHalo] Starting text selection monitoring...")
-        permissionRecoveryTimer?.invalidate()
-        permissionRecoveryTimer = nil
-        if isEnabled {
-            startTextSelectionMonitoringWithFeedback()
-        }
-        
         AccessibilityManager.shared.onPermissionLost = { [weak self] in
             self?.showPermissionLostAlert()
         }
         TextSelectionMonitor.shared.onPhysicalMouseDown = { [weak self] in
             self?.handlePhysicalMouseDownStarted()
         }
+        guard !isEnabled || startTextSelectionMonitoringWithFeedback(
+            showFailure: showMonitoringFailure
+        ) else { return false }
+        permissionRecoveryTimer?.invalidate()
+        permissionRecoveryTimer = nil
         AccessibilityManager.shared.startWatchdog()
         
         // Listen for text selection events
         registerServiceObserversIfNeeded()
+        return true
     }
 
     private func registerServiceObserversIfNeeded() {
@@ -963,13 +991,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observersRegistered = true
     }
 
-    private func startTextSelectionMonitoringWithFeedback() {
-        guard !TextSelectionMonitor.shared.startMonitoring(),
-              let failure = TextSelectionMonitor.shared.lastMonitoringStartFailure else {
-            return
+    private func startTextSelectionMonitoringWithFeedback(showFailure: Bool = true) -> Bool {
+        guard !TextSelectionMonitor.shared.startMonitoring() else {
+            return true
         }
-
-        showMonitoringStartFailureAlert(failure)
+        if showFailure, let failure = TextSelectionMonitor.shared.lastMonitoringStartFailure {
+            showMonitoringStartFailureAlert(failure)
+        }
+        return false
     }
     
     private func unregisterServiceObservers() {
@@ -980,7 +1009,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func showPermissionLostAlert() {
-        cancelPendingPastePopupWork()
+        beginNewInteraction()
         TextSelectionMonitor.shared.stopMonitoring()
         
         let alert = NSAlert()
@@ -1019,26 +1048,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if response == .alertFirstButtonReturn,
            let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
+            waitAndRecoverPermission()
         } else if Self.shouldOfferAccessibilityPermissionReset(for: failure),
                   response == .alertSecondButtonReturn {
             resetAccessibilityPermissions()
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                 NSWorkspace.shared.open(url)
             }
+            waitAndRecoverPermission()
         }
     }
     
-    private func waitAndRecoverPermission() {
+    func waitAndRecoverPermission(
+        accessibilityEnabled: @escaping @MainActor @Sendable () -> Bool = {
+            AccessibilityManager.shared.isAccessibilityEnabled
+        },
+        restartServices: (@MainActor @Sendable () -> Bool)? = nil,
+        didRecover: (@MainActor @Sendable () -> Void)? = nil
+    ) {
+        // An explicit Settings/Reset action permits one retry. If the event
+        // tap still fails, observe the next permission cycle without repeatedly
+        // attempting AX setup or presenting another modal every two seconds.
+        permissionRecoveryNeedsPermissionChange = false
         guard permissionRecoveryTimer == nil else { return }
+        AccessibilityManager.shared.stopWatchdog()
 
         let timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, AccessibilityManager.shared.isAccessibilityEnabled else {
+                guard let self else { return }
+                guard accessibilityEnabled() else {
+                    self.permissionRecoveryNeedsPermissionChange = false
+                    return
+                }
+                guard !self.permissionRecoveryNeedsPermissionChange else { return }
+                self.permissionRecoveryNeedsPermissionChange = true
+                guard restartServices?() ?? self.startServices(showMonitoringFailure: false) else {
                     return
                 }
                 self.permissionRecoveryTimer?.invalidate()
                 self.permissionRecoveryTimer = nil
-                self.startServices()
+                guard self.isEnabled else { return }
+                if let didRecover {
+                    didRecover()
+                    return
+                }
 
                 let alert = NSAlert()
                 alert.messageText = "Permission Restored".localized
@@ -1052,11 +1105,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissionRecoveryTimer = timer
     }
     
-    private func setEnabled(_ enabled: Bool) {
+    func setEnabled(_ enabled: Bool) {
         isEnabled = enabled
         if enabled {
-            startTextSelectionMonitoringWithFeedback()
+            startServices()
         } else {
+            beginNewInteraction()
+            permissionRecoveryTimer?.invalidate()
+            permissionRecoveryTimer = nil
             TextSelectionMonitor.shared.stopMonitoring()
             dismissAllMenus()
         }
@@ -1443,11 +1499,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             let window = RadialMenuWindow()
-            window.onDismissRequested = { [weak self] in
-                self?.dismissAllMenus()
+            window.onDismissRequested = { [weak self, weak window] in
+                guard let self, let window, self.radialMenuWindow === window else { return }
+                self.dismissAllMenus()
             }
-            window.onItemSelected = { [weak self] item in
-                guard let self, self.menuActionGate.consume() else { return }
+            window.onItemSelected = { [weak self, weak window] item in
+                guard let self, let window, self.radialMenuWindow === window,
+                      self.menuActionGate.consume() else { return }
                 self.handleMenuAction(
                     item,
                     text: selectedText,

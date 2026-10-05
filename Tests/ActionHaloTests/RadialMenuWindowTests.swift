@@ -107,6 +107,53 @@ final class RadialMenuWindowTests: GlobalStateTestCase {
         window.hideMenu()
     }
 
+    func testExplicitHideCancelsDeferredKeyboardSelection() throws {
+        UserDefaults.standard.set(false, forKey: "WheelBackdropEnabled")
+        let window = RadialMenuWindow()
+        let items = makeItems(count: 4)
+        window.showMenu(
+            at: NSPoint(x: 400, y: 300), items: items, selectedText: "old",
+            keyboardNavigation: true
+        )
+        let menu = try XCTUnwrap(renderedMenuView(in: window))
+        var selectionCount = 0
+        window.onItemSelected = { _ in selectionCount += 1 }
+
+        menu.onItemSelected?(try XCTUnwrap(menu.menuItems.first))
+        window.hideMenu()
+        let nextTurn = expectation(description: "Hidden menu's queued selection was checked")
+        DispatchQueue.main.async { nextTurn.fulfill() }
+        wait(for: [nextTurn], timeout: 1)
+
+        XCTAssertEqual(selectionCount, 0)
+        XCTAssertFalse(window.isVisible)
+    }
+
+    func testNewPresentationCancelsOldDismissAndCurrentDismissRunsOnce() throws {
+        UserDefaults.standard.set(false, forKey: "WheelBackdropEnabled")
+        let window = RadialMenuWindow()
+        let items = makeItems(count: 4)
+        window.showMenu(at: NSPoint(x: 400, y: 300), items: items, selectedText: "old")
+        defer { window.hideMenu() }
+        let menu = try XCTUnwrap(renderedMenuView(in: window))
+        var dismissalCount = 0
+        window.onDismissRequested = { dismissalCount += 1 }
+
+        menu.onDismissRequested?()
+        window.showMenu(at: NSPoint(x: 400, y: 300), items: items, selectedText: "new")
+        let oldDismissChecked = expectation(description: "Previous presentation's dismissal was checked")
+        DispatchQueue.main.async { oldDismissChecked.fulfill() }
+        wait(for: [oldDismissChecked], timeout: 1)
+        XCTAssertEqual(dismissalCount, 0)
+
+        menu.onDismissRequested?()
+        menu.onDismissRequested?()
+        let currentDismissChecked = expectation(description: "Current presentation's dismissal was checked")
+        DispatchQueue.main.async { currentDismissChecked.fulfill() }
+        wait(for: [currentDismissChecked], timeout: 1)
+        XCTAssertEqual(dismissalCount, 1)
+    }
+
     func testShowMenuWithoutPaginationKeepsOriginalItems() {
         UserDefaults.standard.set(6, forKey: "maxRadialMenuItems")
 
