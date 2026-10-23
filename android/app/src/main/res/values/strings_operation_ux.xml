@@ -1,0 +1,12 @@
+<resources>
+    <string name="operation_waiting_source">Waiting for the source app…</string>
+    <string name="operation_waiting_focus">Waiting to resume…</string>
+    <string name="operation_reading_selection">Reading the selected text…</string>
+    <string name="operation_retry_read">Text is not available yet. Tap an action to retry.</string>
+    <string name="settings_more_actions">More actions ▾</string>
+    <string name="summary_all_apps">All apps</string>
+    <string name="summary_only_apps">Only %1$s</string>
+    <string name="summary_except_apps">Except %1$s</string>
+    <string name="summary_web">Web</string>
+    <string name="home_app_rules_summary">%1$s · %2$s</string>
+</resources>

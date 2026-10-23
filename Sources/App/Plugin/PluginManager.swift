@@ -1519,8 +1519,7 @@ final class PluginManager: Sendable {
         case .url(let template):
             executeURLAction(template: template, text: text)
         case .copy:
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            ActionExecutor.shared.execute(action: .copy, text: text)
         case .paste:
             guard let targetProcessIdentifier,
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == targetProcessIdentifier else {

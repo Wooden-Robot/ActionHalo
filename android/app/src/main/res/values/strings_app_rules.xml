@@ -1,0 +1,25 @@
+<resources>
+    <string name="pause_title">Pause automatic popups</string>
+    <string name="pause_ready">Automatic popups are not paused. Sharing and manual clipboard actions always remain available.</string>
+    <string name="pause_remaining">Paused · resumes in %1$d min</string>
+    <string name="pause_ten_minutes">Pause for 10 minutes</string>
+    <string name="pause_one_hour">Pause for 1 hour</string>
+    <string name="pause_resume">Resume now</string>
+    <string name="pause_tile_label">Auto popups</string>
+    <string name="pause_tile_paused">Popups paused · tap to resume</string>
+    <string name="pause_add_tile">Add pause quick setting</string>
+    <string name="pause_tile_manual">Edit your quick settings and add “Auto popups”. Tap to choose a pause duration; tap again to resume.</string>
+    <string name="app_rules_trigger">Trigger mode</string>
+    <string name="app_rules_default">Follow global settings</string>
+    <string name="app_rules_auto">Automatic after adjusting selection</string>
+    <string name="app_rules_button">Show “Open wheel” button</string>
+    <string name="app_rules_off">Disable automatic entry points</string>
+    <string name="app_rules_actions_count">Custom actions: %1$d</string>
+    <string name="app_rules_actions_global">Use global actions and order</string>
+    <string name="app_rules_actions_title">Actions and order</string>
+    <string name="app_rules_order_hint">Select actions, then long-press and drag to reorder. You can also use the arrows. Changes apply after confirming.</string>
+    <string name="app_rules_move_up">Move %1$s up</string>
+    <string name="app_rules_move_down">Move %1$s down</string>
+    <string name="app_rules_consent_hint">Existing consent settings still apply. Automatic selection requires selection access; menu-only apps require their selection-menu compatibility switch; apps that do not expose selections need a manual entry point.</string>
+    <string name="app_rules_remove">Use global settings</string>
+</resources>

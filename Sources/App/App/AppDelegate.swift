@@ -1797,7 +1797,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    private func handleMenuAction(
+    func handleMenuAction(
         _ item: RadialMenuItem,
         text: String,
         targetProcessIdentifier: pid_t?,
@@ -1805,20 +1805,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ) {
         let requiresOriginalFocusedElement: Bool
         let requiresEditableTarget: Bool
+        let isCopyAction: Bool
         switch item.action {
         case .builtIn(let action):
+            isCopyAction = action == .copy
             requiresEditableTarget = action == .cut || action == .paste
             requiresOriginalFocusedElement = requiresEditableTarget
         case .plugin(let plugin):
+            isCopyAction = plugin.action.type == .copy
             requiresEditableTarget = Self.pluginRequiresEditableTarget(plugin)
             requiresOriginalFocusedElement = Self.pluginRequiresOriginalFocusedElement(plugin)
         default:
+            isCopyAction = false
             requiresEditableTarget = false
             requiresOriginalFocusedElement = false
         }
+        // Explicit copy uses the captured selection even while source focus changes.
         // Read AX state only when this action needs it. Read-only actions use
         // the captured text and should not wait for another application's IPC.
-        guard Self.shouldExecuteMenuAction(
+        guard isCopyAction || Self.shouldExecuteMenuAction(
             expectedProcessIdentifier: targetProcessIdentifier,
             currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
             requiresOriginalFocusedElement: requiresOriginalFocusedElement,

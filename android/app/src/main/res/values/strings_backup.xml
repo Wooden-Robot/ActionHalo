@@ -1,0 +1,13 @@
+<resources>
+    <string name="backup_title">Back up and restore</string>
+    <string name="backup_description">Save actions, active app scopes, order, appearance, app rules and opening preferences to a file. Backups support up to 200 custom actions. Selected text, clipboard contents, diagnostics, permissions and temporary pauses are excluded. Your custom links are included; keep the file somewhere you trust.</string>
+    <string name="backup_export">Export settings</string>
+    <string name="backup_import">Import settings</string>
+    <string name="backup_working">Reading or saving settings…</string>
+    <string name="backup_exported">Settings exported.</string>
+    <string name="backup_imported">Settings restored. Permissions and temporary pauses were kept as they are.</string>
+    <string name="backup_export_failed">Could not save the settings. Try another folder.</string>
+    <string name="backup_import_failed">Could not import this file. Choose an ActionHalo settings file up to 1 MB with valid actions and settings.</string>
+    <string name="backup_picker_unavailable">The system file picker is unavailable.</string>
+    <string name="backup_replace">Replace settings</string>
+</resources>

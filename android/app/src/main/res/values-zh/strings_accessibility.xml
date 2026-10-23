@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_label">ActionHalo 划词菜单</string>
+    <string name="accessibility_service_description">可选的选文与复制操作菜单。经你同意后，ActionHalo 可读取其他应用公开的选中文字及位置；开启 Telegram 复制后弹出时，还会识别你点击「复制」的操作，再以前台窗口读取本次复制的文字。文字仅在内存中处理，不保存、不记录，只有你选择操作后才会发送给对应应用或网站。不会扫描聊天、在后台监听剪贴板或模拟手势。支持情况取决于应用和设备。可以随时关闭各自动功能或停用本服务。</string>
+</resources>

@@ -1,0 +1,22 @@
+<resources>
+    <string name="auto_disconnected">Access is enabled, but the service is not connected. Re-enable ActionHalo in accessibility settings.</string>
+    <string name="auto_connected">Service connected · select text in another app to test</string>
+    <string name="diagnostic_summary">Selection events in this check: %1$d\nLatest result: %2$s</string>
+    <string name="diagnostic_ranges">Nonempty ranges: event %1$d · control %2$d\nLatest nonempty ranges: event %3$s · control %4$s</string>
+    <string name="diagnostic_range_unavailable">not provided</string>
+    <string name="diagnostic_test">Check automatic display</string>
+    <string name="diagnostic_test_hint">This check resets the counters and shows an example overlay. Dismiss it, select text in your browser, wait one second, then return here to see the result. Only counts and range numbers are retained, never selected text or browsing history.</string>
+    <string name="diagnostic_test_unavailable">Enable automatic display and connect the accessibility service first.</string>
+    <string name="diagnostic_waiting">No selection event received yet</string>
+    <string name="diagnostic_received">Selection event received; waiting for a stable selection</string>
+    <string name="diagnostic_no_source">The source app did not expose its text control</string>
+    <string name="diagnostic_no_text">The source app did not expose readable text</string>
+    <string name="diagnostic_no_range">The source app did not expose a usable text selection</string>
+    <string name="diagnostic_filtered">Password, sensitive, or hidden content was excluded</string>
+    <string name="diagnostic_collapsed">Selection was cleared</string>
+    <string name="diagnostic_stale">Selection changed before display</string>
+    <string name="diagnostic_window_changed">The active window changed before display</string>
+    <string name="diagnostic_shown">The accessibility overlay was displayed</string>
+    <string name="diagnostic_test_shown">The example overlay was displayed; select text in another app to test</string>
+    <string name="diagnostic_blocked">The system rejected the accessibility overlay</string>
+</resources>

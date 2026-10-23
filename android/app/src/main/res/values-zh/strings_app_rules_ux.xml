@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_rules_hub_title">应用与规则</string>
+    <string name="app_rules_hub_hint">选择应用，查看触发方式、可用动作，以及动作未显示的原因。</string>
+    <string name="app_rules_only_selected">仅看已选应用</string>
+    <string name="app_rules_only_configured">仅看已设置应用</string>
+    <string name="app_rules_disabled_summary">已在 %1$d 个应用中禁用自动弹出</string>
+    <string name="app_rules_saved">应用设置已保存</string>
+    <string name="app_rules_available_actions">可用动作（%1$d 个）：%2$s</string>
+    <string name="app_rules_hidden_actions">未显示的动作</string>
+    <string name="app_rules_no_actions">无</string>
+    <string name="app_rules_hidden_scope">%1$s · 此动作的生效 App 范围排除了该应用</string>
+    <string name="app_rules_hidden_custom">%1$s · 未加入该应用的独立动作列表</string>
+    <string name="app_rules_hidden_global">%1$s · 全局动作列表中已关闭</string>
+    <string name="app_rules_effective_off">已禁用自动圆环和辅助按钮，手动入口仍可使用。</string>
+    <string name="app_rules_effective_paused">自动触发已临时暂停。</string>
+    <string name="app_rules_effective_consent">尚未同意读取选文，可使用手动入口。</string>
+    <string name="app_rules_effective_auto">调整可读取的选区后，可自动弹出圆环。</string>
+    <string name="app_rules_effective_button">支持的选文菜单会显示「打开圆环」按钮。</string>
+    <string name="app_rules_effective_manual">自动入口已关闭，请使用手动入口。</string>
+    <string name="app_rules_effective_note">仍需来源应用提供可读取的选区或受支持的菜单。</string>
+    <string name="app_rules_edit_scope">编辑此动作的生效 App</string>
+    <string name="app_rules_draft_preview">当前设置预览</string>
+</resources>

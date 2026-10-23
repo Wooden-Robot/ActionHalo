@@ -1,0 +1,13 @@
+<resources>
+    <string name="backup_title">备份与恢复</string>
+    <string name="backup_description">将动作、生效 App、排序、外观、应用规则和打开方式保存到文件，最多支持 200 个自定义动作。不包含选中文字、剪贴板、诊断、权限和临时暂停状态。文件包含自定义链接，请保存在可信的位置。</string>
+    <string name="backup_export">导出配置</string>
+    <string name="backup_import">导入配置</string>
+    <string name="backup_working">正在读取或保存配置…</string>
+    <string name="backup_exported">配置已导出。</string>
+    <string name="backup_imported">配置已恢复，权限和临时暂停状态保持不变。</string>
+    <string name="backup_export_failed">无法保存配置，请尝试其他文件夹。</string>
+    <string name="backup_import_failed">无法导入此文件。请选择不超过 1 MB、动作和设置有效的 ActionHalo 配置文件。</string>
+    <string name="backup_picker_unavailable">系统文件选择器不可用。</string>
+    <string name="backup_replace">替换配置</string>
+</resources>

@@ -1,0 +1,12 @@
+<resources>
+    <string name="operation_waiting_source">正在等待原应用…</string>
+    <string name="operation_waiting_focus">正在等待恢复操作…</string>
+    <string name="operation_reading_selection">正在读取所选文字…</string>
+    <string name="operation_retry_read">暂未取得选文，点击动作重试</string>
+    <string name="settings_more_actions">更多操作 ▾</string>
+    <string name="summary_all_apps">全部应用</string>
+    <string name="summary_only_apps">仅 %1$s</string>
+    <string name="summary_except_apps">除 %1$s 外</string>
+    <string name="summary_web">网页</string>
+    <string name="home_app_rules_summary">%1$s · %2$s</string>
+</resources>

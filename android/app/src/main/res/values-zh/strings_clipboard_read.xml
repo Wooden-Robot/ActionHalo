@@ -1,0 +1,8 @@
+<resources>
+    <string name="clipboard_no_text">请先复制文字，再呼出圆环。</string>
+    <string name="clipboard_not_fresh">未能确认本次复制。请复制后使用快捷面板中的「复制后圆环」。</string>
+    <string name="clipboard_unlock">请解锁手机后使用已复制文字。</string>
+    <string name="diagnostic_copy_received">已识别 Telegram 复制，正在呼出圆环</string>
+    <string name="diagnostic_copy_shown">已为 Telegram 本次复制显示圆环</string>
+    <string name="diagnostic_copy_unconfirmed">未确认到本次复制的新文字</string>
+</resources>

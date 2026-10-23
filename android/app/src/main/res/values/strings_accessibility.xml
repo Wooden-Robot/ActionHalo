@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_label">ActionHalo selection menu</string>
+    <string name="accessibility_service_description">Optional menus for selected or copied text. With your consent, ActionHalo reads text selections exposed by other apps. If Telegram copy popup is enabled, it also recognizes your Copy tap and opens a foreground window to read that newly copied text. Text is processed in memory, never saved or logged, and sent to another app or website only after you choose an action. It does not scan chats, monitor the clipboard in the background, or inject gestures. Support depends on the app and device. Turn off either automatic feature or disable this service at any time.</string>
+</resources>

@@ -1,0 +1,23 @@
+<resources>
+    <string name="backup_ux_preview_title">Review imported settings</string>
+    <string name="backup_ux_preview_hint">These changes replace your current configuration. Before applying them, ActionHalo saves one previous configuration on this phone so you can restore it below.</string>
+    <string name="backup_ux_no_changes">The file matches your current configuration.</string>
+    <string name="backup_ux_added_actions">Add actions (%1$d)</string>
+    <string name="backup_ux_modified_actions">Change actions, enabled state or active apps (%1$d)</string>
+    <string name="backup_ux_removed_actions">Remove actions (%1$d)</string>
+    <string name="backup_ux_disabled_apps">Disable automatic entry in apps (%1$d)</string>
+    <string name="backup_ux_enabled_apps">Remove apps from the disabled list (%1$d)</string>
+    <string name="backup_ux_app_rules">Change app rules (%1$d)</string>
+    <string name="backup_ux_destinations">Change opening preferences (%1$d)</string>
+    <string name="backup_ux_appearance">Appearance settings changed: %1$d</string>
+    <string name="backup_ux_order">The action order will change.</string>
+    <string name="backup_ux_restore_previous">Restore settings before last import</string>
+    <string name="backup_ux_local_copy">The previous configuration is kept only on this phone until the next import. It contains settings and custom links, and excludes selected text, clipboard contents and diagnostics.</string>
+    <string name="backup_ux_restore_title">Restore the previous configuration?</string>
+    <string name="backup_ux_restore_hint">This replaces your current configuration with the saved settings from before the last import. Permission and temporary pause settings are kept.</string>
+    <string name="backup_ux_restored_previous">The configuration from before the last import has been restored.</string>
+    <string name="backup_ux_restore_failed">The previous configuration could not be read or restored. Your saved copy is kept; try importing an exported backup.</string>
+    <string name="backup_ux_apply_failed">The import could not be completed. The previous configuration is kept. Check available storage, then try again.</string>
+    <string name="backup_ux_rule_change">%1$s: %2$s → %3$s</string>
+    <string name="backup_ux_rule_actions">%1$s: action list or order will change</string>
+</resources>

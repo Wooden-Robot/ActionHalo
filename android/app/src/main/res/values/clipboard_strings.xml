@@ -1,0 +1,22 @@
+<resources>
+    <string name="clipboard_entry_title">Telegram and more apps</string>
+    <string name="telegram_copy_popup_title">Telegram selection halo</string>
+    <string name="telegram_copy_popup_off">Optional · enable with accessibility access</string>
+    <string name="telegram_copy_popup_ready">Connected · select message text, then tap Open halo</string>
+    <string name="telegram_copy_consent_title">Show the halo when you select Telegram text?</string>
+    <string name="telegram_copy_consent_body">ActionHalo uses accessibility access to recognize Telegram’s text selection menu. Where selection changes are exposed, the initial selection stays quiet and adjusting it opens the wheel. If a supported Copy menu is available without those events, the wheel appears directly and selection handles remain usable. An Open halo button appears only if you explicitly set Telegram to button mode. Showing either control does not copy or read any text. When you choose an action, Telegram copies the selection and ActionHalo temporarily reads that text to carry out your chosen action. If another prompt interrupts, your action stays available to continue or cancel.\n\nOnly selection-menu controls are inspected. Chat messages are not scanned or saved, and the clipboard is not monitored in the background. Text is processed temporarily on this device and is sent to another app or website only for the action you choose.\n\nThis is optional and depends on Telegram and the device exposing the Copy control. You can turn it off here. The quick settings button works without accessibility access.</string>
+    <string name="clipboard_entry_body">Recognized Copy menus in Telegram and other menu-only apps show the wheel directly. Selection handles remain usable. Only choosing an action copies and processes the text. You can also copy normally and use “Copied text halo” in Quick Settings.</string>
+    <string name="clipboard_add_tile">Add quick settings button</string>
+    <string name="clipboard_use_text">Use copied text</string>
+    <string name="clipboard_tile_label">Copied text halo</string>
+    <string name="clipboard_tile_added">Button added. Copy text, then tap it in Quick Settings.</string>
+    <string name="clipboard_tile_already_added">The button is already in Quick Settings.</string>
+    <string name="clipboard_tile_not_added">Button not added. You can add it later from Quick Settings.</string>
+    <string name="clipboard_tile_manual_title">Add the quick settings button</string>
+    <string name="clipboard_tile_manual_body">Swipe down twice from the top of the screen to fully open Quick Settings. Tap Edit or the pencil icon, then drag “%1$s” into your active buttons.\n\nAfter copying text, tap this button to open the halo. Editing controls vary by device.</string>
+    <string name="clipboard_open_unavailable">Could not open the halo. Try “Use copied text” in ActionHalo.</string>
+    <!-- Retained for older copy-helper diagnostics; the current flow opens the halo directly. -->
+    <string name="telegram_copy_assist_failed">The Copy control is no longer available. Select the text again.</string>
+    <string name="copy_probe_helper_shown">Copy helper is beside the Telegram menu</string>
+    <string name="copy_probe_helper_tapped">Copy helper tapped; requesting Telegram’s Copy action</string>
+</resources>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="selection_adjustment_hint">支持选区变化的应用：初次选中保持静默，调整后松手显示圆环。仅提供复制菜单的应用：直接显示圆环，选文手柄仍可调整，开始操作后再开启 GTA 背景。</string>
+    <string name="selection_initial_waiting">已忽略初始选区 · 调整手柄或从选文菜单打开 ActionHalo</string>
+    <string name="selection_open_halo">打开圆环</string>
+    <string name="selection_menu_helper_shown">按钮模式 · 已提供打开圆环按钮</string>
+    <string name="standard_menu_title">通用选文菜单兼容</string>
+    <string name="standard_menu_body">兼容仅提供复制菜单的应用，识别后直接显示圆环；支持选区变化时，仍在调整后显示。选文手柄可以继续操作，选择动作后才复制准确选文。</string>
+    <string name="standard_menu_off">可选 · 开启后兼容更多应用</string>
+    <string name="standard_menu_ready">服务已连接 · 调整选区或识别复制菜单后显示圆环</string>
+    <string name="standard_menu_consent_title">在更多应用的选文菜单上显示圆环？</string>
+    <string name="standard_menu_consent_body">ActionHalo 会通过无障碍权限识别其他应用提供的系统选文菜单及选区是否调整。支持选区变化时，初次选中保持静默，调整后显示圆环；仅提供可用复制菜单时，直接显示圆环，选文手柄仍可调整。只有主动为应用设置按钮模式时，才显示「打开圆环」按钮。显示按钮或圆环时不会复制或读取文字；只有你选择操作后，才点击已核对的复制按钮，在可见窗口中读取本次选文并执行你选的操作。\n\n不扫描页面或聊天正文，不监听剪贴板，不保存选中文字；文字只会交给你选择的应用或网站。此功能可以随时关闭。没有公开选文菜单的应用仍需通过分享或剪贴板快捷按钮使用。</string>
+</resources>

@@ -1,0 +1,30 @@
+<resources>
+    <string name="copy_overlay_waiting">Waiting to resume. Your action is kept; tap Continue to retry or Cancel to close.</string>
+    <string name="copy_action_continue">Continue</string>
+    <string name="copy_direct_shown">Telegram selection menu detected; halo shown</string>
+    <string name="copy_direct_tapped">Halo action selected; requesting the exact selection</string>
+    <string name="copy_overlay_requested">Opening the visible text action window</string>
+    <string name="copy_source_closed">The original screen is no longer available. This action was cancelled.</string>
+    <string name="copy_clip_unavailable">This copied text could not be read. Select the text and try again.</string>
+    <string name="copy_action_requested">Copied text verified; requesting the selected action</string>
+    <string name="copy_action_completed">The selected action was submitted</string>
+    <string name="copy_action_failed">The selected action could not be submitted</string>
+    <string name="copy_probe_summary">Telegram taps this run: %1$d · Copy matches: %2$d\nLatest stage: %3$s</string>
+    <string name="copy_probe_waiting">Waiting for a Telegram tap</string>
+    <string name="copy_probe_control">Received a tap on an unsupported control</string>
+    <string name="copy_probe_label">Received a tap; its label was not recognized as Copy</string>
+    <string name="copy_probe_stale">Copy event expired or repeated</string>
+    <string name="copy_probe_window">Copy recognized, but its menu window was not observed</string>
+    <string name="copy_probe_launch">Copy recognized; waiting for the halo window to take focus</string>
+    <string name="copy_probe_blocked">System blocked opening the halo window</string>
+    <string name="copy_probe_focused">Halo window focused; checking this copied text</string>
+    <string name="copy_probe_expired">Copy request expired or its switch was turned off</string>
+    <string name="background_help_title">Keep automatic popups available</string>
+    <string name="background_help_body">On vivo, search Settings for “Background power consumption” and allow ActionHalo to run in the background. Also check Auto-start and the cleanup whitelist. Names vary by system version.\n\nThese settings may help the service stay available after locking the screen. They cannot guarantee that the system will keep it running. If Android turns off accessibility access, enable it again in Accessibility settings.</string>
+    <string name="background_help_button">Background settings help</string>
+    <string name="background_app_settings">Open app settings</string>
+    <string name="background_battery_settings">Battery optimization settings</string>
+    <string name="health_copy_button">Copy troubleshooting report</string>
+    <string name="health_copy_description">Includes only device model, system, ActionHalo and official Telegram versions, service status and times, exit reason, and trigger counters. No selected text, clipboard contents or chat history. Nothing is sent automatically.</string>
+    <string name="health_copy_done">Troubleshooting report copied</string>
+</resources>

@@ -1,0 +1,21 @@
+<resources>
+    <string name="action_edit_text">编辑选文</string>
+    <string name="edit_text_hint">修正文字后再选择动作。修改仅用于本次操作。</string>
+    <string name="edit_text_continue">选择动作</string>
+    <string name="action_retry_hint">可重试或选择其他动作</string>
+    <string name="destination_menu">打开方式</string>
+    <string name="destination_title">%1$s的打开方式</string>
+    <string name="destination_default">默认方式</string>
+    <string name="destination_web">网页 · 默认浏览器或关联应用</string>
+    <string name="destination_unavailable">%1$s · 当前不可用</string>
+    <string name="destination_fallback">指定应用不可用，已打开对应网页</string>
+    <string name="home_enable">开启自动选文</string>
+    <string name="home_authorize">恢复无障碍授权</string>
+    <string name="home_reconnect">服务已断开 · 查看恢复步骤</string>
+    <string name="home_reconnect_body">无障碍权限仍开启，但服务连接已断开。请在应用设置中允许后台运行；如果仍未恢复，可在无障碍设置中重新开关 ActionHalo 服务。期间可使用「使用已复制文字」。</string>
+    <string name="undo_change">已修改 · 撤销</string>
+    <string name="actions_disable_all">全部停用</string>
+    <string name="actions_reset_all">恢复默认动作</string>
+    <string name="actions_reset_confirm">恢复内置动作并移除自定义动作？操作后可立即撤销。</string>
+    <string name="app_rules_active">已启用按应用选文规则</string>
+</resources>

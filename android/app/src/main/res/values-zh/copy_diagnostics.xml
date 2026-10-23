@@ -1,0 +1,30 @@
+<resources>
+    <string name="copy_overlay_waiting">正在等待恢复操作。本次操作已保留，可点「继续」重试，或取消。</string>
+    <string name="copy_action_continue">继续</string>
+    <string name="copy_direct_shown">已识别 Telegram 选文菜单并显示圆环</string>
+    <string name="copy_direct_tapped">已选择圆环操作，正在取得精确选文</string>
+    <string name="copy_overlay_requested">正在打开可见的文字操作浮层</string>
+    <string name="copy_source_closed">原来的选文页面已不可用，本次操作已取消。</string>
+    <string name="copy_clip_unavailable">暂时无法读取本次复制的文字，请重新选择后再试。</string>
+    <string name="copy_action_requested">本次选文已确认，正在执行所选操作</string>
+    <string name="copy_action_completed">已提交所选操作</string>
+    <string name="copy_action_failed">未能提交所选操作</string>
+    <string name="copy_probe_summary">本次运行收到 Telegram 点击：%1$d 次 · 识别复制：%2$d 次\n最近阶段：%3$s</string>
+    <string name="copy_probe_waiting">等待 Telegram 点击事件</string>
+    <string name="copy_probe_control">收到了点击，但控件类型暂不支持</string>
+    <string name="copy_probe_label">收到了点击，但未识别为「复制」</string>
+    <string name="copy_probe_stale">复制事件已过期或重复</string>
+    <string name="copy_probe_window">已识别复制，但未观察到复制菜单窗口</string>
+    <string name="copy_probe_launch">已识别复制，等待圆环窗口取得焦点</string>
+    <string name="copy_probe_blocked">系统阻止打开圆环窗口</string>
+    <string name="copy_probe_focused">圆环窗口已取得焦点，正在核对本次复制</string>
+    <string name="copy_probe_expired">复制请求已过期，或功能开关已关闭</string>
+    <string name="background_help_title">让自动弹出保持可用</string>
+    <string name="background_help_body">在 vivo 系统设置中搜索「后台耗电管理」或「后台高耗电」，允许 ActionHalo 在后台运行。同时检查「自启动」和「一键加速」清理白名单。名称会随系统版本变化。\n\n这些设置有助于锁屏后保留服务，但无法保证系统不停止应用。如果系统已关闭无障碍权限，需要到无障碍设置中重新开启。</string>
+    <string name="background_help_button">后台运行设置帮助</string>
+    <string name="background_app_settings">打开应用设置</string>
+    <string name="background_battery_settings">电池优化设置</string>
+    <string name="health_copy_button">复制故障诊断</string>
+    <string name="health_copy_description">仅包含机型、系统、ActionHalo 与官方 Telegram 版本、服务状态与时间、退出原因、触发计数。不会包含选中文字、剪贴板内容或聊天记录，也不会自动发送。</string>
+    <string name="health_copy_done">故障诊断已复制</string>
+</resources>

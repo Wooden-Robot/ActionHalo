@@ -1,0 +1,23 @@
+<resources>
+    <string name="backup_ux_preview_title">预览导入的更改</string>
+    <string name="backup_ux_preview_hint">确认后将替换当前配置。应用更改前，ActionHalo 会在本机保存一份当前配置，之后可在此页面恢复。</string>
+    <string name="backup_ux_no_changes">文件与当前配置一致。</string>
+    <string name="backup_ux_added_actions">新增动作（%1$d）</string>
+    <string name="backup_ux_modified_actions">修改动作、启用状态或生效 App（%1$d）</string>
+    <string name="backup_ux_removed_actions">移除动作（%1$d）</string>
+    <string name="backup_ux_disabled_apps">新增禁用应用（%1$d）</string>
+    <string name="backup_ux_enabled_apps">取消禁用应用（%1$d）</string>
+    <string name="backup_ux_app_rules">更改应用规则（%1$d）</string>
+    <string name="backup_ux_destinations">更改打开方式（%1$d）</string>
+    <string name="backup_ux_appearance">外观设置将更改 %1$d 项</string>
+    <string name="backup_ux_order">动作顺序将更改。</string>
+    <string name="backup_ux_restore_previous">恢复上次导入前的配置</string>
+    <string name="backup_ux_local_copy">仅在本机保留上一份配置，下次导入时更新。包含设置和自定义链接，不含选中文字、剪贴板或诊断记录。</string>
+    <string name="backup_ux_restore_title">恢复导入前的配置？</string>
+    <string name="backup_ux_restore_hint">将以保存的旧配置替换当前配置，权限和临时暂停状态保持不变。</string>
+    <string name="backup_ux_restored_previous">已恢复上次导入前的配置。</string>
+    <string name="backup_ux_restore_failed">无法读取或恢复旧配置。已保留原有副本，可尝试导入自行导出的备份。</string>
+    <string name="backup_ux_apply_failed">未能完成导入，已保留原有配置副本。请检查可用存储空间后重试。</string>
+    <string name="backup_ux_rule_change">%1$s：%2$s → %3$s</string>
+    <string name="backup_ux_rule_actions">%1$s：动作列表或顺序将更改</string>
+</resources>

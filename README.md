@@ -2,6 +2,8 @@
 
 # ActionHalo 🔥
 
+**Android edition:** A native Android app is now available in [`android/`](./android/README.md), with text-selection and share entry points, a radial menu, and optional accessibility-based automatic display. The documentation below covers the macOS edition.
+
 **An ultra-smooth circular menu tool for macOS with both click-to-execute and press-drag-release execution after selection.**
 
 [**English**](./README.md) • [简体中文](./README_zh.md)

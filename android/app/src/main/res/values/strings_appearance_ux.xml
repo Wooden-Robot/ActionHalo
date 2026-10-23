@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="halo_preview_title">Live preview</string>
+    <string name="halo_preview_body">Try selecting, dragging and paging on this scaled wheel. Actions only show their names here. Full background blur is visible when you open a halo.</string>
+    <string name="halo_preview_scene">Read · Select · Explore</string>
+    <string name="halo_preview_ready">Hold, move and release to try an action.</string>
+    <string name="halo_preview_selected">Selected: %1$s · Preview only</string>
+    <string name="halo_preview_dismissed">Preview closed.</string>
+    <string name="halo_preview_restart">Restart preview</string>
+    <string name="halo_position_title">Initial position</string>
+    <string name="halo_position_current">Initial position: %1$s</string>
+    <string name="halo_position_body">Keep the halo within reach and clear of the keyboard when it appears. Its position stays fixed once you start a gesture.</string>
+    <string-array name="halo_position_names">
+        <item>Automatic</item><item>Lower left</item><item>Lower right</item>
+    </string-array>
+</resources>
