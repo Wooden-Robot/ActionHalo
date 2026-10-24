@@ -13,7 +13,7 @@
     <string name="halo_haptics">Haptic feedback when switching actions</string>
     <string name="halo_reset">Reset appearance</string>
     <string name="update_installed">Installed version %1$s</string>
-    <string name="update_description">Check Android releases manually, read the changes, and download the APK.</string>
+    <string name="update_description">Android updates are checked automatically the first time you open the app each day. You can also check manually. Choose when to download and install an update.</string>
     <string name="update_check">Check for updates</string>
     <string name="update_download">Download update</string>
     <string name="update_releases">View releases</string>
@@ -23,7 +23,7 @@
     <string name="update_available">Android %1$s is available</string>
     <string name="update_failed">Could not check for updates. Check your connection and retry, or open the releases page.</string>
     <string name="privacy_title">Privacy</string>
-    <string name="privacy_description">Selected text is not saved as history. Internet access is used for manual update checks. Choosing search, web translation, a custom website or sharing sends the text to the website or app you select.</string>
+    <string name="privacy_description">Selected text is not saved as history. The app checks for updates online the first time you open it each day, and when you check manually. Choosing search, web translation, a custom website or sharing sends the text to the website or app you select.</string>
     <string-array name="halo_size_names">
         <item>Small</item>
         <item>Compact</item>

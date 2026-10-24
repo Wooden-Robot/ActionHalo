@@ -38,11 +38,12 @@ class AndroidReleaseCatalogTest {
         (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
 
     private fun release(version: String, channel: String = "debug", draft: Boolean = false, prerelease: Boolean = false,
-        url: String? = null, name: String = "ActionHalo-$version-$channel.apk") = JSONObject().apply {
+        url: String? = null, name: String = "ActionHalo-$version-$channel.apk", tag: String = "android-v$version") = JSONObject().apply {
+        put("tag_name", tag)
         put("draft", draft); put("prerelease", prerelease); put("body", "Fixed selection and translation")
         put("assets", JSONArray().put(JSONObject().apply {
             put("name", name); put("size", 1_024); put("state", "uploaded")
-            put("browser_download_url", url ?: "https://github.com/Wooden-Robot/ActionHalo/releases/download/android-v$version/$name")
+            put("browser_download_url", url ?: "https://github.com/Wooden-Robot/ActionHalo/releases/download/$tag/$name")
         }))
     }
 
@@ -58,13 +59,26 @@ class AndroidReleaseCatalogTest {
     @Test fun rejectsForeignAndAmbiguousDownloadLocations() {
         val filename = "ActionHalo-0.8.1-debug.apk"
         listOf(
-            "http://github.com/Wooden-Robot/ActionHalo/releases/download/v0.8.1/$filename",
-            "https://github.com.evil.example/Wooden-Robot/ActionHalo/releases/download/v0.8.1/$filename",
-            "https://github.com/Other/ActionHalo/releases/download/v0.8.1/$filename",
-            "https://user@github.com/Wooden-Robot/ActionHalo/releases/download/v0.8.1/$filename",
-            "https://github.com:444/Wooden-Robot/ActionHalo/releases/download/v0.8.1/$filename",
-            "https://github.com/Wooden-Robot/ActionHalo/releases/download/v0.8.1/$filename?redirect=x",
+            "http://github.com/Wooden-Robot/ActionHalo/releases/download/android-v0.8.1/$filename",
+            "https://github.com.evil.example/Wooden-Robot/ActionHalo/releases/download/android-v0.8.1/$filename",
+            "https://github.com/Other/ActionHalo/releases/download/android-v0.8.1/$filename",
+            "https://user@github.com/Wooden-Robot/ActionHalo/releases/download/android-v0.8.1/$filename",
+            "https://github.com:444/Wooden-Robot/ActionHalo/releases/download/android-v0.8.1/$filename",
+            "https://github.com/Wooden-Robot/ActionHalo/releases/download/android-v0.8.1/$filename?redirect=x",
             "https://github.com/Wooden-Robot/ActionHalo/releases/download/../../Other/$filename",
         ).forEach { url -> assertNull(url, AndroidReleaseCatalog.latest(JSONArray().put(release("0.8.1", url = url)).toString(), true)) }
+    }
+
+    @Test fun keepsDesktopTagsAndMismatchedVersionsOutOfAndroidUpdates() {
+        val current = release("0.11.5")
+        listOf(
+            release("9.0.0", tag = "v9.0.0"),
+            release("8.0.0", tag = "android-v7.0.0"),
+            release("6.0.0", url = "https://github.com/Wooden-Robot/ActionHalo/releases/download/v6.0.0/ActionHalo-6.0.0-debug.apk"),
+            release("5.0.0").apply { remove("tag_name") },
+        ).forEach { other ->
+            assertEquals("0.11.5", AndroidReleaseCatalog.latest(JSONArray().put(current).put(other).toString(), true)?.version)
+        }
+        assertNull(AndroidReleaseCatalog.latest(JSONArray().put(release("0.11.5", tag = "v0.11.5")).toString(), true))
     }
 }

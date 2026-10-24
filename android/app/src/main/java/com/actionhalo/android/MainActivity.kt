@@ -173,6 +173,7 @@ class MainActivity : Activity() {
 
     private fun buildHome(content: LinearLayout, savedInstanceState: Bundle?) {
         content.addSpace(12)
+        updateChecker = AndroidUpdateChecker(this).also { it.addStartupNotice(content) }
         val statusCard = card()
         autoSwitch = Switch(this).apply {
             text = getString(R.string.auto_title)
@@ -470,6 +471,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (page == Page.HOME) updateChecker?.checkOnLaunch()
         updateMode()
         appearanceSettings?.refresh()
         if (::actionList.isInitialized) renderActions()

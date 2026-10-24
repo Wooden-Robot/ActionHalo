@@ -13,7 +13,7 @@
     <string name="halo_haptics">切换操作时轻震</string>
     <string name="halo_reset">恢复默认外观</string>
     <string name="update_installed">当前版本 %1$s</string>
-    <string name="update_description">手动检查 Android 新版本，查看更新说明后下载 APK。</string>
+    <string name="update_description">每天首次打开应用时自动检查 Android 新版本，也可随时手动检查。发现新版后由你选择下载和安装。</string>
     <string name="update_check">检查更新</string>
     <string name="update_download">下载新版本</string>
     <string name="update_releases">查看发布页面</string>
@@ -23,7 +23,7 @@
     <string name="update_available">发现 Android %1$s</string>
     <string name="update_failed">检查失败，请检查网络后重试。也可以打开发布页面查看。</string>
     <string name="privacy_title">隐私说明</string>
-    <string name="privacy_description">不保存选中文字或文字历史。应用联网用于手动检查更新。选择搜索、网页翻译、自定义网址或分享时，文字会交给你选择的网站或应用。</string>
+    <string name="privacy_description">不保存选中文字或文字历史。应用每天首次打开时联网检查更新，也支持手动检查。选择搜索、网页翻译、自定义网址或分享时，文字会交给你选择的网站或应用。</string>
     <string-array name="halo_size_names">
         <item>小</item>
         <item>紧凑</item>

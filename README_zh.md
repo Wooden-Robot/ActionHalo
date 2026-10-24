@@ -253,6 +253,7 @@ My Script.actionhaloext/
 
 ```bash
 make all                 # 优化后的 universal 二进制
+make android             # Android 调试 APK
 make test                # 串行测试
 swift test --parallel    # 并行运行回归检查
 make package             # 本地验证用 .app 与 .dmg

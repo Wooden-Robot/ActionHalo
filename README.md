@@ -253,6 +253,7 @@ The tracked `Makefile` is the release source of truth:
 
 ```bash
 make all                 # optimized universal binary
+make android             # Android debug APK
 make test                # serial test suite
 swift test --parallel    # parallel runner regression check
 make package             # local verification .app and .dmg

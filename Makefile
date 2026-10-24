@@ -43,13 +43,14 @@ DMG_BACKGROUND = $(BUILD_DIR)/dmg-background.png
 
 .DEFAULT_GOAL := help
 
-.PHONY: help all clean force dependencies package release generate-appcast generate-legacy-migration-appcast publish-release-assets verify-release-repository verify-release-version verify-release-entitlements verify-sparkle-update run test
+.PHONY: help all android clean force dependencies package release generate-appcast generate-legacy-migration-appcast publish-release-assets verify-release-repository verify-release-version verify-release-entitlements verify-sparkle-update run test
 
 help:
 	@echo "ActionHalo 可用 make 命令："
 	@echo ""
 	@echo "  make / make help  显示本说明，不执行构建。"
 	@echo "  make all          编译 universal ActionHalo 二进制到 $(OUTPUT)。"
+	@echo "  make android      编译 Android 调试 APK 到 android/app/build/outputs/apk/debug/app-debug.apk。"
 	@echo "  make package      创建 ad-hoc 签名的社区版 $(APP_NAME).app 和 $(DMG_NAME)。"
 	@echo "  make release      校验版本/tag 后打包，并生成新旧两个独立签名更新源。"
 	@echo "  make publish-release-assets  将 DMG 与两个签名 appcast 上传到草稿 GitHub Release。"
@@ -73,6 +74,10 @@ all: dependencies $(OUTPUT)
 	@echo "✅ Build succeeded: $(OUTPUT)"
 	@rm -rf $(BUILD_DIR)/Plugins
 	@cp -R Plugins $(BUILD_DIR)/Plugins
+
+android:
+	cd android && ./gradlew :app:assembleDebug
+	@echo "✅ Android build succeeded: android/app/build/outputs/apk/debug/app-debug.apk"
 
 $(OUTPUT): force $(SWIFT_FILES) Makefile Package.swift Package.resolved
 	@mkdir -p $(BUILD_DIR)

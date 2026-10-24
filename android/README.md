@@ -97,7 +97,7 @@ ActionHalo 的原生 Android 版（当前版本 0.11.5），支持 **Android 8.0
 
 **0.8.0** 完成首页与设置分层，首页保留服务状态、体验和导航；操作管理、外观与触感、触发与权限、故障诊断、关于与更新各自独立。新增五档圆环大小、0–80% 背景遮罩、普通/GTA 共用的轻震开关及外观重置。所有入口使用同一份外观配置，大小继续按可用屏幕缩小，首次定位和外部点击关闭规则保持不变。
 
-「关于与更新」手动读取公开 GitHub 发布列表，显示 Android 新版本、更新说明和下载入口。仅接受本仓库、非草稿/非预发布、同 debug/release 渠道的版本化 APK；不会把 macOS 发布作为 Android 更新。下载交给浏览器，安装仍由系统处理。本轮未发布 GitHub Release，因此公开仓库没有 Android APK 时会明确提示未找到发布。实现、测试和安装包边界见 [0.8.0 验证记录](diagnostics/settings-translation-updates-0.8.0.md)。
+现版本在每天首次打开首页时，按手机本地日期自动读取公开 GitHub 发布列表；同一天恢复首页、重建窗口或重启应用不重复检查。发现新版后，首页显示可点击的下载入口；检查失败时不弹提示，当天仍可在「关于与更新」手动重试。手动检查继续展示更新说明和下载入口，不受每日次数限制。仅接受本仓库、非草稿/非预发布、同 debug/release 渠道的版本化 APK；不会把 macOS 发布作为 Android 更新。下载交给浏览器，安装仍由系统处理；没有公开 Android APK 时，手动检查会明确提示未找到发布。0.8.0 引入手动更新检查的历史验证见 [原记录](diagnostics/settings-translation-updates-0.8.0.md)。
 
 **0.7.12** 兼容旧系统选文工具条：缺少新版外层标识时，识别系统菜单项标识。仍限定前台应用的同包子窗口、明确的系统工具条和唯一复制按钮，普通「复制」弹窗不会触发。旧 WebView 不提供有效选区范围时，可启用「通用选文菜单兼容」直接显示圆环；原生自动选文开关单独使用无法读取这类范围。版本继续使用通用 APK，保留现有配置和签名。
 
@@ -237,11 +237,26 @@ Telegram 圆环最初不取得焦点，用户选动作后才显示可取得焦�
 
 ## 隐私
 
-无账号，不保存或记录收到的选中文字。应用联网用于用户主动检查公开更新；0.8.1 已移除 ML Kit、模型下载和 SDK 指标收集。保存动作配置、开关及最多 12 条本应用服务状态和时间；文字仅为本次操作在内存中处理。Telegram 与通用菜单圆环出现时不读取文字，用户选择动作后才操作真实复制控件，识别菜单时不扫描页面或聊天正文。文字操作窗口取得焦点后才读取本次剪贴板；成功后不再读取，首次为空仅在真实恢复焦点时允许第二次尝试，不监控后台剪贴板。只有用户明确选择搜索、网页翻译、自定义网址或分享时，文字才交给对应浏览器、网站或应用。自动选文、Telegram 选文圆环与通用选文菜单兼容可以分别关闭，手动入口继续可用。
+无账号，不保存或记录收到的选中文字。应用在每天首次打开首页时联网检查公开更新，也支持用户主动检查；0.8.1 已移除 ML Kit、模型下载和 SDK 指标收集。保存动作配置、开关及最多 12 条本应用服务状态和时间；文字仅为本次操作在内存中处理。Telegram 与通用菜单圆环出现时不读取文字，用户选择动作后才操作真实复制控件，识别菜单时不扫描页面或聊天正文。文字操作窗口取得焦点后才读取本次剪贴板；成功后不再读取，首次为空仅在真实恢复焦点时允许第二次尝试，不监控后台剪贴板。只有用户明确选择搜索、网页翻译、自定义网址或分享时，文字才交给对应浏览器、网站或应用。自动选文、Telegram 选文圆环与通用选文菜单兼容可以分别关闭，手动入口继续可用。
 
 无障碍能力为可选效率工具，声明 `isAccessibilityTool=false`。Google Play 发布前仍需按当时政策完成服务用途申报、披露与审核；当前交付为可安装的 debug APK。
 
+## 独立版本与发布
+
+Android 和 macOS 各自维护版本号，独立递增：
+
+| 平台 | 版本来源 | GitHub Release 标签 |
+| --- | --- | --- |
+| Android | [`app/build.gradle.kts`](app/build.gradle.kts) 的 `versionName` 和 `versionCode` | `android-vX.Y.Z` |
+| macOS / PC | [`Info.plist`](../Sources/App/Resources/Info.plist) 的两个版本字段 | `vX.Y.Z` |
+
+升级 Android 时只修改 Android 的版本字段，并递增 `versionCode`，不跟随 PC 版编号。Android 更新检查只接受 `android-vX.Y.Z` 发布，且标签版本、APK 文件名版本和下载路径必须一致；debug/release 渠道继续分别筛选。
+
+Android Release 标题使用 `Android X.Y.Z`，发布时必须显式指定 `--latest=false`，将仓库的 Latest 保留给 macOS。macOS 现有下载链接和 Sparkle 更新源依赖该入口；Android 则独立扫描其专用标签。
+
 ## 构建与安装
+
+在仓库根目录运行 `make android` 可编译 Android 调试 APK，输出为 `android/app/build/outputs/apk/debug/app-debug.apk`。也可以进入 Android 工程直接使用下面的 Gradle 命令。
 
 需要 JDK 17、Android SDK Platform 36 / Build Tools 36.0.0。Gradle Wrapper 固定 9.3.1 并校验下载 SHA-256，Android Gradle Plugin 固定 9.0.1，使用其内置 Kotlin。
 
@@ -252,7 +267,7 @@ cd android
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Android Studio 可直接打开本目录。一次构建只生成 `app/build/outputs/apk/debug/app-debug.apk`，交付文件命名为 `ActionHalo-0.9.1-debug.apk`，CI 同样只保留通用包。应用已没有架构相关原生库，无需分包。版本和签名延续现有安装，可覆盖升级。debug 签名仅用于开发与试用；正式发行需配置自行保管的 release 签名密钥。文件大小、校验值与验证范围见 [0.9.1 验证记录](diagnostics/action-app-scope-0.9.1.md)。
+Android Studio 可直接打开本目录。一次构建只生成 `app/build/outputs/apk/debug/app-debug.apk`，交付文件按 Android 的 `versionName` 命名为 `ActionHalo-X.Y.Z-debug.apk`，CI 同样只保留通用包。应用已没有架构相关原生库，无需分包。版本和签名延续现有安装，可覆盖升级。debug 签名仅用于开发与试用；正式发行需配置自行保管的 release 签名密钥。文件大小、校验值与验证范围见 [0.9.1 验证记录](diagnostics/action-app-scope-0.9.1.md)。
 
 连接测试手机或启动 Android 模拟器后：
 
@@ -278,6 +293,8 @@ JVM 测试覆盖 URL 编码和协议限制、选文长度边界、普通/GTA 圆
 - `HaloAction.kt` / `ActionStore.kt` / `ActionExecutor.kt`：动作定义、配置保存与执行。
 
 ## English
+
+Android and macOS versions advance independently: Android uses `versionName` / `versionCode` in `app/build.gradle.kts` and `android-vX.Y.Z` release tags; macOS retains its `Info.plist` versions and `vX.Y.Z` tags. Android updates require matching tag, APK and download-path versions. Publish Android releases with `--latest=false` to keep the repository Latest entry available for the existing macOS download and Sparkle feed.
 
 Version **0.9.1** adds per-action active app scopes: All apps, Only selected apps, or All except selected apps. Configure them from an action’s overflow menu. Scopes filter the source app, take precedence over per-app action lists, and are included in backups and undo. Only-selected actions are hidden when the source cannot be reliably identified. Existing settings default to All apps.
 
@@ -329,6 +346,6 @@ If automatic selection does not work, open Diagnostics and use **Check automatic
 
 **GTA mode is on by default**, with a HUD-style wheel and a hazy backdrop, blurred in real time on supported systems. Switch it off under “Appearance” to restore the orange halo. The preference is saved and shared across every entry point. Both styles share the selected 320, 360, 400, 440 or 480 dp menu cap (400 by default) and outer wheel radius, initially fitted to the available screen with system-bar clearance and an 8 dp margin. Version 0.7.9 gives GTA slot numbers and icons separate radial bands, fitting the icons against the actual font height and their 1.22 selected scale to keep them apart. Version 0.8.2 keeps the wheel in place for a first press inside it and moves its center only for a first non-pager press outside it. Later presses, paging, cancelled gestures and external-action retries keep that center fixed. The wheel may clip at screen edges rather than shift away from the finger. Short taps on visible action icons still execute, while pager presses retain their original behavior. A drag executes only on release; the 16 dp center deadzone, disabled actions, GTA sector gaps and interrupted gestures remain non-executing. Manual entries use a full-screen touch surface. Since 0.8.7, the first long-press selection stays quiet and a changed range triggers the automatic circle. Since 0.11.2, menu-only apps show the wheel directly for a supported Copy menu; initial silence remains for controls with selection-change events. Open halo buttons appear only in explicitly chosen per-app button mode. Automatic circles still use the bounded nonmodal window introduced in 0.8.6 so the original selection handles remain available; touching the wheel expands the action surface and activates GTA background effects. Version 0.8.3 bounds selection to a 32 dp buffer beyond the visible outer edge: moving farther out clears the preview, and releasing there dismisses without executing. Moving back inside restores selection, including short movements across the boundary. Tap the center to close as before; closing returns control to the underlying app. Both styles use the selected 0–80% dimming; at 0%, the GTA vignette is also transparent. Unset dimming preserves the original mode defaults. System bars remain controlled by Android. Live blur requires Android 12+ and system support; older or disabled systems retain a shaded fallback. At 0% dimming, native GTA blur remains enabled. No cross-app screenshots are taken.
 
-Automatic selection, Telegram menu detection and standard-menu compatibility are separately optional and require their respective in-app consent plus the Android accessibility service. The selection-event path requires exposed text selection; the menu paths require a supported Copy control. Selected text is not stored or logged; external actions only send it after an explicit user choice. Web translation sends selected text to the translation website only when explicitly selected. Local translation, model downloads and the ML Kit SDK have been removed. Internet permission remains for manual update checks. Desktop scripts and plugin package imports remain unsupported.
+Automatic selection, Telegram menu detection and standard-menu compatibility are separately optional and require their respective in-app consent plus the Android accessibility service. The selection-event path requires exposed text selection; the menu paths require a supported Copy control. Selected text is not stored or logged; external actions only send it after an explicit user choice. Web translation sends selected text to the translation website only when explicitly selected. Local translation, model downloads and the ML Kit SDK have been removed. Internet access is used to check for updates on the first home-screen launch each local day and for manual checks. A newer release adds a download button to the home screen; automatic failures stay quiet, and manual checks remain available on the same day. Desktop scripts and plugin package imports remain unsupported.
 
 Build with JDK 17 and Android SDK 36 using the commands above. Unit tests and Lint run locally and in the dedicated Android CI workflow. Run instrumented tests with a connected device or emulator.

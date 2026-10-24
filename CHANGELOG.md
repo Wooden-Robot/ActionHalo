@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.3.43
+
+- 修复来源应用焦点切换时，圆环复制被误取消、圆环关闭后剪贴板仍是旧内容的问题。内置和插件复制统一写入已捕获的纯文本，保留 Unicode、换行和空白。
+
+- Fixed radial-menu Copy being cancelled when source-app focus changes, leaving the previous clipboard content after the menu closes. Built-in and plugin Copy now write the captured plain text directly, preserving Unicode, line breaks and whitespace.
+
 ## v0.3.42
 
 - 关闭功能、失去权限或退出时取消仍在等待的取词请求，隔离旧菜单回调，并按应用和窗口校验取词缓存，避免过期结果展示和跨窗口误判重复选区。
