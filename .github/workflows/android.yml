@@ -2,9 +2,12 @@ name: Android
 
 on:
   push:
-    paths: ['android/**', '.github/workflows/android.yml']
+    paths: ['android/**', '.github/workflows/android.yml', '!android/**/*.md']
   pull_request:
-    paths: ['android/**', '.github/workflows/android.yml']
+    paths: ['android/**', '.github/workflows/android.yml', '!android/**/*.md']
+  schedule:
+    # Monday 03:23 in Asia/Taipei (UTC+8).
+    - cron: '23 19 * * 0'
   workflow_dispatch:
 
 permissions:
@@ -48,11 +51,7 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
-        api: [26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
-        include:
-          # API 27 has no google_apis x86_64 image.
-          - api: 27
-            arch: x86
+        api: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '[26,27,28,29,30,31,32,33,34,35,36]' || '[26,30,36]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -75,7 +74,8 @@ jobs:
         with:
           api-level: ${{ matrix.api }}
           target: google_apis
-          arch: ${{ matrix.arch || 'x86_64' }}
+          # API 27 has no google_apis x86_64 image.
+          arch: ${{ matrix.api == 27 && 'x86' || 'x86_64' }}
           profile: pixel_7
           ram-size: 2048M
           enable-hw-keyboard: true

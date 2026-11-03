@@ -277,7 +277,7 @@ Android Studio 可直接打开本目录。一次构建只生成 `app/build/outpu
 
 JVM 测试覆盖 URL 编码和协议限制、选文长度边界、普通/GTA 圆环命中、微死区与远距离方向选择；设备测试覆盖选文/分享入口、复制、圆环外起手、拖动与取消、多指中断、实时中心提示、GTA 设置持久化、首页启动和动作配置。自动模式还应在计划支持的真实应用与厂商系统上逐项验证。
 
-另有仅限模拟器、需要显式启用的[真实长按诊断测试](diagnostics/README.md)，覆盖键盘打开后的准确复制、锁屏清理与解锁后新选文、无障碍断开与重连。GitHub Actions 已配置 API 26–36（Android 8–16）逐版本设备回归，并保存测试报告；见[本机实测结果、跳过项与品牌真机边界](diagnostics/compatibility-regression.md)。配置矩阵不代表所有 CI 任务或品牌真机都已经通过。
+另有仅限模拟器、需要显式启用的[真实长按诊断测试](diagnostics/README.md)，覆盖键盘打开后的准确复制、锁屏清理与解锁后新选文、无障碍断开与重连。GitHub Actions 日常 push / PR 保留构建、单元测试、Lint 和 API 26、30、36（Android 8、11、16）设备回归；每周一 03:23（台北时间）及手动运行覆盖 API 26–36 全版本，均保存测试报告。纯 Markdown 文档修改不触发 Android CI；见[本机实测结果、跳过项与品牌真机边界](diagnostics/compatibility-regression.md)。配置矩阵不代表所有 CI 任务或品牌真机都已经通过。
 
 ## 目录
 
@@ -316,7 +316,7 @@ Native Android 8.0+ edition, version **0.8.7**. Select text in a supported app a
 
 Android 8.0+ builds provide one universal APK, including for vivo X200s. Per-ABI packages are no longer produced because the native translation libraries have been removed. Installation eligibility does not establish automatic-selection compatibility with every OEM or source app; see the [compatibility regression record](diagnostics/compatibility-regression.md) for tested emulators and exclusions. The selection-menu, share and Quick Settings entries remain available as alternatives.
 
-Version 0.7.12 recognizes framework menu-item IDs when older selection toolbars omit the newer container ID. Discovery still requires a same-package child window attached to the foreground source and one unambiguous Copy command. The existing opt-in standard-menu mode also covers legacy WebViews that publish no usable selection range. The CI matrix covers API 26–36; configuration alone does not establish that every matrix job or physical OEM device has passed.
+Version 0.7.12 recognizes framework menu-item IDs when older selection toolbars omit the newer container ID. Discovery still requires a same-package child window attached to the foreground source and one unambiguous Copy command. The existing opt-in standard-menu mode also covers legacy WebViews that publish no usable selection range. Push / PR CI runs the build, unit tests, Lint and device tests on API 26, 30 and 36. Weekly runs (Monday 03:23 Asia/Taipei) and manual runs cover API 26–36. Markdown-only changes do not trigger Android CI; configuration alone does not establish that every matrix job or physical OEM device has passed.
 
 Version 0.7.6 enables **Open link** only for known text accepted by the existing HTTP(S) URL normalizer, including bare domains. Other text and unknown selections leave the sector dimmed and unavailable to clicks, dragging and keyboard focus. Telegram and standard-menu compatibility surfaces do not copy or read text just to determine availability; manually opening the clipboard entry provides known text for validation.
 
