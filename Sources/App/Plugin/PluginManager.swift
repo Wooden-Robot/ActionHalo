@@ -638,7 +638,7 @@ final class PluginManager: Sendable {
             }
 
             do {
-                try fileManager.moveItem(at: packageURL, to: visibleURL)
+                try Self.movePluginPackagePreservingPermissions(at: packageURL, to: visibleURL, fileManager: fileManager)
                 NSLog("[ActionHalo] Repaired hidden plugin package: \(packageURL.lastPathComponent) -> \(visibleURL.lastPathComponent)")
             } catch {
                 NSLog("[ActionHalo] Failed to repair hidden plugin package \(packageURL.path): \(error.localizedDescription)")
@@ -728,7 +728,7 @@ final class PluginManager: Sendable {
                 if (try? fileManager.removeItem(at: pendingURL)) != nil {
                     result.removedRedundantBackups += 1
                 }
-            } else if (try? fileManager.moveItem(at: pendingURL, to: destinationURL)) != nil {
+            } else if (try? Self.movePluginPackagePreservingPermissions(at: pendingURL, to: destinationURL, fileManager: fileManager)) != nil {
                 result.restoredBackupPackages += 1
             }
         }
@@ -2283,13 +2283,12 @@ final class PluginManager: Sendable {
             in: userPluginsURL,
             prefix: "backup"
         )
-        var didMoveDestinationToBackup = false
-        var shouldRemoveBackup = true
+        var shouldRemoveBackup = false
         
         defer {
-            try? fileManager.removeItem(at: stagingURL)
+            Self.removeDisposablePluginDirectory(stagingURL, fileManager: fileManager)
             if shouldRemoveBackup {
-                try? fileManager.removeItem(at: backupURL)
+                Self.removeDisposablePluginDirectory(backupURL, fileManager: fileManager)
             }
         }
         
@@ -2305,18 +2304,17 @@ final class PluginManager: Sendable {
                 return .failed(.stagedValidationFailed)
             }
 
-            if fileManager.fileExists(atPath: destinationURL.path) {
-                try fileManager.moveItem(at: destinationURL, to: backupURL)
-                didMoveDestinationToBackup = true
-            }
-
             do {
-                try fileManager.moveItem(at: stagingURL, to: destinationURL)
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try Self.movePluginPackagePreservingPermissions(at: destinationURL, to: backupURL, fileManager: fileManager)
+                }
+                try Self.movePluginPackagePreservingPermissions(at: stagingURL, to: destinationURL, fileManager: fileManager)
+                shouldRemoveBackup = true
             } catch {
                 shouldRemoveBackup = Self.restoreBackedUpPackageIfNeeded(
                     backupURL: backupURL,
                     destinationURL: destinationURL,
-                    didMoveDestinationToBackup: didMoveDestinationToBackup,
+                    didMoveDestinationToBackup: fileManager.fileExists(atPath: backupURL.path),
                     fileManager: fileManager,
                     logPrefix: "Plugin install"
                 )
@@ -2420,6 +2418,39 @@ final class PluginManager: Sendable {
         return !enumerationFailed && entryCount > 0 ? directories : nil
     }
 
+    static func movePluginPackagePreservingPermissions(
+        at sourceURL: URL,
+        to destinationURL: URL,
+        fileManager: FileManager = .default
+    ) throws {
+        let attributes = try fileManager.attributesOfItem(atPath: sourceURL.path)
+        guard let permissions = attributes[.posixPermissions] as? Int,
+              permissions & 0o200 == 0 else {
+            try fileManager.moveItem(at: sourceURL, to: destinationURL)
+            return
+        }
+
+        // Older macOS versions require write access to the moved directory itself.
+        try fileManager.setAttributes([.posixPermissions: permissions | 0o200], ofItemAtPath: sourceURL.path)
+        var restoreURL = sourceURL
+        do {
+            try fileManager.moveItem(at: sourceURL, to: destinationURL)
+            restoreURL = destinationURL
+            try fileManager.setAttributes([.posixPermissions: permissions], ofItemAtPath: restoreURL.path)
+        } catch {
+            if restoreURL == destinationURL {
+                do {
+                    try fileManager.moveItem(at: destinationURL, to: sourceURL)
+                    restoreURL = sourceURL
+                } catch {
+                    NSLog("[ActionHalo] Failed to roll back plugin move after restoring permissions failed: \(error.localizedDescription)")
+                }
+            }
+            try? fileManager.setAttributes([.posixPermissions: permissions], ofItemAtPath: restoreURL.path)
+            throw error
+        }
+    }
+
     static func restoreBackedUpPackageIfNeeded(
         backupURL: URL,
         destinationURL: URL,
@@ -2435,7 +2466,7 @@ final class PluginManager: Sendable {
         }
 
         do {
-            try fileManager.moveItem(at: backupURL, to: destinationURL)
+            try Self.movePluginPackagePreservingPermissions(at: backupURL, to: destinationURL, fileManager: fileManager)
             return true
         } catch {
             NSLog("[ActionHalo] \(logPrefix) could not restore backup at \(backupURL.path): \(error.localizedDescription)")

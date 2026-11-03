@@ -1372,8 +1372,7 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
             in: parentURL,
             prefix: "backup"
         )
-        var didMoveBundleToBackup = false
-        var shouldRemoveBackup = true
+        var shouldRemoveBackup = false
 
         defer {
             PluginManager.removeDisposablePluginDirectory(stagingURL, fileManager: fileManager)
@@ -1438,18 +1437,17 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
             throw PluginPackageWriteError.invalidConfiguration
         }
 
-        if fileManager.fileExists(atPath: bundleURL.path) {
-            try fileManager.moveItem(at: bundleURL, to: backupURL)
-            didMoveBundleToBackup = true
-        }
-
         do {
-            try fileManager.moveItem(at: stagingURL, to: bundleURL)
+            if fileManager.fileExists(atPath: bundleURL.path) {
+                try PluginManager.movePluginPackagePreservingPermissions(at: bundleURL, to: backupURL, fileManager: fileManager)
+            }
+            try PluginManager.movePluginPackagePreservingPermissions(at: stagingURL, to: bundleURL, fileManager: fileManager)
+            shouldRemoveBackup = true
         } catch {
             shouldRemoveBackup = PluginManager.restoreBackedUpPackageIfNeeded(
                 backupURL: backupURL,
                 destinationURL: bundleURL,
-                didMoveDestinationToBackup: didMoveBundleToBackup,
+                didMoveDestinationToBackup: fileManager.fileExists(atPath: backupURL.path),
                 fileManager: fileManager,
                 logPrefix: "Plugin save"
             )

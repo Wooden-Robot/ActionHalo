@@ -2,7 +2,15 @@ import AppKit
 import XCTest
 @testable import ActionHalo
 
-private final class FailingEditorCommitFileManager: FileManager, @unchecked Sendable {
+private class WritableRootMoveFileManager: FileManager, @unchecked Sendable {
+    override func moveItem(at sourceURL: URL, to destinationURL: URL) throws {
+        let permissions = try attributesOfItem(atPath: sourceURL.path)[.posixPermissions] as! Int
+        guard permissions & 0o200 != 0 else { throw CocoaError(.fileWriteNoPermission) }
+        try super.moveItem(at: sourceURL, to: destinationURL)
+    }
+}
+
+private final class FailingEditorCommitFileManager: WritableRootMoveFileManager, @unchecked Sendable {
     private(set) var didRejectCommit = false
 
     override func moveItem(at sourceURL: URL, to destinationURL: URL) throws {
@@ -11,6 +19,44 @@ private final class FailingEditorCommitFileManager: FileManager, @unchecked Send
             throw CocoaError(.fileWriteUnknown)
         }
         try super.moveItem(at: sourceURL, to: destinationURL)
+    }
+}
+
+private final class FailingMovedPermissionsFileManager: WritableRootMoveFileManager, @unchecked Sendable {
+    let failOnBackup: Bool
+    let keepRejectingPermissions: Bool
+    let rejectRollback: Bool
+    private(set) var didRejectPermissions = false
+    private(set) var rejectedPermissionAttempts = 0
+    private(set) var didRejectRollback = false
+    private var movedDestination: String?
+
+    init(failOnBackup: Bool, keepRejectingPermissions: Bool = false, rejectRollback: Bool = false) {
+        self.failOnBackup = failOnBackup
+        self.keepRejectingPermissions = keepRejectingPermissions
+        self.rejectRollback = rejectRollback
+        super.init()
+    }
+
+    override func moveItem(at sourceURL: URL, to destinationURL: URL) throws {
+        if rejectRollback, didRejectPermissions, sourceURL.lastPathComponent.hasPrefix(".backup-") {
+            didRejectRollback = true
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        try super.moveItem(at: sourceURL, to: destinationURL)
+        movedDestination = destinationURL.path
+    }
+
+    override func setAttributes(_ attributes: [FileAttributeKey: Any], ofItemAtPath path: String) throws {
+        if attributes[.posixPermissions] as? Int == 0o555,
+           movedDestination == path,
+           URL(fileURLWithPath: path).lastPathComponent.hasPrefix(".backup-") == failOnBackup,
+           !didRejectPermissions || keepRejectingPermissions {
+            didRejectPermissions = true
+            rejectedPermissionAttempts += 1
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        try super.setAttributes(attributes, ofItemAtPath: path)
     }
 }
 
@@ -588,7 +634,8 @@ final class PluginEditorWindowTests: XCTestCase {
             try PluginEditorWindow.writePluginPackageAtomically(
                 bundleURL: destination, templateURL: sourceURL, configData: config,
                 scriptFileName: "scripts/nested/main.sh", scriptContent: "printf 'edited'",
-                customIconSourceURL: nil, shouldKeepCustomIcon: false
+                customIconSourceURL: nil, shouldKeepCustomIcon: false,
+                fileManager: WritableRootMoveFileManager()
             )
             XCTAssertEqual(PluginLoader.load(from: destination)?.config.name, "Edited")
             XCTAssertEqual(try String(contentsOf: destination.appendingPathComponent("scripts/nested/main.sh"), encoding: .utf8), "printf 'edited'")
@@ -628,6 +675,54 @@ final class PluginEditorWindowTests: XCTestCase {
             XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: sourceURL.appendingPathComponent(relativePath).path)[.posixPermissions] as? Int, 0o555)
         }
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: sourceURL.deletingLastPathComponent().path), ["Source.actionhaloext"])
+    }
+
+    func testPermissionFailureAfterMoveNeverDeletesTheOriginalPackage() throws {
+        for failOnBackup in [true, false] {
+            let sourceURL = try makeReadOnlyScriptPackage()
+            let rootURL = sourceURL.deletingLastPathComponent()
+            defer { PluginManager.removeDisposablePluginDirectory(rootURL) }
+            let fileManager = FailingMovedPermissionsFileManager(failOnBackup: failOnBackup)
+            XCTAssertThrowsError(try PluginEditorWindow.writePluginPackageAtomically(
+                bundleURL: sourceURL, templateURL: sourceURL,
+                configData: Data(#"{"name":"Edited","identifier":"com.test.readonly-editor","action":{"type":"shell-script","script":"scripts/nested/main.sh"}}"#.utf8),
+                scriptFileName: "scripts/nested/main.sh", scriptContent: "printf 'edited'",
+                customIconSourceURL: nil, shouldKeepCustomIcon: false, fileManager: fileManager
+            ))
+            XCTAssertTrue(fileManager.didRejectPermissions, "The move must finish before the injected permission failure")
+            let packages = try FileManager.default.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: nil)
+            XCTAssertEqual(packages.map(\.lastPathComponent), ["Source.actionhaloext"])
+            XCTAssertEqual(PluginLoader.load(from: sourceURL)?.config.name, "Original")
+            XCTAssertEqual(try String(contentsOf: sourceURL.appendingPathComponent("scripts/nested/main.sh"), encoding: .utf8), "printf 'original'")
+            for package in packages {
+                for relativePath in ["", "scripts", "scripts/nested"] {
+                    XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: package.appendingPathComponent(relativePath).path)[.posixPermissions] as? Int, 0o555)
+                }
+            }
+        }
+    }
+
+    func testPersistentPermissionAndRollbackFailureKeepsTheOnlyOriginalCopy() throws {
+        let sourceURL = try makeReadOnlyScriptPackage()
+        let rootURL = sourceURL.deletingLastPathComponent()
+        defer { PluginManager.removeDisposablePluginDirectory(rootURL) }
+        let fileManager = FailingMovedPermissionsFileManager(
+            failOnBackup: true, keepRejectingPermissions: true, rejectRollback: true
+        )
+        XCTAssertThrowsError(try PluginEditorWindow.writePluginPackageAtomically(
+            bundleURL: sourceURL, templateURL: sourceURL,
+            configData: Data(#"{"name":"Edited","identifier":"com.test.readonly-editor","action":{"type":"shell-script","script":"scripts/nested/main.sh"}}"#.utf8),
+            scriptFileName: "scripts/nested/main.sh", scriptContent: "printf 'edited'",
+            customIconSourceURL: nil, shouldKeepCustomIcon: false, fileManager: fileManager
+        ))
+        XCTAssertGreaterThanOrEqual(fileManager.rejectedPermissionAttempts, 2)
+        XCTAssertTrue(fileManager.didRejectRollback)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sourceURL.path))
+        let packages = try FileManager.default.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: nil)
+        XCTAssertEqual(packages.count, 1)
+        let backupURL = try XCTUnwrap(packages.first { $0.lastPathComponent.hasPrefix(".backup-") })
+        XCTAssertEqual(PluginLoader.load(from: backupURL)?.config.name, "Original")
+        XCTAssertEqual(try String(contentsOf: backupURL.appendingPathComponent("scripts/nested/main.sh"), encoding: .utf8), "printf 'original'")
     }
 
     private func makeReadOnlyScriptPackage() throws -> URL {
