@@ -91,18 +91,21 @@ final class MenuDismissalTests: GlobalStateTestCase {
             monitor.cancelPendingInteraction()
             monitor.onPhysicalMouseDown = previousHandler
         }
-        var received: [NSPoint] = []
-        monitor.onPhysicalMouseDown = {
-            received.append($0)
-            return false
+        var received: [(type: CGEventType, point: NSPoint, timestamp: CGEventTimestamp)] = []
+        monitor.onPhysicalMouseDown = { type, point, timestamp in
+            received.append((type, point, timestamp))
+            return .noMenu
         }
         let buttons: [CGEventType] = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         for (index, type) in buttons.enumerated() {
             XCTAssertNotEqual(TextSelectionMonitor.mouseEventMask & (1 << type.rawValue), 0)
             let point = NSPoint(x: -400 + index * 100, y: 1200 + index * 100)
-            monitor.handleMouseButtonEvent(type, at: point)
+            let timestamp = CGEventTimestamp(index + 1) * 1_000_000_000
+            monitor.handleMouseButtonEvent(type, at: point, timestamp: timestamp)
             monitor.cancelPendingInteraction()
-            XCTAssertEqual(received.last, point)
+            XCTAssertEqual(received.last?.type, type)
+            XCTAssertEqual(received.last?.point, point)
+            XCTAssertEqual(received.last?.timestamp, timestamp)
             XCTAssertEqual(received.count, index + 1)
         }
         for type: CGEventType in [.leftMouseUp, .rightMouseUp, .mouseMoved] {
@@ -126,7 +129,7 @@ final class MenuDismissalTests: GlobalStateTestCase {
             throw XCTSkip("A source application window is required for this mouse-routing integration test")
         }
 
-        monitor.onPhysicalMouseDown = { _ in false }
+        monitor.onPhysicalMouseDown = { _, _, _ in .noMenu }
         monitor.handleMouseButtonEvent(.leftMouseDown, at: point)
         monitor.handleMouseButtonEvent(.leftMouseUp, at: point)
         try await Task.sleep(nanoseconds: 150_000_000)
@@ -135,14 +138,126 @@ final class MenuDismissalTests: GlobalStateTestCase {
         }
 
         let menuPoint = NSPoint(x: point.x + 1, y: point.y + 1)
-        monitor.onPhysicalMouseDown = { _ in true }
+        monitor.onPhysicalMouseDown = { _, _, _ in .menuClick }
         monitor.handleMouseButtonEvent(.leftMouseDown, at: menuPoint)
-        monitor.onPhysicalMouseDown = { _ in false }
+        monitor.onPhysicalMouseDown = { _, _, _ in .noMenu }
         monitor.handleMouseButtonEvent(.leftMouseUp, at: menuPoint)
         try await Task.sleep(nanoseconds: 150_000_000)
 
         XCTAssertEqual(monitor.lastEmptyInputCheckLocation, point,
                        "A menu click must not reopen the paste popup and cancel its pending paste")
+    }
+
+    func testOutsideDismissalDoesNotReopenPopupOnMouseUpAndNextClickCanOpenIt() async throws {
+        let monitor = TextSelectionMonitor.shared
+        let previousHandler = monitor.onPhysicalMouseDown
+        defer {
+            monitor.cancelPendingInteraction()
+            monitor.onPhysicalMouseDown = previousHandler
+        }
+        guard let window = TextSelectionMonitor.currentFrontmostWindowSnapshot(
+            frontmostProcessID: NSWorkspace.shared.frontmostApplication?.processIdentifier
+        ), let point = AccessibilityManager.appKitScreenPoint(for: NSPoint(
+            x: window.bounds.midX, y: window.bounds.midY
+        )) else {
+            throw XCTSkip("A source application window is required for this mouse-routing integration test")
+        }
+
+        monitor.onPhysicalMouseDown = { _, _, _ in .noMenu }
+        monitor.handleMouseButtonEvent(.leftMouseDown, at: point)
+        monitor.handleMouseButtonEvent(.leftMouseUp, at: point)
+        try await Task.sleep(nanoseconds: 150_000_000)
+        guard monitor.lastEmptyInputCheckLocation == point else {
+            throw XCTSkip("The foreground application does not allow text gesture monitoring")
+        }
+
+        let dismissalPoint = NSPoint(x: point.x + 1, y: point.y + 1)
+        monitor.onPhysicalMouseDown = { _, _, _ in .dismissedMenu }
+        monitor.handleMouseButtonEvent(.leftMouseDown, at: dismissalPoint)
+        monitor.handleMouseButtonEvent(.leftMouseUp, at: dismissalPoint)
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(monitor.lastEmptyInputCheckLocation, point,
+                       "The click that dismisses a menu must not reopen the paste popup on mouse-up")
+
+        let nextPoint = NSPoint(x: point.x + 2, y: point.y + 2)
+        monitor.onPhysicalMouseDown = { _, _, _ in .noMenu }
+        monitor.handleMouseButtonEvent(.leftMouseDown, at: nextPoint)
+        monitor.handleMouseButtonEvent(.leftMouseUp, at: nextPoint)
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        XCTAssertEqual(monitor.lastEmptyInputCheckLocation, nextPoint,
+                       "A later ordinary click must still be able to open a paste popup")
+    }
+
+    func testOutsideDismissalSurvivesEitherAppKitAndPhysicalMouseEventOrder() throws {
+        for appKitFirst in [true, false] {
+            let delegate = AppDelegate()
+            let popup = PastePopupWindow()
+            defer {
+                delegate.setEnabled(false)
+                popup.close()
+            }
+            delegate.presentPastePopup(popup, at: NSPoint(x: 400, y: 300))
+            let event = try mouseEvent(.leftMouseDown, window: nil)
+            let cgEvent = try XCTUnwrap(event.cgEvent)
+            let point = try XCTUnwrap(AccessibilityManager.appKitScreenPoint(for: cgEvent.location))
+            XCTAssertFalse(popup.frame.contains(point))
+
+            if appKitFirst {
+                delegate.handleMenuDismissEvent(event)
+                XCTAssertTrue(popup.ignoresMouseEvents)
+            }
+
+            XCTAssertEqual(delegate.handlePhysicalMouseDownStarted(
+                .leftMouseDown, at: point, timestamp: cgEvent.timestamp
+            ), .dismissedMenu, "AppKit first: \(appKitFirst)")
+
+            if !appKitFirst {
+                delegate.handleMenuDismissEvent(event)
+            }
+            XCTAssertTrue(popup.ignoresMouseEvents)
+        }
+    }
+
+    func testPhysicalSecondaryClicksInsidePopupDismissIt() {
+        for type: CGEventType in [.rightMouseDown, .otherMouseDown] {
+            let delegate = AppDelegate()
+            let popup = PastePopupWindow()
+            defer {
+                delegate.setEnabled(false)
+                popup.close()
+            }
+            delegate.presentPastePopup(popup, at: NSPoint(x: 400, y: 300))
+            let point = popup.convertPoint(toScreen: NSPoint(x: 37, y: 16))
+
+            XCTAssertEqual(delegate.handlePhysicalMouseDownStarted(
+                type, at: point, timestamp: 1_000_000_000
+            ), .dismissedMenu)
+            XCTAssertTrue(popup.ignoresMouseEvents)
+        }
+    }
+
+    func testPhysicalLeftClickInsidePopupKeepsPasteButtonUsable() throws {
+        let delegate = AppDelegate()
+        let popup = PastePopupWindow()
+        defer {
+            delegate.setEnabled(false)
+            popup.close()
+        }
+        var pasteCount = 0
+        popup.onPasteClicked = { pasteCount += 1 }
+        delegate.presentPastePopup(popup, at: NSPoint(x: 400, y: 300))
+        let point = popup.convertPoint(toScreen: NSPoint(x: 37, y: 16))
+
+        XCTAssertEqual(delegate.handlePhysicalMouseDownStarted(
+            .leftMouseDown, at: point, timestamp: 1_000_000_000
+        ), .menuClick)
+        XCTAssertFalse(popup.ignoresMouseEvents)
+        let pasteButton = try XCTUnwrap(popup.contentView?.subviews.compactMap { $0 as? NSButton }
+            .first { $0.title == "Paste".localized })
+        pasteButton.performClick(nil)
+        XCTAssertEqual(pasteCount, 1)
     }
 
     func testTypingShortcutsAndEscapeDismissMousePresentedMenusRegardlessOfEventWindow() throws {
@@ -179,6 +294,27 @@ final class MenuDismissalTests: GlobalStateTestCase {
             let event = try keyEvent(key, window: ring)
             XCTAssertFalse(shouldDismiss(event, ring: ring), "The view owns ordinary dismissal keys in keyboard mode")
         }
+    }
+
+    func testModifierKeysAndSecondaryClicksDismissPastePopup() throws {
+        let popup = PastePopupWindow()
+        popup.show(at: NSPoint(x: 400, y: 300))
+        defer { popup.hidePopup() }
+
+        for type: NSEvent.EventType in [.rightMouseDown, .otherMouseDown] {
+            XCTAssertTrue(shouldDismiss(try mouseEvent(type, window: popup, point: NSPoint(x: 37, y: 16)), popup: popup))
+        }
+        for modifiers: NSEvent.ModifierFlags in [.shift, .command, .control, .option, .capsLock, []] {
+            let event = try XCTUnwrap(NSEvent.keyEvent(
+                with: .flagsChanged, location: .zero, modifierFlags: modifiers, timestamp: 1,
+                windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+                isARepeat: false, keyCode: 56
+            ))
+            XCTAssertTrue(shouldDismiss(event, popup: popup))
+        }
+        XCTAssertTrue(AppDelegate.menuDismissEventMask.contains(.flagsChanged))
+        XCTAssertTrue(TextSelectionMonitor.emptyInputCancelEventMask.contains(.flagsChanged))
+        XCTAssertTrue(TextSelectionMonitor.pendingInteractionCancelEventMask.contains(.otherMouseDown))
     }
 
     func testMouseMovementDoesNotDismissAndAllMouseButtonsAreMonitored() throws {

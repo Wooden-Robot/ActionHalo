@@ -341,8 +341,14 @@ final class TextSelectionMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var isMonitoring = false
     private(set) var lastMonitoringStartFailure: MonitoringStartFailure?
-    var onPhysicalMouseDown: ((NSPoint) -> Bool)?
+    enum MenuMouseDownResult {
+        case noMenu
+        case dismissedMenu
+        case menuClick
+    }
+    var onPhysicalMouseDown: ((CGEventType, NSPoint, CGEventTimestamp) -> MenuMouseDownResult)?
     private var mouseDownLocation: NSPoint?
+    private var mouseDownDismissedMenu = false
     private var mouseDownDragPasteboardChangeCount: Int?
     private var mouseDownWindowSnapshot: FrontmostWindowSnapshot?
     private var mouseDownProcessIdentifier: pid_t?
@@ -397,8 +403,9 @@ final class TextSelectionMonitor {
     nonisolated static let observerTimeout: TimeInterval = 0.8
     nonisolated static let duplicateCopyFallbackSuppressionInterval: TimeInterval = 1
     nonisolated static let pendingInteractionCancelEventMask: NSEvent.EventTypeMask = [
-        .keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel
+        .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel
     ]
+    nonisolated static let emptyInputCancelEventMask = pendingInteractionCancelEventMask.union(.flagsChanged)
     nonisolated static let mouseEventMask: CGEventMask =
         (1 << CGEventType.leftMouseDown.rawValue) |
         (1 << CGEventType.leftMouseUp.rawValue) |
@@ -442,6 +449,7 @@ final class TextSelectionMonitor {
             let monitorAddress = UInt(bitPattern: refcon)
             let eventType = type
             let eventLocation = event.location
+            let eventTimestamp = event.timestamp
             if type == .tapDisabledByTimeout ||
                 type == .tapDisabledByUserInput ||
                 type == .leftMouseDown ||
@@ -472,7 +480,7 @@ final class TextSelectionMonitor {
                         ) else {
                             return
                         }
-                        monitor.handleMouseButtonEvent(eventType, at: mouseLocation)
+                        monitor.handleMouseButtonEvent(eventType, at: mouseLocation, timestamp: eventTimestamp)
                     }
                 }
             }
@@ -707,14 +715,15 @@ final class TextSelectionMonitor {
         return true
     }
 
-    func handleMouseButtonEvent(_ type: CGEventType, at point: NSPoint) {
+    func handleMouseButtonEvent(_ type: CGEventType, at point: NSPoint, timestamp: CGEventTimestamp = 0) {
         switch type {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             // Every new click supersedes delayed work, but only left drags select text.
-            let handledByMenu = onPhysicalMouseDown?(point) ?? false
+            let menuResult = onPhysicalMouseDown?(type, point, timestamp) ?? .noMenu
             cancelPendingInteraction()
             // Menu clicks must not reopen a popup and cancel the action being executed.
-            if type == .leftMouseDown && !handledByMenu {
+            if type == .leftMouseDown && menuResult != .menuClick {
+                mouseDownDismissedMenu = menuResult == .dismissedMenu
                 handleMouseDown(at: point)
             }
         case .leftMouseUp:
@@ -805,6 +814,7 @@ final class TextSelectionMonitor {
         mouseDownFocusTask = nil
         mouseDownGestureID = nil
         mouseDownLocation = nil
+        mouseDownDismissedMenu = false
         mouseDownDragPasteboardChangeCount = nil
         mouseDownWindowSnapshot = nil
         mouseDownProcessIdentifier = nil
@@ -890,6 +900,7 @@ final class TextSelectionMonitor {
         let distance = sqrt(dx * dx + dy * dy)
         let snapshotAtMouseDown = mouseDownSelectionSnapshot
         let selectionBaseline = mouseDownSelectionBaseline
+        let shouldCheckEmptyInput = !mouseDownDismissedMenu
         
         resetMouseDownState()
         
@@ -1054,12 +1065,12 @@ final class TextSelectionMonitor {
                     }
                 }
             }
-        } else {
+        } else if shouldCheckEmptyInput {
             // It was just a click. Check if it's inside a text input field.
             let emptyInputCheckID = UUID()
             pendingEmptyInputCheckID = emptyInputCheckID
             emptyInputCancelMonitor = NSEvent.addGlobalMonitorForEvents(
-                matching: Self.pendingInteractionCancelEventMask
+                matching: Self.emptyInputCancelEventMask
             ) { [weak self] event in
                 guard let self, self.pendingEmptyInputCheckID == emptyInputCheckID,
                       !AccessibilityManager.isCopyFallbackEvent(event.cgEvent) else { return }

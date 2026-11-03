@@ -74,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let cutPluginID = "com.actionhalo.cut"
     static let deletePluginID = "com.actionhalo.delete"
     static let pastePluginID = "com.actionhalo.builtin.paste"
-    static let menuDismissEventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .scrollWheel]
+    static let menuDismissEventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .flagsChanged, .scrollWheel]
     static let resetAccessibilityOnUpdateKey = "ResetAccessibilityPermissionsOnUpdate"
     static let lastAccessibilityResetVersionKey = "LastAccessibilityResetVersion"
     static let excludedAppsDefaultsKey = AppExclusionStore.defaultsKey
@@ -114,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingPastePopupTask: Task<Void, Never>?
     private var pendingPastePopupRequestID: UUID?
     private(set) var interactionGeneration: UInt64 = 0
+    private var lastMenuMouseDown: (timestamp: CGEventTimestamp, result: TextSelectionMonitor.MenuMouseDownResult)?
     private let menuActionGate = SingleFireActionGate()
     private var startupPermissionTimer: Timer?
     private(set) var permissionRecoveryTimer: Timer?
@@ -529,19 +530,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return interactionGeneration
     }
 
-    private func handlePhysicalMouseDownStarted(at screenPoint: NSPoint) -> Bool {
+    func handlePhysicalMouseDownStarted(
+        _ type: CGEventType, at screenPoint: NSPoint, timestamp: CGEventTimestamp
+    ) -> TextSelectionMonitor.MenuMouseDownResult {
+        // AppKit and the event tap can observe the same click in either order.
+        if timestamp != 0, let lastMenuMouseDown, lastMenuMouseDown.timestamp == timestamp {
+            return lastMenuMouseDown.result
+        }
         _ = beginNewInteraction()
-        guard radialMenuWindow != nil || pastePopupWindow != nil else { return false }
+        let result: TextSelectionMonitor.MenuMouseDownResult
         // Use the selection event tap too; cross-app AppKit notifications can be missed.
-        if Self.shouldDismissMenus(
+        if radialMenuWindow == nil && pastePopupWindow == nil {
+            result = .noMenu
+        } else if (pastePopupWindow != nil && type != .leftMouseDown) || Self.shouldDismissMenus(
             atScreenPoint: screenPoint,
             radialMenuWindow: radialMenuWindow,
             pastePopupWindow: pastePopupWindow
         ) {
             dismissAllMenus()
-            return false
+            result = .dismissedMenu
+        } else {
+            result = .menuClick
         }
-        return true
+        lastMenuMouseDown = timestamp == 0 ? nil : (timestamp, result)
+        return result
     }
 
     private func completeHotkeyTrigger(
@@ -966,8 +978,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AccessibilityManager.shared.onPermissionLost = { [weak self] in
             self?.showPermissionLostAlert()
         }
-        TextSelectionMonitor.shared.onPhysicalMouseDown = { [weak self] point in
-            self?.handlePhysicalMouseDownStarted(at: point) ?? false
+        TextSelectionMonitor.shared.onPhysicalMouseDown = { [weak self] type, point, timestamp in
+            self?.handlePhysicalMouseDownStarted(type, at: point, timestamp: timestamp) ?? .noMenu
         }
         guard !isEnabled || startTextSelectionMonitoringWithFeedback(
             showFailure: showMonitoringFailure
@@ -1597,11 +1609,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.dismissAllMenus()
                 }
 
-                self.menuActionGate.reset()
-                window.show(at: point)
-                self.pastePopupWindow = window
+                self.presentPastePopup(window, at: point)
             }
         }
+    }
+
+    func presentPastePopup(_ window: PastePopupWindow, at point: NSPoint) {
+        menuActionGate.reset()
+        window.show(at: point)
+        pastePopupWindow = window
     }
 
     private func executePastePopupAction(
@@ -1893,24 +1909,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let monitorGeneration = menuDismissMonitorGeneration
         globalMenuDismissMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.menuDismissEventMask) { [weak self] event in
             DispatchQueue.main.async {
-                guard let self, self.menuDismissMonitorGeneration == monitorGeneration,
-                      Self.shouldDismissMenus(
-                        for: event,
-                        radialMenuWindow: self.radialMenuWindow,
-                        pastePopupWindow: self.pastePopupWindow
-                      ) else { return }
-                self.dismissAllMenus()
+                guard let self, self.menuDismissMonitorGeneration == monitorGeneration else { return }
+                self.handleMenuDismissEvent(event)
             }
         }
         // Global monitors exclude events delivered to our panels and settings windows.
         localMenuDismissMonitor = NSEvent.addLocalMonitorForEvents(matching: Self.menuDismissEventMask) { [weak self] event in
-            guard let self, Self.shouldDismissMenus(
-                for: event,
-                radialMenuWindow: self.radialMenuWindow,
-                pastePopupWindow: self.pastePopupWindow
-            ) else { return event }
-            self.dismissAllMenus()
+            self?.handleMenuDismissEvent(event)
             return event
+        }
+    }
+
+    func handleMenuDismissEvent(_ event: NSEvent) {
+        if [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type),
+           let cgEvent = event.cgEvent {
+            let point = event.window?.convertPoint(toScreen: event.locationInWindow)
+                ?? AccessibilityManager.appKitScreenPoint(for: cgEvent.location)
+                ?? event.locationInWindow
+            _ = handlePhysicalMouseDownStarted(cgEvent.type, at: point, timestamp: cgEvent.timestamp)
+        } else if Self.shouldDismissMenus(
+            for: event, radialMenuWindow: radialMenuWindow, pastePopupWindow: pastePopupWindow
+        ) {
+            dismissAllMenus()
         }
     }
     
@@ -1932,12 +1952,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pastePopupWindow: PastePopupWindow?
     ) -> Bool {
         switch event.type {
+        case .flagsChanged:
+            return radialMenuWindow == nil
         case .keyDown:
             // Explicit keyboard menus handle navigation and dismissal in the view.
             return !(radialMenuWindow?.canBecomeKey == true &&
                 event.window === radialMenuWindow &&
                 event.modifierFlags.intersection([.command, .control, .option]).isEmpty)
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            if pastePopupWindow != nil, event.type != .leftMouseDown { return true }
             let screenPoint = event.window?.convertPoint(toScreen: event.locationInWindow)
                 ?? event.cgEvent.flatMap { AccessibilityManager.appKitScreenPoint(for: $0.location) }
                 ?? event.locationInWindow

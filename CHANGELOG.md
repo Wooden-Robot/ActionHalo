@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.3.45
+
+- macOS 更新文件统一为 `appcast.xml`，沿用 ActionHalo 独立 Ed25519 签名，停止发布旧长名和 OpenFire 迁移提示源。0.3.44 及更早版本需手动安装一次新版，之后继续自动更新。
+- 「粘贴／清除」弹窗在菜单外点击、右键／中键和键盘操作（含修饰键）时关闭；关闭后的同一次点击不再于松手时重新弹出，保留菜单按钮和新拖选。
+- 统一 AppKit 与物理鼠标监听的事件处理，按时间戳去重，避免同一次点击的重复回调取消粘贴。
+
+- Unified the macOS update feed as `appcast.xml`, retaining ActionHalo's independent Ed25519 signing key and retiring the longer filename and OpenFire migration notice. Versions 0.3.44 and earlier require one manual installation before automatic updates can continue.
+- Dismissed the Paste / Clear popup on outside clicks, secondary mouse buttons and keyboard input, including modifier keys. The dismissing click no longer reopens it on mouse-up, while menu buttons and new text selections remain usable.
+- Deduplicated AppKit and physical event-tap callbacks by timestamp so repeated delivery of the same click does not cancel paste.
+
 ## v0.3.44
 
 - 修复 UU 远程操作时，点击「粘贴」按钮后重复触发文本检测、重新弹出按钮并取消粘贴的问题；菜单内点击由菜单处理，保留对新交互、焦点和窗口变化的校验。
