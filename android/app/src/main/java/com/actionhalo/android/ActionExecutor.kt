@@ -8,6 +8,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.widget.Toast
 
 object ActionExecutor {
@@ -24,11 +25,13 @@ object ActionExecutor {
         return try {
             when (action.type) {
                 ActionType.COPY -> {
-                    // ClipboardService silently ignores writes denied by AppOps.
-                    @Suppress("DEPRECATION")
-                    val mode = context.getSystemService(AppOpsManager::class.java)
-                        .noteOpNoThrow("android:write_clipboard", android.os.Process.myUid(), context.packageName)
-                    if (mode != AppOpsManager.MODE_ALLOWED) return fail(R.string.action_not_allowed)
+                    // ClipboardService silently ignores denied writes; this AppOps name exists from API 28.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        @Suppress("DEPRECATION")
+                        val mode = context.getSystemService(AppOpsManager::class.java)
+                            .noteOpNoThrow("android:write_clipboard", android.os.Process.myUid(), context.packageName)
+                        if (mode != AppOpsManager.MODE_ALLOWED) return fail(R.string.action_not_allowed)
+                    }
                     context.getSystemService(ClipboardManager::class.java)
                         .setPrimaryClip(ClipData.newPlainText("ActionHalo", text))
                     Toast.makeText(context, R.string.action_copied, Toast.LENGTH_SHORT).show()

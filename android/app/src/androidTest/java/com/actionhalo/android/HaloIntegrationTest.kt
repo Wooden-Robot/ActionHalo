@@ -17,6 +17,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -127,7 +128,8 @@ class HaloIntegrationTest {
         }
     }
 
-    @Test fun deniedClipboardWriteKeepsTheWheelOpenAndAnExplicitRetryCopiesTheSelection() {
+    @Test @SdkSuppress(minSdkVersion = 28)
+    fun deniedClipboardWriteKeepsTheWheelOpenAndAnExplicitRetryCopiesTheSelection() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("focused_clipboard_overlay") == "true")
         assertDisposableEmulator()
         val automation = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
