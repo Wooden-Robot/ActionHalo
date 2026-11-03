@@ -68,12 +68,9 @@ internal class TelegramCopyAssistant(
         val info = service.serviceInfo ?: run { clear(); return }
         val flag = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
             AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
-        val content = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
         val flags = if (enabled) info.flags or flag else info.flags and flag.inv()
-        val events = if (enabled) info.eventTypes or content else info.eventTypes and content.inv()
-        if (info.flags != flags || info.eventTypes != events) {
+        if (info.flags != flags) {
             info.flags = flags
-            info.eventTypes = events
             service.serviceInfo = info
         }
         if (enabled) schedule() else clear()

@@ -198,6 +198,15 @@ class SelectionAccessibilityService : AccessibilityService() {
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> dismissIfWindowChanged()
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                // A returned toolbar can publish its readable children after its window event.
+                val selected = overlaySelection
+                val sourcePackage = event.packageName?.toString()
+                if (overlay != null && selected != null && sourcePackage != null && sourcePackage != packageName &&
+                    sourcePackage == selected.key.packageName && nativeSelectionEnabled(sourcePackage)) {
+                    dismissIfWindowChanged()
+                }
+            }
             else -> Unit
         }
     }
@@ -408,7 +417,15 @@ class SelectionAccessibilityService : AccessibilityService() {
             val text = source.text ?: return rejectSelection(SelectionDiagnostics.Result.NO_TEXT)
             val range = sourceRange(source, text.length, candidate.key.range.start, candidate.key.range.end)
                 ?: return rejectSelection(rangeFailure(source, candidate.key.range.start, candidate.key.range.end))
-            if (range != candidate.key.range) return rejectSelection(SelectionDiagnostics.Result.STALE)
+            if (range != candidate.key.range) {
+                if (explicit) return rejectSelection(SelectionDiagnostics.Result.STALE)
+                // The node can advance before its selection event reaches this service.
+                // Keep this refinement and wait for the latest range to settle.
+                pending = PendingSelection(source, candidate.key.copy(range = range))
+                keepSource = true
+                handler.postDelayed(showPending, SELECTION_DELAY_MS)
+                return
+            }
             val selectedText = SelectionPolicy.selectedText(text, range) ?: return rejectSelection(SelectionDiagnostics.Result.NO_TEXT)
             val protectedAreas = selectionAreas(source, range)
             val bounds = Rect().apply { protectedAreas.forEach(::union) }

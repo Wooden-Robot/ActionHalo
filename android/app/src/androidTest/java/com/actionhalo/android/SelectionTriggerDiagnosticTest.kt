@@ -125,6 +125,70 @@ class SelectionTriggerDiagnosticTest {
         restoreSecure("accessibility_enabled", oldAccessibility)
     }
 
+    @Test fun returnedToolbarContentRestoresTheExistingNativeHalo() {
+        launchSelectedFixture("--ez controlled_copy_toolbar true")
+        val original = currentNativeHalo() as RadialMenuView
+        val host = awaitTextNode(FIXTURE_PACKAGE).let { try { it.windowId } finally { recycle(it) } }
+        val connected = SelectionAccessibilityService::class.java.getDeclaredField("connectedService").apply { isAccessible = true }
+        val service = (connected.get(null) as java.lang.ref.WeakReference<*>).get() as SelectionAccessibilityService
+        fun toolbar(): Int? = HaloSafeArea.selectionToolbarWindowId(service, host)
+        fun visible(): Boolean {
+            var shown = false
+            instrumentation.runOnMainSync { shown = original.isAttachedToWindow && original.isShown }
+            return shown
+        }
+        shell("am start -W --activity-single-top -n $FIXTURE --ez show_controlled_copy_toolbar true")
+        await("The real Copy popup must become the native selection's tracked toolbar") {
+            val current = toolbar() ?: return@await false
+            var tracked: Any? = null
+            instrumentation.runOnMainSync {
+                tracked = SelectionAccessibilityService::class.java.getDeclaredField("selectionToolbarWindowId")
+                    .apply { isAccessible = true }.get(service)
+            }
+            tracked == current
+        }
+        val oldToolbar = checkNotNull(toolbar())
+        assertTrue(visible())
+        shell("am start -W --activity-single-top -n $FIXTURE --ez show_controlled_copy_toolbar true --ez defer_copy_contents true")
+        await("The wheel must hide while the returned popup has no readable menu") { toolbar() == null && !visible() }
+        // Drain the old window-removal events before isolating the new content-only change.
+        automation.waitForIdle(250, 6_000)
+        assertEquals(null, toolbar())
+        assertFalse(visible())
+        var replacementWindow = -1
+        await("The empty popup must expose its real content-publishing control") {
+            val windows = automation.windows
+            try {
+                for (window in windows) {
+                    val parent = window.parent ?: continue
+                    val belongsToHost = parent.id == host
+                    if (Build.VERSION.SDK_INT < 33) { @Suppress("DEPRECATION") parent.recycle() }
+                    if (!belongsToHost) continue
+                    val root = window.root ?: continue
+                    try {
+                        val matches = root.findAccessibilityNodeInfosByText("Publish Copy toolbar contents")
+                        try {
+                            val publisher = matches.singleOrNull { it.contentDescription?.toString() == "Publish Copy toolbar contents" && it.isClickable }
+                                ?: continue
+                            replacementWindow = window.id
+                            assertTrue("The real fixture control must publish the menu contents", publisher.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                            break
+                        } finally { matches.forEach(::recycle) }
+                    } finally { recycle(root) }
+                }
+            } finally {
+                if (Build.VERSION.SDK_INT < 33) { @Suppress("DEPRECATION") windows.forEach { it.recycle() } }
+            }
+            replacementWindow >= 0
+        }
+        assertTrue("The replacement popup must be a new child of the original selection window", replacementWindow >= 0 && replacementWindow != oldToolbar)
+        await("The same popup must publish its actual Copy button without another window operation") { toolbar() == replacementWindow }
+        await("The returned toolbar's content must restore the existing native halo") { visible() }
+        assertTrue(currentNativeHalo() === original)
+        assertFreshNodeRange(0, SelectionFixtureActivity.SAMPLE_TEXT.length)
+        assertEquals(SelectionFixtureActivity.SAMPLE_TEXT, original.selectedText)
+    }
+
     @Test fun editableLongPressAutomaticallyOpensHalo() = diagnose("edit")
     @Test fun readOnlyLongPressAutomaticallyOpensHalo() = diagnose("readonly")
     @Test fun webLongPressAutomaticallyOpensHalo() = diagnose("web", launchCommand =
@@ -548,6 +612,73 @@ class SelectionTriggerDiagnosticTest {
         assertTrue("A fresh nonempty 0:9 source must survive a delayed 1:1 event. ${eventSummary()}", overlayShown())
     }
 
+    @Test fun pendingRefinementSurvivesANewerNodeRangeBeforeItsEvent() {
+        shell("am start -W -S -n $FIXTURE")
+        awaitTextNode(FIXTURE_PACKAGE).let(::recycle)
+        changeFixtureSelection(0, 9)
+        assertNoAutomaticEntryForSettlement()
+        val serviceField = SelectionAccessibilityService::class.java.getDeclaredField("connectedService").apply { isAccessible = true }
+        val service = (serviceField.get(null) as java.lang.ref.WeakReference<*>).get()!!
+        val initialSource = awaitTextNode(FIXTURE_PACKAGE)
+        try {
+            await("The service must observe the initial range before the controlled refinement") {
+                if (!initialSource.refresh() || !initialSource.isVisibleToUser ||
+                    initialSource.textSelectionStart != 0 || initialSource.textSelectionEnd != 9) return@await false
+                var primed = false
+                instrumentation.runOnMainSync {
+                    val key = SelectionAccessibilityService::class.java.getDeclaredField("lastSelection")
+                        .apply { isAccessible = true }.get(service) ?: return@runOnMainSync
+                    fun field(name: String): Any? = key.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(key)
+                    primed = field("packageName") == FIXTURE_PACKAGE && field("windowId") == initialSource.windowId &&
+                        field("nodeId") == initialSource.hashCode() && field("range") == SelectionPolicy.Range(0, 9)
+                }
+                primed
+            }
+        } finally { recycle(initialSource) }
+        val pendingField = SelectionAccessibilityService::class.java.getDeclaredField("pending").apply { isAccessible = true }
+        val handlerField = SelectionAccessibilityService::class.java.getDeclaredField("handler").apply { isAccessible = true }
+        val runnableField = SelectionAccessibilityService::class.java.getDeclaredField("showPending").apply { isAccessible = true }
+        val captured = AtomicReference<Any>()
+        val original = AtomicReference<Runnable>()
+        val capture = Runnable { captured.set(pendingField.get(service)) }
+        instrumentation.runOnMainSync {
+            original.set(runnableField.get(service) as Runnable)
+            runnableField.set(service, capture)
+        }
+        try {
+            changeFixtureSelection(0, 18)
+            await("The first refinement must reach its actual show callback") { captured.get() != null }
+            val node = awaitTextNode(FIXTURE_PACKAGE)
+            try {
+                instrumentation.runOnMainSync {
+                    runnableField.set(service, original.get())
+                    // The real foreign view changes now; its event is queued behind this callback.
+                    assertTrue(node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, Bundle().apply {
+                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
+                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, 27)
+                    }))
+                    assertTrue(node.refresh())
+                    assertEquals(27, node.textSelectionEnd)
+                    assertTrue("The callback must still own the captured refinement", captured.get() === pendingField.get(service))
+                    original.get().run()
+                    assertTrue("The old callback must not show a stale selection",
+                        SelectionAccessibilityService::class.java.getDeclaredField("overlay").apply { isAccessible = true }
+                            .get(service) == null)
+                }
+            } finally { recycle(node) }
+            await("A newer real range must remain a refinement after the stale callback") { overlayShown() }
+            val menu = currentNativeHalo() as RadialMenuView
+            instrumentation.runOnMainSync {
+                assertEquals(SelectionFixtureActivity.SAMPLE_TEXT.substring(0, 27), menu.selectedText)
+            }
+        } finally {
+            instrumentation.runOnMainSync {
+                (handlerField.get(service) as android.os.Handler).removeCallbacks(capture)
+                runnableField.set(service, original.get())
+            }
+        }
+    }
+
     @Test fun freshCollapsedSourceRejectsDelayedNonemptyEvent() {
         launchRangeRace("stale_nonempty")
         awaitRangeMismatch(0, 9, 1, 1)
@@ -589,8 +720,8 @@ class SelectionTriggerDiagnosticTest {
         } finally { recycle(node) }
     }
 
-    private fun launchSelectedFixture() {
-        shell("am start -W -S -n $FIXTURE")
+    private fun launchSelectedFixture(extra: String = "") {
+        shell("am start -W -S -n $FIXTURE $extra")
         SystemClock.sleep(800) // Older systems publish nodes before the activity entrance finishes.
         awaitTextNode(FIXTURE_PACKAGE).let(::recycle)
         changeFixtureSelection(1, 1)

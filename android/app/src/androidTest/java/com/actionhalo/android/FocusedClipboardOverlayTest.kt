@@ -1131,6 +1131,24 @@ class FocusedClipboardOverlayTest {
         val captureShow = Runnable { capturedPending.set(pendingField.get(service)) }
         val host = "$testPackage/${SelectionFixtureActivity::class.java.name}"
         shell("am start -W -S -n $host --ez select_all true")
+        // The first event may arrive after the node changed; silence alone does not prove priming.
+        await("The service must observe the fixture's full initial selection before refinement") {
+            val source = findSelectionEditor() ?: return@await false
+            try {
+                if (!source.refresh() || !source.isVisibleToUser || source.textSelectionStart != 0 ||
+                    source.textSelectionEnd != SelectionFixtureActivity.SAMPLE_TEXT.length) return@await false
+                val observed = AtomicBoolean()
+                instrumentation.runOnMainSync {
+                    val key = SelectionAccessibilityService::class.java.getDeclaredField("lastSelection")
+                        .apply { isAccessible = true }.get(service) ?: return@runOnMainSync
+                    fun field(name: String): Any? = key.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(key)
+                    observed.set(field("packageName") == testPackage && field("windowId") == source.windowId &&
+                        field("nodeId") == source.hashCode() &&
+                        field("range") == SelectionPolicy.Range(0, SelectionFixtureActivity.SAMPLE_TEXT.length))
+                }
+                observed.get()
+            } finally { recycle(source) }
+        }
         assertNoMenuHaloForSettlement()
         assertNull(selectionHelperWindowId())
         instrumentation.runOnMainSync {

@@ -43,6 +43,10 @@ public class SelectionFixtureActivity extends Activity {
 
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        if (editor != null && intent.getBooleanExtra("show_controlled_copy_toolbar", false)) {
+            showControlledCopyToolbar(intent.getBooleanExtra("defer_copy_contents", false));
+            return;
+        }
         if (intent.getBooleanExtra("repeat_selection_event", false) && editor != null) {
             sendSelectionSnapshot(editor.getSelectionStart(), editor.getSelectionEnd());
             return;
@@ -128,6 +132,14 @@ public class SelectionFixtureActivity extends Activity {
             }
         };
         configureText(editor, text);
+        if (getIntent().getBooleanExtra("controlled_copy_toolbar", false)) {
+            editor.setCustomSelectionActionModeCallback(new android.view.ActionMode.Callback() {
+                @Override public boolean onCreateActionMode(android.view.ActionMode mode, android.view.Menu menu) { menu.clear(); return true; }
+                @Override public boolean onPrepareActionMode(android.view.ActionMode mode, android.view.Menu menu) { menu.clear(); return true; }
+                @Override public boolean onActionItemClicked(android.view.ActionMode mode, android.view.MenuItem item) { return false; }
+                @Override public void onDestroyActionMode(android.view.ActionMode mode) {}
+            });
+        }
         editor.setContentDescription("Foreign selection fixture; touchDowns=" + touchDownCount);
         editor.setMinLines(3);
         editor.setShowSoftInputOnFocus(false);
@@ -164,6 +176,28 @@ public class SelectionFixtureActivity extends Activity {
         view.setContentDescription("Foreign selection fixture; touchDowns=" + touchDownCount +
             "; handle=" + (x + handle.getIntrinsicWidth() / 4f) + "," + (y + handle.getIntrinsicHeight() / 2f) +
             "; drag=" + shift + "; range_end=" + end);
+    }
+
+    private void showControlledCopyToolbar(boolean deferContents) {
+        if (copyPopup != null) copyPopup.dismiss();
+        FrameLayout contents = new FrameLayout(this);
+        contents.setContentDescription("Publish Copy toolbar contents");
+        float density = getResources().getDisplayMetrics().density;
+        PopupWindow popup = new PopupWindow(contents, (int) (240 * density), (int) (96 * density), false);
+        popup.setBackgroundDrawable(new ColorDrawable(Color.WHITE));
+        copyPopup = popup;
+        Runnable addCopy = () -> {
+            contents.setOnClickListener(null);
+            contents.setClickable(false);
+            Button copy = new Button(this);
+            copy.setText(android.R.string.copy);
+            copy.setOnClickListener(view -> getSystemService(ClipboardManager.class).setPrimaryClip(
+                ClipData.newPlainText("Controlled selection", editor.getText().subSequence(
+                    editor.getSelectionStart(), editor.getSelectionEnd()))));
+            contents.addView(copy, new FrameLayout.LayoutParams(-1, -1));
+        };
+        if (deferContents) contents.setOnClickListener(view -> addCopy.run()); else addCopy.run();
+        popup.showAtLocation(editor, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL, 0, (int) (24 * density));
     }
 
     @Override protected void onDestroy() {

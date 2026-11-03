@@ -177,12 +177,16 @@ class AppRulesUiTest {
             assertEquals(original, AppRulesStore(context).profile(source).actions)
         } finally {
             try {
-                if (cancel) instrumentation.runOnMainSync { root.cancelDragAndDrop() }
+                if (cancel) {
+                    instrumentation.runOnMainSync { root.cancelDragAndDrop() }
+                    // Cancellation is asynchronous; UP must not race it into a successful drop.
+                    awaitNativeDrag(root, draggingExpected = false)
+                }
             } finally {
                 // Cancelling the native drag does not release the injected touch pointer.
                 inject(down, MotionEvent.ACTION_UP, x, targetY)
             }
-            awaitNativeDrag(root, draggingExpected = false)
+            if (!cancel) awaitNativeDrag(root, draggingExpected = false)
         }
     }
 
