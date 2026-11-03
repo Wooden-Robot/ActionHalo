@@ -412,8 +412,12 @@ class ActionManagementUiTest {
             checkPreview()
         } finally {
             // Cancel the native drag session; Android 11 turns an injected touch CANCEL into a drop.
-            if (cancel) scenario.onActivity { it.window.decorView.cancelDragAndDrop() }
-            else injectTouch(downTime, MotionEvent.ACTION_UP, x, endY)
+            try {
+                if (cancel) scenario.onActivity { it.window.decorView.cancelDragAndDrop() }
+            } finally {
+                // Ending a native drag does not release the injected touch pointer.
+                injectTouch(downTime, MotionEvent.ACTION_UP, x, endY)
+            }
             awaitDragEnded(scenario, sourceId)
         }
     }

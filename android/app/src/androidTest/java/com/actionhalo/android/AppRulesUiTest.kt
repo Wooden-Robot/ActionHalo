@@ -176,9 +176,12 @@ class AppRulesUiTest {
             }
             assertEquals(original, AppRulesStore(context).profile(source).actions)
         } finally {
-            if (cancel) instrumentation.runOnMainSync { root.cancelDragAndDrop() }
-            // Cancelling the native drag does not release the injected touch pointer.
-            inject(down, MotionEvent.ACTION_UP, x, targetY)
+            try {
+                if (cancel) instrumentation.runOnMainSync { root.cancelDragAndDrop() }
+            } finally {
+                // Cancelling the native drag does not release the injected touch pointer.
+                inject(down, MotionEvent.ACTION_UP, x, targetY)
+            }
             val until = SystemClock.uptimeMillis() + 3_000
             var dragging: Boolean
             do {
