@@ -116,7 +116,8 @@ class SelectionTriggerDiagnosticTest {
 
     @Test fun editableLongPressAutomaticallyOpensHalo() = diagnose("edit")
     @Test fun readOnlyLongPressAutomaticallyOpensHalo() = diagnose("readonly")
-    @Test fun webLongPressAutomaticallyOpensHalo() = diagnose("web")
+    @Test fun webLongPressAutomaticallyOpensHalo() = diagnose("web", launchCommand =
+        "am start -W -n $FIXTURE --es fixture_mode web --ez editable_web true")
 
     @Test fun initialSelectionStaysQuietAndOnlyAnAdjustedRangeOpensTheHalo() {
         shell("am start -W -S -n $FIXTURE")
@@ -690,9 +691,10 @@ class SelectionTriggerDiagnosticTest {
         SystemClock.sleep(800) // Wait for the activity's entrance animation before reading screen bounds.
         val node = awaitTextNode(hostPackage)
         if (mode == "web" && !standardMenu) {
-            assumeTrue("This legacy WebView exposes labels without selection text or ranges; standard-menu compatibility is tested separately",
+            assertTrue("The editable WebView fixture must expose its selection text",
                 node.text != null)
         }
+        var expectedSelection: String? = null
         val bounds = Rect().also(node::getBoundsInScreen)
         // Select the first rendered word, keeping the coordinates independent of toolbar labels.
         val browser = mode == "web" || mode == "via"
@@ -723,10 +725,12 @@ class SelectionTriggerDiagnosticTest {
             val end = if (node.textSelectionEnd >= 0) node.textSelectionEnd else eventRange?.eventEnd ?: -1
             val length = checkNotNull(node.text).length
             assertTrue("The long press must expose its actual initial range", start >= 0 && end > start)
+            if (mode == "web") assertEquals("Selection", node.text!!.subSequence(start, end).toString())
             val newStart = if (end == length) start + 1 else start
             val newEnd = (end + 1).coerceAtMost(length)
             Log.i(TAG, "mode=$mode refine=$newStart:$newEnd actions=${node.actionList.map { it.id }}")
             if (node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SET_SELECTION }) {
+                if (mode == "web") expectedSelection = node.text!!.subSequence(newStart, newEnd).toString()
                 assertTrue(node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, Bundle().apply {
                     putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, newStart)
                     putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, newEnd)
@@ -777,6 +781,14 @@ class SelectionTriggerDiagnosticTest {
         }
         assertTrue("$mode adjusted or explicitly requested selection must display its halo. " +
             "Observed metadata: ${synchronized(events) { events.joinToString(" | ") }}", overlay)
+        if (expectedSelection != null) {
+            val menu = currentNativeHalo() as RadialMenuView
+            await("The halo must contain the expanded selection") {
+                var selected: String? = null
+                instrumentation.runOnMainSync { selected = menu.selectedText }
+                selected == expectedSelection
+            }
+        }
     }
 
     private fun awaitTextNode(hostPackage: String): AccessibilityNodeInfo {

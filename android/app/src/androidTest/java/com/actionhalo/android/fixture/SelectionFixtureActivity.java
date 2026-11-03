@@ -85,10 +85,12 @@ public class SelectionFixtureActivity extends Activity {
         if (MODE_WEB.equals(mode)) {
             WebView web = new WebView(this);
             web.setId(View.generateViewId());
+            // Chrome 69 exposes native selection ranges only for editable Web content.
+            String editable = getIntent().getBooleanExtra("editable_web", false) ? " contenteditable='true'" : "";
             web.loadDataWithBaseURL("https://actionhalo.test/",
                 "<!doctype html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'></head>" +
                 "<body style='margin:24px;font:26px sans-serif;line-height:1.6'>" +
-                "<p>Selection fixture: Alpha beta gamma delta. 你好，ActionHalo 🌍</p></body></html>",
+                "<p" + editable + ">Selection fixture: Alpha beta gamma delta. 你好，ActionHalo 🌍</p></body></html>",
                 "text/html", "UTF-8", null);
             showFixture(web);
             return;
