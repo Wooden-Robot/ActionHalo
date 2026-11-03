@@ -21,7 +21,7 @@ final class MenuCopyTests: GlobalStateTestCase {
 
         let text = "  已选文字 👩🏽‍💻\ne\u{301}\t"
         for action in [RadialMenuAction.plugin(plugin), .builtIn(.copy)] {
-            pasteboard.clearContents()
+            pasteboard.declareTypes([.string], owner: nil)
             XCTAssertTrue(pasteboard.setString("previous clipboard", forType: .string))
             let delegate = AppDelegate()
             // The ring can still be clicked while macOS restores the source app's focus.

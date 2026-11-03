@@ -232,13 +232,13 @@ final class TelegramSearchTests: XCTestCase {
     func testQueryReadbackRestoresSnapshotAfterSingleCopy() throws {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
         let initialState = pasteboardState(pasteboard)
         let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(from: pasteboard))
         defer { snapshot.discardTemporaryFiles() }
 
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("needle", forType: .string))
         let copiedState = pasteboardState(pasteboard)
         let readback = MacOSTelegramSearchAdapter.finishQueryReadback(
@@ -254,15 +254,15 @@ final class TelegramSearchTests: XCTestCase {
     func testQueryReadbackPreservesNewerClipboardWriteBeforeObservation() throws {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
         let initialState = pasteboardState(pasteboard)
         let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(from: pasteboard))
         defer { snapshot.discardTemporaryFiles() }
 
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("needle", forType: .string))
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("new user copy", forType: .string))
         let copiedState = pasteboardState(pasteboard)
         let readback = MacOSTelegramSearchAdapter.finishQueryReadback(
@@ -279,16 +279,16 @@ final class TelegramSearchTests: XCTestCase {
     func testQueryReadbackPreservesNewerClipboardWriteAfterObservation() throws {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
         let initialState = pasteboardState(pasteboard)
         let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(from: pasteboard))
         defer { snapshot.discardTemporaryFiles() }
 
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("needle", forType: .string))
         let copiedState = pasteboardState(pasteboard)
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("new user copy", forType: .string))
         let currentState = pasteboardState(pasteboard)
         let readback = MacOSTelegramSearchAdapter.finishQueryReadback(
