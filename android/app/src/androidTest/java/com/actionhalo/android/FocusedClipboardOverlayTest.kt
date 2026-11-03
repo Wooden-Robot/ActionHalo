@@ -1127,43 +1127,43 @@ class FocusedClipboardOverlayTest {
         val handlerField = SelectionAccessibilityService::class.java.getDeclaredField("handler").apply { isAccessible = true }
         val runnableField = SelectionAccessibilityService::class.java.getDeclaredField("showPending").apply { isAccessible = true }
         val capturedPending = AtomicReference<Any>()
-        val delayedShow = AtomicReference<Runnable>()
+        val originalShow = AtomicReference<Runnable>()
+        val captureShow = Runnable { capturedPending.set(pendingField.get(service)) }
         val host = "$testPackage/${SelectionFixtureActivity::class.java.name}"
         shell("am start -W -S -n $host --ez select_all true")
         assertNoMenuHaloForSettlement()
         assertNull(selectionHelperWindowId())
-        adjustFixtureSelection(0, 9)
-        val deadline = SystemClock.uptimeMillis() + 6_000
-        while (capturedPending.get() == null && SystemClock.uptimeMillis() < deadline) {
-            instrumentation.runOnMainSync {
-                val selection = pendingField.get(service)
-                if (selection != null) {
-                    // Pause only the real debounce callback; the source and event come from the foreign EditText.
-                    val show = runnableField.get(service) as Runnable
-                    (handlerField.get(service) as Handler).removeCallbacks(show)
-                    capturedPending.set(selection)
-                    delayedShow.set(show)
-                }
-            }
-            if (capturedPending.get() == null) SystemClock.sleep(5)
-        }
-        assertTrue("The actual selection must be captured during its debounce interval", capturedPending.get() != null)
-        assertNull(ordinaryHaloWindowId())
-
-        shell("am start -W --activity-single-top -n $host --ez show_focus_dialog true")
-        await("The real modal dialog must own focus before the delayed show runs") { fixtureDialogFocused() }
-        SystemClock.sleep(300)
         instrumentation.runOnMainSync {
-            delayedShow.get().run()
-            assertSame("An obscured source must retain its actual pending selection", capturedPending.get(), pendingField.get(service))
+            originalShow.set(runnableField.get(service) as Runnable)
+            // Hold the scheduled callback before the real event; polling can miss its 250 ms lifetime.
+            runnableField.set(service, captureShow)
         }
-        assertNull("The halo must wait until its source becomes accessible again", ordinaryHaloWindowId())
+        try {
+            adjustFixtureSelection(0, 9)
+            await("The actual selection must reach its scheduled show callback") { capturedPending.get() != null }
+            assertNull(ordinaryHaloWindowId())
 
-        shell("input keyevent 4")
-        await("Restoring the source must automatically display the pending selection") {
-            !fixtureDialogFocused() && ordinaryHaloWindowId() != null
+            shell("am start -W --activity-single-top -n $host --ez show_focus_dialog true")
+            await("The real modal dialog must own focus before the delayed show runs") { fixtureDialogFocused() }
+            SystemClock.sleep(300)
+            instrumentation.runOnMainSync {
+                runnableField.set(service, originalShow.get())
+                originalShow.get().run()
+                assertSame("An obscured source must retain its actual pending selection", capturedPending.get(), pendingField.get(service))
+            }
+            assertNull("The halo must wait until its source becomes accessible again", ordinaryHaloWindowId())
+
+            shell("input keyevent 4")
+            await("Restoring the source must automatically display the pending selection") {
+                !fixtureDialogFocused() && ordinaryHaloWindowId() != null
+            }
+            instrumentation.runOnMainSync { assertNull(pendingField.get(service)) }
+        } finally {
+            instrumentation.runOnMainSync {
+                (handlerField.get(service) as Handler).removeCallbacks(captureShow)
+                runnableField.set(service, originalShow.get())
+            }
         }
-        instrumentation.runOnMainSync { assertNull(pendingField.get(service)) }
     }
 
     @Test fun productionOverlayKeepsTheFirstSnapshotAcrossRealFocusLoss() {
