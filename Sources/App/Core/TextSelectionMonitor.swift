@@ -341,7 +341,7 @@ final class TextSelectionMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var isMonitoring = false
     private(set) var lastMonitoringStartFailure: MonitoringStartFailure?
-    var onPhysicalMouseDown: (() -> Void)?
+    var onPhysicalMouseDown: ((NSPoint) -> Bool)?
     private var mouseDownLocation: NSPoint?
     private var mouseDownDragPasteboardChangeCount: Int?
     private var mouseDownWindowSnapshot: FrontmostWindowSnapshot?
@@ -399,6 +399,11 @@ final class TextSelectionMonitor {
     nonisolated static let pendingInteractionCancelEventMask: NSEvent.EventTypeMask = [
         .keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel
     ]
+    nonisolated static let mouseEventMask: CGEventMask =
+        (1 << CGEventType.leftMouseDown.rawValue) |
+        (1 << CGEventType.leftMouseUp.rawValue) |
+        (1 << CGEventType.rightMouseDown.rawValue) |
+        (1 << CGEventType.otherMouseDown.rawValue)
     
     private init() {}
 
@@ -431,9 +436,6 @@ final class TextSelectionMonitor {
             return false
         }
         
-        let eventMask: CGEventMask = (1 << CGEventType.leftMouseDown.rawValue) |
-                                      (1 << CGEventType.leftMouseUp.rawValue)
-        
         // Create event tap callback
         let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
@@ -443,6 +445,8 @@ final class TextSelectionMonitor {
             if type == .tapDisabledByTimeout ||
                 type == .tapDisabledByUserInput ||
                 type == .leftMouseDown ||
+                type == .rightMouseDown ||
+                type == .otherMouseDown ||
                 type == .leftMouseUp {
                 // Preserve callback order and the event's own coordinates.
                 // Reading NSEvent.mouseLocation after an asynchronous hop can
@@ -468,11 +472,7 @@ final class TextSelectionMonitor {
                         ) else {
                             return
                         }
-                        if eventType == .leftMouseDown {
-                            monitor.handleMouseDown(at: mouseLocation)
-                        } else {
-                            monitor.handleMouseUp(at: mouseLocation)
-                        }
+                        monitor.handleMouseButtonEvent(eventType, at: mouseLocation)
                     }
                 }
             }
@@ -486,7 +486,7 @@ final class TextSelectionMonitor {
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .listenOnly,
-            eventsOfInterest: eventMask,
+            eventsOfInterest: Self.mouseEventMask,
             callback: callback,
             userInfo: selfPointer
         )
@@ -707,11 +707,24 @@ final class TextSelectionMonitor {
         return true
     }
 
-    private func handleMouseDown(at mouseLocation: NSPoint) {
-        // A new physical gesture supersedes all delayed work from the previous one.
-        onPhysicalMouseDown?()
-        cancelPendingInteraction()
+    func handleMouseButtonEvent(_ type: CGEventType, at point: NSPoint) {
+        switch type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            // Every new click supersedes delayed work, but only left drags select text.
+            let handledByMenu = onPhysicalMouseDown?(point) ?? false
+            cancelPendingInteraction()
+            // Menu clicks must not reopen a popup and cancel the action being executed.
+            if type == .leftMouseDown && !handledByMenu {
+                handleMouseDown(at: point)
+            }
+        case .leftMouseUp:
+            handleMouseUp(at: point)
+        default:
+            break
+        }
+    }
 
+    private func handleMouseDown(at mouseLocation: NSPoint) {
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication else { return }
         guard !Self.shouldAlwaysSuppressForFrontmostApp(
             bundleID: frontmostApp.bundleIdentifier,

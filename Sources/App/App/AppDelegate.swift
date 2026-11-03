@@ -74,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let cutPluginID = "com.actionhalo.cut"
     static let deletePluginID = "com.actionhalo.delete"
     static let pastePluginID = "com.actionhalo.builtin.paste"
-    static let menuDismissEventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .keyDown, .scrollWheel]
+    static let menuDismissEventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .scrollWheel]
     static let resetAccessibilityOnUpdateKey = "ResetAccessibilityPermissionsOnUpdate"
     static let lastAccessibilityResetVersionKey = "LastAccessibilityResetVersion"
     static let excludedAppsDefaultsKey = AppExclusionStore.defaultsKey
@@ -127,9 +127,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hasFinishedLaunching = false
     private var relaunchRequested = false
     
-    // Global monitor for clicking outside
-    private var globalClickMonitor: Any?
-    private var globalClickMonitorGeneration: UInt64 = 0
+    private var globalMenuDismissMonitor: Any?
+    private var localMenuDismissMonitor: Any?
+    private var menuDismissMonitorGeneration: UInt64 = 0
 
     override init() {
         legacyMigrationStartupCoordinator = nil
@@ -529,8 +529,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return interactionGeneration
     }
 
-    private func handlePhysicalMouseDownStarted() {
+    private func handlePhysicalMouseDownStarted(at screenPoint: NSPoint) -> Bool {
         _ = beginNewInteraction()
+        guard radialMenuWindow != nil || pastePopupWindow != nil else { return false }
+        // Use the selection event tap too; cross-app AppKit notifications can be missed.
+        if Self.shouldDismissMenus(
+            atScreenPoint: screenPoint,
+            radialMenuWindow: radialMenuWindow,
+            pastePopupWindow: pastePopupWindow
+        ) {
+            dismissAllMenus()
+            return false
+        }
+        return true
     }
 
     private func completeHotkeyTrigger(
@@ -955,8 +966,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AccessibilityManager.shared.onPermissionLost = { [weak self] in
             self?.showPermissionLostAlert()
         }
-        TextSelectionMonitor.shared.onPhysicalMouseDown = { [weak self] in
-            self?.handlePhysicalMouseDownStarted()
+        TextSelectionMonitor.shared.onPhysicalMouseDown = { [weak self] point in
+            self?.handlePhysicalMouseDownStarted(at: point) ?? false
         }
         guard !isEnabled || startTextSelectionMonitoringWithFeedback(
             showFailure: showMonitoringFailure
@@ -1522,7 +1533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
 
             self.radialMenuWindow = window
-            self.setupGlobalClickMonitor()
+            self.setupMenuDismissMonitors()
         }
     }
     
@@ -1715,7 +1726,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingPastePopupTask = nil
         pendingPastePopupRequestID = nil
         if radialMenuWindow == nil, pastePopupWindow == nil {
-            removeGlobalClickMonitor()
+            removeMenuDismissMonitors()
         }
     }
 
@@ -1724,7 +1735,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingPastePopupTask = nil
         pendingPastePopupRequestID = nil
         if radialMenuWindow == nil, pastePopupWindow == nil {
-            removeGlobalClickMonitor()
+            removeMenuDismissMonitors()
         }
     }
 
@@ -1736,7 +1747,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cancelPendingPastePopupWork()
         pendingPastePopupRequestID = pastePopupRequestID
         if pastePopupRequestID != nil {
-            setupGlobalClickMonitor()
+            setupMenuDismissMonitors()
         }
         pendingHotkeyFocusTask?.cancel()
         pendingHotkeyFocusTask = nil
@@ -1771,7 +1782,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Keep outside-click/key cancellation alive while an approved paste is
         // fading out or validating its target asynchronously.
         if cancelPendingPopupWork || pendingPastePopupRequestID == nil {
-            removeGlobalClickMonitor()
+            removeMenuDismissMonitors()
         }
 
         let dismissCount = (popupWindow == nil ? 0 : 1) + (radialWindow == nil ? 0 : 1)
@@ -1875,26 +1886,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
-    // MARK: - Global Click Monitor
+    // MARK: - Menu Dismissal Monitors
     
-    private func setupGlobalClickMonitor() {
-        removeGlobalClickMonitor()
-        globalClickMonitorGeneration &+= 1
-        let monitorGeneration = globalClickMonitorGeneration
-        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.menuDismissEventMask) { [weak self] _ in
+    private func setupMenuDismissMonitors() {
+        removeMenuDismissMonitors()
+        let monitorGeneration = menuDismissMonitorGeneration
+        globalMenuDismissMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.menuDismissEventMask) { [weak self] event in
             DispatchQueue.main.async {
-                guard let self, self.globalClickMonitorGeneration == monitorGeneration else { return }
+                guard let self, self.menuDismissMonitorGeneration == monitorGeneration,
+                      Self.shouldDismissMenus(
+                        for: event,
+                        radialMenuWindow: self.radialMenuWindow,
+                        pastePopupWindow: self.pastePopupWindow
+                      ) else { return }
                 self.dismissAllMenus()
             }
         }
+        // Global monitors exclude events delivered to our panels and settings windows.
+        localMenuDismissMonitor = NSEvent.addLocalMonitorForEvents(matching: Self.menuDismissEventMask) { [weak self] event in
+            guard let self, Self.shouldDismissMenus(
+                for: event,
+                radialMenuWindow: self.radialMenuWindow,
+                pastePopupWindow: self.pastePopupWindow
+            ) else { return event }
+            self.dismissAllMenus()
+            return event
+        }
     }
     
-    private func removeGlobalClickMonitor() {
-        globalClickMonitorGeneration &+= 1
-        if let monitor = globalClickMonitor {
+    private func removeMenuDismissMonitors() {
+        menuDismissMonitorGeneration &+= 1
+        if let monitor = globalMenuDismissMonitor {
             NSEvent.removeMonitor(monitor)
-            globalClickMonitor = nil
+            globalMenuDismissMonitor = nil
         }
+        if let monitor = localMenuDismissMonitor {
+            NSEvent.removeMonitor(monitor)
+            localMenuDismissMonitor = nil
+        }
+    }
+
+    static func shouldDismissMenus(
+        for event: NSEvent,
+        radialMenuWindow: RadialMenuWindow?,
+        pastePopupWindow: PastePopupWindow?
+    ) -> Bool {
+        switch event.type {
+        case .keyDown:
+            // Explicit keyboard menus handle navigation and dismissal in the view.
+            return !(radialMenuWindow?.canBecomeKey == true &&
+                event.window === radialMenuWindow &&
+                event.modifierFlags.intersection([.command, .control, .option]).isEmpty)
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            let screenPoint = event.window?.convertPoint(toScreen: event.locationInWindow)
+                ?? event.cgEvent.flatMap { AccessibilityManager.appKitScreenPoint(for: $0.location) }
+                ?? event.locationInWindow
+            return shouldDismissMenus(
+                atScreenPoint: screenPoint,
+                radialMenuWindow: radialMenuWindow,
+                pastePopupWindow: pastePopupWindow
+            )
+        case .scrollWheel:
+            return true
+        default:
+            return false
+        }
+    }
+
+    static func shouldDismissMenus(
+        atScreenPoint point: NSPoint,
+        radialMenuWindow: RadialMenuWindow?,
+        pastePopupWindow: PastePopupWindow?
+    ) -> Bool {
+        if let radialMenuWindow {
+            return radialMenuWindow.shouldDismissClick(at: radialMenuWindow.convertPoint(fromScreen: point))
+        }
+        if let pastePopupWindow {
+            return !pastePopupWindow.frame.contains(point)
+        }
+        return true
     }
     
     // MARK: - App Update TCC Reset

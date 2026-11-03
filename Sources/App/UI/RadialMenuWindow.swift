@@ -22,7 +22,6 @@ final class RadialMenuWindow: NSPanel {
     private var isDismissing = false
     private var dismissalRequested = false
     private var keyboardNavigationEnabled = false
-    private let dismissDeadzoneRadius: CGFloat = 16
     private let outsideDismissPadding: CGFloat = 60
     private let compactWindowPadding: CGFloat = 28
     
@@ -147,7 +146,6 @@ final class RadialMenuWindow: NSPanel {
         let backdropTargetAlpha = backdropEnabled ? max(0.38, min(CGFloat(targetAlpha) * 2.35, 0.94)) : 0
         
         // Build at full size and opacity so the first visible frame is usable.
-        setupDismissMonitors()
         alphaValue = 1
         backdropView.alphaValue = backdropTargetAlpha
         visualEffectView.alphaValue = radialMenuView.windowBaseAlpha
@@ -390,7 +388,6 @@ final class RadialMenuWindow: NSPanel {
     private func disableInput() {
         ignoresMouseEvents = true
         radialMenuView.endInteractionSession()
-        tearDownDismissMonitors()
         if keyboardNavigationEnabled {
             // Restore the source application's keyboard focus before action validation.
             keyboardNavigationEnabled = false
@@ -398,69 +395,23 @@ final class RadialMenuWindow: NSPanel {
         }
     }
 
-    // MARK: - Screen positioning
-
-    // (Deprecated: no longer using small window clamping, window matches screen)
-
-    // MARK: - Auto Dismissal
-
-    private var dismissMonitor: Any?
-    private var localKeyDownMonitor: Any?
-    
-    internal func setupDismissMonitors() {
-        tearDownDismissMonitors()
-        let monitorGeneration = presentationGeneration
-        
-        // Global monitor for clicks outside our app or scrolling
-        dismissMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .scrollWheel]) { [weak self] _ in
-            DispatchQueue.main.async {
-                guard let self, self.presentationGeneration == monitorGeneration else { return }
-                self.requestDismissal()
-            }
-        }
-        
-        // Local monitor to catch ESC key even though we are .nonactivatingPanel
-        localKeyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.window === self else { return event }
-            if event.keyCode == 53 /* Esc */ {
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.presentationGeneration == monitorGeneration else { return }
-                    self.requestDismissal()
-                }
-                return nil // Consume Esc
-            }
-            return event
-        }
-    }
-    
-    internal func tearDownDismissMonitors() {
-        if let monitor = dismissMonitor {
-            NSEvent.removeMonitor(monitor)
-            dismissMonitor = nil
-        }
-        if let localMonitor = localKeyDownMonitor {
-            NSEvent.removeMonitor(localMonitor)
-            localKeyDownMonitor = nil
-        }
-    }
-    
     // MARK: - Click outside to dismiss
     
     override func mouseDown(with event: NSEvent) {
-        let point = event.locationInWindow
+        if shouldDismissClick(at: event.locationInWindow) {
+            requestDismissal()
+        }
+    }
+
+    func shouldDismissClick(at point: NSPoint) -> Bool {
         let localPoint = radialMenuView.convert(point, from: nil)
         let center = radialMenuView.trackingCenter
         let dx = localPoint.x - center.x
         let dy = localPoint.y - center.y
         let distanceSquared = dx * dx + dy * dy
         let dismissRadius = radialMenuView.outerRadius + outsideDismissPadding
-        let deadzoneSquared = dismissDeadzoneRadius * dismissDeadzoneRadius
-        
-        // Click far away from tracking center -> dismiss
-        // Also click in the absolute deadzone -> dismiss (matching the 10-point view deadzone)
-        if distanceSquared > dismissRadius * dismissRadius || distanceSquared < deadzoneSquared {
-            requestDismissal()
-        }
+        // The view handles center cancellation on mouse-up so dragging out still works.
+        return distanceSquared > dismissRadius * dismissRadius
     }
     
     override var canBecomeKey: Bool { keyboardNavigationEnabled }

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.3.44
+
+- 修复 UU 远程操作时，点击「粘贴」按钮后重复触发文本检测、重新弹出按钮并取消粘贴的问题；菜单内点击由菜单处理，保留对新交互、焦点和窗口变化的校验。
+- 统一圆环和粘贴弹窗的关闭逻辑，按事件自身的屏幕坐标判断菜单内外点击，覆盖右键、中键、键盘和滚动事件，并保留圆环键盘导航。
+
+- Fixed Paste clicks during UU Remote sessions restarting text detection, reopening the popup, and cancelling the pending paste. Menu clicks are handled by the menu while retaining validation of new interactions, focus, and window changes.
+- Unified dismissal handling for radial menus and paste popups, using each event's screen coordinates to distinguish menu clicks from outside clicks. Covered secondary mouse buttons, keyboard input, and scrolling while preserving radial-menu keyboard navigation.
+
 ## v0.3.43
 
 - 修复来源应用焦点切换时，圆环复制被误取消、圆环关闭后剪贴板仍是旧内容的问题。内置和插件复制统一写入已捕获的纯文本，保留 Unicode、换行和空白。
