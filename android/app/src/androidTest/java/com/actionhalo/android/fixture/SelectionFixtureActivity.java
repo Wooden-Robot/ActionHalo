@@ -12,6 +12,7 @@ import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.WebView;
@@ -85,12 +86,15 @@ public class SelectionFixtureActivity extends Activity {
         if (MODE_WEB.equals(mode)) {
             WebView web = new WebView(this);
             web.setId(View.generateViewId());
-            // Chrome 69 exposes native selection ranges only for editable Web content.
-            String editable = getIntent().getBooleanExtra("editable_web", false) ? " contenteditable='true'" : "";
+            // A plain text control exposes its value and selection on the same accessibility node.
+            String text = "Selection fixture: Alpha beta gamma delta. 你好，ActionHalo 🌍";
+            String content = getIntent().getBooleanExtra("editable_web", false)
+                ? "<textarea style='font:inherit;line-height:inherit;padding:0;border:0;width:100%;height:300px'>" + text + "</textarea>"
+                : "<p>" + text + "</p>";
             web.loadDataWithBaseURL("https://actionhalo.test/",
                 "<!doctype html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'></head>" +
                 "<body style='margin:24px;font:26px sans-serif;line-height:1.6'>" +
-                "<p" + editable + ">Selection fixture: Alpha beta gamma delta. 你好，ActionHalo 🌍</p></body></html>",
+                content + "</body></html>",
                 "text/html", "UTF-8", null);
             showFixture(web);
             return;
@@ -170,6 +174,14 @@ public class SelectionFixtureActivity extends Activity {
         // The target-36 foreign APK is edge-to-edge; keep all selection targets below system UI.
         FrameLayout root = new FrameLayout(this);
         root.setPadding(0, 160, 0, 0);
+        if (child instanceof WebView && getIntent().getBooleanExtra("mute_selection_events", false)) {
+            root.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+                @Override public boolean onRequestSendAccessibilityEvent(ViewGroup host, View child, AccessibilityEvent event) {
+                    return event.getEventType() != AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED &&
+                        super.onRequestSendAccessibilityEvent(host, child, event);
+                }
+            });
+        }
         root.addView(child, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
     }

@@ -364,13 +364,14 @@ class SelectionTriggerDiagnosticTest {
         val rules = AppRulesStore(context)
         fun selectWebFixture() {
             shell("am force-stop $FIXTURE_PACKAGE")
-            shell("am start -W -n $FIXTURE --es fixture_mode web")
+            shell("am start -W -n $FIXTURE --es fixture_mode web --ez mute_selection_events true")
             SystemClock.sleep(800)
             val node = awaitTextNode(FIXTURE_PACKAGE)
             try {
                 val bounds = Rect().also(node::getBoundsInScreen)
                 longPress(bounds.left + 45f,
                     bounds.top + 20f * context.resources.displayMetrics.density)
+                assertTrue("The legacy-menu fixture must not publish selection-change events", selectionSamples.isEmpty())
             } finally { recycle(node) }
         }
         try {
@@ -687,7 +688,7 @@ class SelectionTriggerDiagnosticTest {
         standardMenu: Boolean = false, buttonMode: Boolean = true) {
         events.clear()
         shell("am force-stop $FIXTURE_PACKAGE")
-        shell(launchCommand ?: "am start -W -n $FIXTURE_PACKAGE/com.actionhalo.android.fixture.SelectionFixtureActivity --es fixture_mode $mode")
+        shell(launchCommand ?: "am start -W -n $FIXTURE_PACKAGE/com.actionhalo.android.fixture.SelectionFixtureActivity --es fixture_mode $mode --ez mute_selection_events $standardMenu")
         SystemClock.sleep(800) // Wait for the activity's entrance animation before reading screen bounds.
         val node = awaitTextNode(hostPackage)
         if (mode == "web" && !standardMenu) {
@@ -729,14 +730,14 @@ class SelectionTriggerDiagnosticTest {
             val newStart = if (end == length) start + 1 else start
             val newEnd = (end + 1).coerceAtMost(length)
             Log.i(TAG, "mode=$mode refine=$newStart:$newEnd actions=${node.actionList.map { it.id }}")
-            if (node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SET_SELECTION }) {
-                if (mode == "web") expectedSelection = node.text!!.subSequence(newStart, newEnd).toString()
+            if (mode != "web" && node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SET_SELECTION }) {
                 assertTrue(node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, Bundle().apply {
                     putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, newStart)
                     putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, newEnd)
                 }))
             } else {
-                // Chromium exposes ranges in events; drag its actual right-hand popup handle.
+                // WebView's ACTION_SET_SELECTION dismisses its toolbar without restoring it.
+                // Drag the real handle so Chromium publishes both the range and menu lifecycle.
                 val density = instrumentation.targetContext.resources.displayMetrics.density
                 val handles = automation.windows.mapNotNull { window ->
                     if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@mapNotNull null
@@ -757,11 +758,27 @@ class SelectionTriggerDiagnosticTest {
                 val shift = 96 * density
                 val down = SystemClock.uptimeMillis()
                 inject(down, down, MotionEvent.ACTION_DOWN, x, y)
-                for (step in 1..16) {
-                    SystemClock.sleep(40)
-                    inject(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE, x + shift * step / 16, y)
+                try {
+                    for (step in 1..16) {
+                        SystemClock.sleep(40)
+                        inject(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE, x + shift * step / 16, y)
+                    }
+                } finally {
+                    inject(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x + shift, y)
                 }
-                inject(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x + shift, y)
+                if (mode == "web") {
+                    await("Dragging the native handle must change the actual selection range") {
+                        if (!node.refresh()) return@await false
+                        val sample = synchronized(selectionSamples) { selectionSamples.lastOrNull() }
+                        val refinedStart = if (node.textSelectionStart >= 0) node.textSelectionStart else sample?.eventStart ?: -1
+                        val refinedEnd = if (node.textSelectionEnd >= 0) node.textSelectionEnd else sample?.eventEnd ?: -1
+                        val text = node.text ?: return@await false
+                        if (refinedStart < 0 || refinedEnd <= refinedStart || refinedEnd > text.length ||
+                            (refinedStart == start && refinedEnd == end)) return@await false
+                        expectedSelection = text.subSequence(refinedStart, refinedEnd).toString()
+                        true
+                    }
+                }
             }
         }
         recycle(node)
@@ -781,6 +798,9 @@ class SelectionTriggerDiagnosticTest {
         }
         assertTrue("$mode adjusted or explicitly requested selection must display its halo. " +
             "Observed metadata: ${synchronized(events) { events.joinToString(" | ") }}", overlay)
+        if (standardMenu) {
+            assertTrue("The legacy-menu fixture must not publish selection-change events", selectionSamples.isEmpty())
+        }
         if (expectedSelection != null) {
             val menu = currentNativeHalo() as RadialMenuView
             await("The halo must contain the expanded selection") {
