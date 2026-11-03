@@ -49,6 +49,10 @@ jobs:
       max-parallel: 3
       matrix:
         api: [26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
+        include:
+          # API 27 has no google_apis x86_64 image.
+          - api: 27
+            arch: x86
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -71,7 +75,7 @@ jobs:
         with:
           api-level: ${{ matrix.api }}
           target: google_apis
-          arch: x86_64
+          arch: ${{ matrix.arch || 'x86_64' }}
           profile: pixel_7
           ram-size: 2048M
           enable-hw-keyboard: true
