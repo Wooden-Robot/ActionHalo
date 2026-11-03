@@ -9,11 +9,15 @@ import android.content.Intent
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.view.inspector.WindowInspector
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -21,6 +25,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.actionhalo.android.fixture.SelectionFixtureActivity
 import java.util.Collections
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
@@ -77,7 +82,12 @@ class SelectionTriggerDiagnosticTest {
                 event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
                 event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                 event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-                val source = event.source
+                // Own-process nodes share the service's AccessibilityCache on Android 11.
+                // Keep source reads for foreign selection fixtures; observing an own-node
+                // event must not enqueue a synchronous refresh back to the main thread.
+                val source = if (Build.VERSION.SDK_INT < 29 ||
+                    event.packageName?.toString()?.let { it != instrumentation.targetContext.packageName } == true
+                ) event.source else null
                 val refreshed = if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED) source?.refresh() else null
                 if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED &&
                     event.packageName?.toString() == FIXTURE_PACKAGE) {
@@ -94,6 +104,7 @@ class SelectionTriggerDiagnosticTest {
                     " windows=${windowMetadata()}"
                 events.add(metadata)
                 Log.i(TAG, metadata)
+                source?.let(::recycle)
             }
         }
     }
@@ -170,13 +181,12 @@ class SelectionTriggerDiagnosticTest {
                 try { node.refresh() && node.isVisibleToUser } finally { recycle(node) }
             }
             changeFixtureSelection(0, 9)
-            await("Button mode must offer a helper on the initial selection") { automation.windows.any(::isSelectionHelper) }
+            await("Button mode must offer a helper on the initial selection") { selectionHelperShown() }
             assertNoOverlayForSettlement()
             changeFixtureSelection(0, 18)
-            await("Adjusting selection must keep a helper in button mode") { automation.windows.any(::isSelectionHelper) }
+            await("Adjusting selection must keep a helper in button mode") { selectionHelperShown() }
             assertNoOverlayForSettlement()
-            val helper = checkNotNull(automation.windows.first(::isSelectionHelper).root)
-            try { assertTrue(helper.performAction(AccessibilityNodeInfo.ACTION_CLICK)) } finally { recycle(helper) }
+            assertTrue(clickSelectionHelper(directRoot = true))
             await("Explicit helper tap must open the current selection wheel") { overlayShown() }
             instrumentation.runOnMainSync {
                 val field = SelectionAccessibilityService::class.java.getDeclaredField("connectedService").apply { isAccessible = true }
@@ -198,7 +208,7 @@ class SelectionTriggerDiagnosticTest {
             changeFixtureSelection(0, 9)
             changeFixtureSelection(0, 18)
             assertNoOverlayForSettlement()
-            assertFalse(automation.windows.any(::isSelectionHelper))
+            assertFalse(selectionHelperShown())
             rules.setProfile(FIXTURE_PACKAGE, AppRulesStore.Profile(AppRulesStore.TriggerMode.AUTO))
             assertTrue(instrumentation.targetContext.getSharedPreferences("actionhalo_settings", Context.MODE_PRIVATE)
                 .edit().putBoolean("auto_popup_enabled", false).commit())
@@ -381,22 +391,22 @@ class SelectionTriggerDiagnosticTest {
                 .putBoolean(TelegramCopyPolicy.STANDARD_MENU_SETTING, true).commit())
             selectWebFixture()
             await("The standard selection menu must first offer its helper") {
-                automation.windows.any(::isSelectionHelper)
+                selectionHelperShown()
             }
             rules.setDisabledPackages(rules.disabledPackages() + FIXTURE_PACKAGE)
             await("Disabling the app must dismiss its existing standard-menu helper") {
-                automation.windows.none(::isSelectionHelper)
+                !selectionHelperShown()
             }
             selectWebFixture()
             assertNoAutomaticEntryForSettlement()
             rules.setDisabledPackages(rules.disabledPackages() - FIXTURE_PACKAGE)
             selectWebFixture()
             await("Restoring default mode must restore the direct menu-only wheel") { overlayShown() }
-            assertFalse(automation.windows.any(::isSelectionHelper))
+            assertFalse(selectionHelperShown())
             rules.setProfile(FIXTURE_PACKAGE, AppRulesStore.Profile(AppRulesStore.TriggerMode.BUTTON))
             selectWebFixture()
             await("Explicitly restoring button mode must show its standard-menu helper") {
-                automation.windows.any(::isSelectionHelper)
+                selectionHelperShown()
             }
         } finally {
             preferences.edit().apply {
@@ -408,26 +418,29 @@ class SelectionTriggerDiagnosticTest {
 
     @Test fun keyboardAppearancePreservesSelectionAndTheHaloCopiesTheExactText() {
         launchSelectedFixture()
-        val haloId = automation.windows.first { it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY }.id
+        val haloId = checkNotNull(haloWindowId())
         val oldKeyboard = shell("settings get secure show_ime_with_hard_keyboard").trim()
         try {
             restoreSecure("show_ime_with_hard_keyboard", "1")
             shell("am start -W --activity-single-top -n $FIXTURE --ez show_keyboard true")
-            await("A real input-method window must appear") {
-                automation.windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+            if (Build.VERSION.SDK_INT >= 30) {
+                val source = awaitTextNode(FIXTURE_PACKAGE)
+                try {
+                    await("A real input-method window must appear") {
+                        source.refresh() && source.extras.getBoolean(SelectionFixtureActivity.IME_VISIBLE_NODE_EXTRA)
+                    }
+                } finally { recycle(source) }
+            } else {
+                await("A real input-method window must appear") {
+                    automation.windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+                }
             }
             assertTrue("Showing the keyboard must preserve the same selection halo",
-                automation.windows.any { it.id == haloId })
+                haloWindowExists(haloId))
             assertFreshNodeRange(0, SelectionFixtureActivity.SAMPLE_TEXT.length)
             val copyTitle = ActionStore(HaloUi.localizedContext(instrumentation.targetContext)).actions().single { it.id == "copy" }.title
-            val root = checkNotNull(automation.windows.first { it.id == haloId }.root)
-            try {
-                val matches = root.findAccessibilityNodeInfosByText(copyTitle)
-                try {
-                    assertTrue("Copy must work through the real halo while the keyboard is open",
-                        matches.any { it.isClickable && it.performAction(AccessibilityNodeInfo.ACTION_CLICK) })
-                } finally { matches.forEach(::recycle) }
-            } finally { recycle(root) }
+            assertTrue("Copy must work through the real halo while the keyboard is open",
+                clickHaloAction(haloId, copyTitle))
             await("Copy must close the halo") { !overlayShown() }
             val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
@@ -632,7 +645,7 @@ class SelectionTriggerDiagnosticTest {
         val deadline = SystemClock.uptimeMillis() + 800
         while (SystemClock.uptimeMillis() < deadline) {
             assertFalse("This selection must not show a wheel", overlayShown())
-            assertFalse("This selection must not show a helper button", automation.windows.any(::isSelectionHelper))
+            assertFalse("This selection must not show a helper button", selectionHelperShown())
             SystemClock.sleep(40)
         }
     }
@@ -656,13 +669,16 @@ class SelectionTriggerDiagnosticTest {
     @Suppress("DEPRECATION")
     private fun recycle(node: AccessibilityNodeInfo) { if (Build.VERSION.SDK_INT < 33) node.recycle() }
 
-    private fun overlayShown(): Boolean = automation.windows.any { window ->
-        if (window.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) return@any false
-        if (isSelectionHelper(window)) return@any false
-        // The framework can retain a rootless window entry after the actual view was removed.
-        val root = window.root ?: return@any false
-        try { root.packageName?.toString() == instrumentation.targetContext.packageName }
-        finally { recycle(root) }
+    private fun overlayShown(): Boolean {
+        if (Build.VERSION.SDK_INT >= 29) return haloWindowId() != null
+        return automation.windows.any { window ->
+            if (window.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) return@any false
+            if (isSelectionHelper(window)) return@any false
+            // The framework can retain a rootless window entry after the actual view was removed.
+            val root = window.root ?: return@any false
+            try { root.packageName?.toString() == instrumentation.targetContext.packageName }
+            finally { recycle(root) }
+        }
     }
 
     private fun isSelectionHelper(window: AccessibilityWindowInfo): Boolean {
@@ -675,6 +691,126 @@ class SelectionTriggerDiagnosticTest {
             (root.text?.toString() == instrumentation.targetContext.getString(R.string.selection_open_halo) ||
                 root.contentDescription?.toString() == instrumentation.targetContext.getString(R.string.selection_open_halo)) }
         finally { recycle(root) }
+    }
+
+    private fun selectionHelperShown(): Boolean {
+        if (Build.VERSION.SDK_INT < 29) return automation.windows.any(::isSelectionHelper)
+        return inspectLocalWindows { roots -> roots.any { root ->
+            isLocalOverlay(root) && isLocalSelectionHelper(root) &&
+                findLocalAccessibleView(root) { it.isClickable && isHelperLabel(it) } != null
+        } }
+    }
+
+    private fun clickSelectionHelper(directRoot: Boolean = false): Boolean {
+        if (Build.VERSION.SDK_INT >= 29) return inspectLocalWindows { roots ->
+            roots.firstOrNull { isLocalOverlay(it) && isLocalSelectionHelper(it) }
+                ?.let { root -> findLocalAccessibleView(root) { it.isClickable && isHelperLabel(it) } }
+                ?.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null) == true
+        }
+        val root = automation.windows.firstOrNull(::isSelectionHelper)?.root ?: return false
+        return try {
+            if (directRoot) root.performAction(AccessibilityNodeInfo.ACTION_CLICK) else {
+                val buttons = root.findAccessibilityNodeInfosByText(instrumentation.targetContext.getString(R.string.selection_open_halo))
+                try { buttons.any { it.isClickable && it.performAction(AccessibilityNodeInfo.ACTION_CLICK) } }
+                finally { buttons.forEach(::recycle) }
+            }
+        } finally { recycle(root) }
+    }
+
+    private fun haloWindowId(): Int? {
+        if (Build.VERSION.SDK_INT < 29) return automation.windows.firstOrNull {
+            it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && !isSelectionHelper(it)
+        }?.id
+        return inspectLocalWindows { roots -> roots.firstOrNull { root ->
+            isLocalOverlay(root) && !isLocalSelectionHelper(root) &&
+                findLocalAccessibleView(root) { it.className?.toString() == "android.widget.Button" && it.isClickable } != null
+        }?.let(::localWindowId) }
+    }
+
+    private fun haloWindowExists(id: Int): Boolean {
+        if (Build.VERSION.SDK_INT < 29) return automation.windows.any { it.id == id }
+        return inspectLocalWindows { roots -> roots.any { isLocalOverlay(it) && localWindowId(it) == id } }
+    }
+
+    private fun clickHaloAction(id: Int, label: String): Boolean {
+        if (Build.VERSION.SDK_INT >= 29) return inspectLocalWindows { roots ->
+            roots.firstOrNull { isLocalOverlay(it) && localWindowId(it) == id }
+                ?.let { root -> findLocalAccessibleView(root) {
+                    it.isClickable && (it.text?.toString() == label || it.contentDescription?.toString() == label)
+                } }?.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null) == true
+        }
+        val root = automation.windows.firstOrNull { it.id == id }?.root ?: return false
+        return try {
+            val matches = root.findAccessibilityNodeInfosByText(label)
+            try { matches.any { it.isClickable && it.performAction(AccessibilityNodeInfo.ACTION_CLICK) } }
+            finally { matches.forEach(::recycle) }
+        } finally { recycle(root) }
+    }
+
+    // UiAutomation can omit a restored visible overlay from its window cache. On API 29+
+    // inspect the attached real Views and their accessibility semantics on the UI thread.
+    // Older APIs stay on UiAutomation because WindowInspector is not available there.
+    private fun <T> inspectLocalWindows(inspect: (List<View>) -> T): T {
+        check(Build.VERSION.SDK_INT >= 29)
+        val inspectAttached = {
+            inspect(WindowInspector.getGlobalWindowViews().filter { it.isAttachedToWindow && it.windowToken != null })
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) return inspectAttached()
+        val result = AtomicReference<T>()
+        instrumentation.runOnMainSync { result.set(inspectAttached()) }
+        return result.get()
+    }
+
+    private fun isLocalOverlay(root: View): Boolean =
+        (root.layoutParams as? WindowManager.LayoutParams)?.type == WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY &&
+            localWindowId(root) >= 0
+
+    private fun localWindowId(root: View): Int {
+        val node = root.createAccessibilityNodeInfo()
+        return try { node.windowId } finally { recycle(node) }
+    }
+
+    private fun isHelperLabel(node: AccessibilityNodeInfo): Boolean {
+        val label = instrumentation.targetContext.getString(R.string.selection_open_halo)
+        return node.text?.toString() == label || node.contentDescription?.toString() == label
+    }
+
+    private fun isLocalSelectionHelper(root: View): Boolean =
+        (root.layoutParams as? WindowManager.LayoutParams)?.title?.toString() == "ActionHalo selection helper" ||
+            findLocalAccessibleView(root) { it.className?.toString() == "android.widget.Button" && isHelperLabel(it) } != null
+
+    private fun findLocalAccessibleView(root: View, depth: Int = 0,
+        matches: (AccessibilityNodeInfo) -> Boolean): View? {
+        if (depth > 8 || !root.isShown) return null
+        val node = root.createAccessibilityNodeInfo()
+        try {
+            if (!node.isVisibleToUser) return null
+            if (matches(node)) return root
+        } finally { recycle(node) }
+        val children = arrayListOf<View>()
+        root.addChildrenForAccessibility(children)
+        for (child in children) findLocalAccessibleView(child, depth + 1, matches)?.let { return it }
+        return null
+    }
+
+    private fun foreignWindows(): List<AccessibilityWindowInfo> {
+        if (Build.VERSION.SDK_INT < 29) return automation.windows
+        val localIds = inspectLocalWindows { roots -> roots.map(::localWindowId).toSet() }
+        return automation.windows.filter { window ->
+            val keep = window.id !in localIds && window.type == AccessibilityWindowInfo.TYPE_APPLICATION
+            @Suppress("DEPRECATION")
+            if (!keep && Build.VERSION.SDK_INT < 33) window.recycle()
+            keep
+        }
+    }
+
+    private fun localOverlayMetadata(): String {
+        if (Build.VERSION.SDK_INT < 29) return "unavailable before API 29"
+        return inspectLocalWindows { roots -> roots.filter(::isLocalOverlay).joinToString(",") { root ->
+            val params = root.layoutParams as WindowManager.LayoutParams
+            "${localWindowId(root)}/${params.type}/title=${params.title}/shown=${root.isShown}/button=" +
+                (findLocalAccessibleView(root) { it.className?.toString() == "android.widget.Button" && it.isClickable } != null)
+        } }
     }
 
     private fun eventSummary(): String = synchronized(events) { events.joinToString(" | ") }
@@ -706,17 +842,12 @@ class SelectionTriggerDiagnosticTest {
         if (!standardMenu || buttonMode) assertNoOverlayForSettlement()
         if (standardMenu && !buttonMode) {
             await("A WebView menu without ranges must directly display the circle") { overlayShown() }
-            assertFalse(automation.windows.any(::isSelectionHelper))
+            assertFalse(selectionHelperShown())
         } else if (standardMenu) {
             await("The initial unsupported selection must offer its manual helper") {
-                automation.windows.any(::isSelectionHelper)
+                selectionHelperShown()
             }
-            val helper = checkNotNull(automation.windows.first(::isSelectionHelper).root)
-            try {
-                val buttons = helper.findAccessibilityNodeInfosByText(instrumentation.targetContext.getString(R.string.selection_open_halo))
-                try { assertTrue(buttons.any { it.isClickable && it.performAction(AccessibilityNodeInfo.ACTION_CLICK) }) }
-                finally { buttons.forEach(::recycle) }
-            } finally { recycle(helper) }
+            assertTrue(clickSelectionHelper())
         } else {
             assertTrue(node.refresh())
             val eventRange = synchronized(selectionSamples) {
@@ -739,16 +870,23 @@ class SelectionTriggerDiagnosticTest {
                 // WebView's ACTION_SET_SELECTION dismisses its toolbar without restoring it.
                 // Drag the real handle so Chromium publishes both the range and menu lifecycle.
                 val density = instrumentation.targetContext.resources.displayMetrics.density
-                val handles = automation.windows.mapNotNull { window ->
-                    if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@mapNotNull null
-                    val parent = window.parent ?: return@mapNotNull null
-                    val sameHost = try { parent.id == node.windowId } finally {
-                        @Suppress("DEPRECATION")
-                        if (Build.VERSION.SDK_INT < 33) parent.recycle()
+                var handles = emptyList<Rect>()
+                // A newly created WebView handle can report its size before its screen position.
+                // This fixture selects the first word, whose right handle belongs inside the text bounds.
+                await("The first word's selection handle must reach the rendered text") {
+                    handles = automation.windows.mapNotNull { window ->
+                        if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@mapNotNull null
+                        val parent = window.parent ?: return@mapNotNull null
+                        val sameHost = try { parent.id == node.windowId } finally {
+                            @Suppress("DEPRECATION")
+                            if (Build.VERSION.SDK_INT < 33) parent.recycle()
+                        }
+                        val rect = Rect().also(window::getBoundsInScreen)
+                        if (sameHost && rect.width() in 1..(64 * density).toInt() &&
+                            rect.height() in 1..(64 * density).toInt() &&
+                            rect.centerX() in bounds.left..bounds.right && rect.top >= bounds.top) rect else null
                     }
-                    val rect = Rect().also(window::getBoundsInScreen)
-                    if (sameHost && rect.width() in 1..(64 * density).toInt() &&
-                        rect.height() in 1..(64 * density).toInt()) rect else null
+                    handles.isNotEmpty()
                 }
                 Log.i(TAG, "mode=$mode selectionHandleWindows=$handles")
                 val handle = checkNotNull(handles.maxByOrNull { it.centerX() })
@@ -789,7 +927,8 @@ class SelectionTriggerDiagnosticTest {
             if (overlay) break
             SystemClock.sleep(40)
         }
-        Log.i(TAG, "mode=$mode overlay=$overlay final=${windowMetadata()}")
+        val localWindows = localOverlayMetadata()
+        Log.i(TAG, "mode=$mode overlay=$overlay final=${windowMetadata()} local=$localWindows")
         automation.takeScreenshot()?.let { bitmap ->
             java.io.FileOutputStream(java.io.File(instrumentation.targetContext.cacheDir, "trigger-$mode.png")).use {
                 bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
@@ -797,7 +936,7 @@ class SelectionTriggerDiagnosticTest {
             bitmap.recycle()
         }
         assertTrue("$mode adjusted or explicitly requested selection must display its halo. " +
-            "Observed metadata: ${synchronized(events) { events.joinToString(" | ") }}", overlay)
+            "Attached local windows: $localWindows. Observed metadata: ${synchronized(events) { events.joinToString(" | ") }}", overlay)
         if (standardMenu) {
             assertTrue("The legacy-menu fixture must not publish selection-change events", selectionSamples.isEmpty())
         }
@@ -815,7 +954,7 @@ class SelectionTriggerDiagnosticTest {
         // A newly installed browser may initialize its Chromium accessibility tree after rendering.
         val deadline = SystemClock.uptimeMillis() + if (hostPackage == "mark.via") 10_000 else 4_000
         while (SystemClock.uptimeMillis() < deadline) {
-            val node = automation.windows.asSequence().mapNotNull { it.root }
+            val node = foreignWindows().asSequence().mapNotNull { it.root }
                 .flatMap { descendants(it) }.firstOrNull {
                     it.packageName?.toString() == hostPackage &&
                         (it.text?.toString()?.startsWith("Selection fixture:") == true ||
@@ -830,7 +969,7 @@ class SelectionTriggerDiagnosticTest {
             }
             bitmap.recycle()
         }
-        val nodes = automation.windows.asSequence().mapNotNull { it.root }.flatMap { descendants(it) }
+        val nodes = foreignWindows().asSequence().mapNotNull { it.root }.flatMap { descendants(it) }
             .filter { it.packageName?.toString() == hostPackage }
             .joinToString(",") { "${it.className}/textLength=${it.text?.length}/children=${it.childCount}" }
         throw AssertionError("Fixture text node was not exposed; windows=${windowMetadata()}; nodes=$nodes")
@@ -856,7 +995,11 @@ class SelectionTriggerDiagnosticTest {
     }
 
     private fun windowMetadata(): String = automation.windows.joinToString(",") {
-        "${it.id}/${it.type}/title=${it.title}/active=${it.isActive}/focus=${it.isFocused}/pkg=${it.root?.packageName}"
+        val packageName = if (Build.VERSION.SDK_INT < 29) {
+            val root = it.root
+            try { root?.packageName } finally { root?.let(::recycle) }
+        } else null
+        "${it.id}/${it.type}/title=${it.title}/active=${it.isActive}/focus=${it.isFocused}/pkg=$packageName"
     }
 
     private fun restoreSecure(key: String, value: String?) {

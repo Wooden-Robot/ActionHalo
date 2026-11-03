@@ -9,7 +9,6 @@ import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inspector.WindowInspector
@@ -310,7 +309,7 @@ class ActionManagementUiTest {
                 scroll = views.filterIsInstance<ScrollView>().single()
                 scroll.scrollTo(0, list.top - HaloUi.dp(activity, 24))
             }
-            instrumentation.waitForIdleSync()
+            instrumentation.settleInput()
             scenario.onActivity { activity ->
                 val source = descendants(activity.window.decorView).single {
                     it.contentDescription?.toString() == activity.getString(R.string.action_manage_description, google.title)
@@ -329,8 +328,8 @@ class ActionManagementUiTest {
             var releaseY = edgeY
             lateinit var preview: List<String>
             injectTouch(downTime, MotionEvent.ACTION_DOWN, x, startY)
-            SystemClock.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 150)
             try {
+                awaitNativeDrag(scenario, google.id, draggingExpected = true)
                 for (step in 1..15) {
                     injectTouch(downTime, MotionEvent.ACTION_MOVE, x, startY + (edgeY - startY) * step / 15f)
                     SystemClock.sleep(20)
@@ -360,7 +359,7 @@ class ActionManagementUiTest {
                 assertEquals(beforeDrag, preferences.all)
             } finally {
                 injectTouch(downTime, MotionEvent.ACTION_UP, x, releaseY)
-                awaitDragEnded(scenario, google.id)
+                awaitNativeDrag(scenario, google.id, draggingExpected = false)
             }
             assertSettingsOrder(scenario, preview)
             scenario.recreate()
@@ -383,7 +382,7 @@ class ActionManagementUiTest {
             val scroll = views.filterIsInstance<ScrollView>().single()
             scroll.scrollTo(0, list.top - HaloUi.dp(activity, 24))
         }
-        instrumentation.waitForIdleSync()
+        instrumentation.settleInput()
         scenario.onActivity { activity ->
             val views = descendants(activity.window.decorView)
             val source = if (fromToggle) views.filterIsInstance<Switch>().single { it.text.toString() == sourceTitle }
@@ -402,13 +401,13 @@ class ActionManagementUiTest {
         val startY = sourceBounds.exactCenterY()
         val endY = targetBounds.top + targetBounds.height() * 0.75f
         injectTouch(downTime, MotionEvent.ACTION_DOWN, x, startY)
-        SystemClock.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 150)
-        for (step in 1..10) {
-            injectTouch(downTime, MotionEvent.ACTION_MOVE, x, startY + (endY - startY) * step / 10f)
-            SystemClock.sleep(25)
-        }
-        instrumentation.waitForIdleSync()
         try {
+            awaitNativeDrag(scenario, sourceId, draggingExpected = true)
+            for (step in 1..10) {
+                injectTouch(downTime, MotionEvent.ACTION_MOVE, x, startY + (endY - startY) * step / 10f)
+                SystemClock.sleep(25)
+            }
+            instrumentation.settleInput()
             checkPreview()
         } finally {
             // Cancel the native drag session; Android 11 turns an injected touch CANCEL into a drop.
@@ -418,21 +417,21 @@ class ActionManagementUiTest {
                 // Ending a native drag does not release the injected touch pointer.
                 injectTouch(downTime, MotionEvent.ACTION_UP, x, endY)
             }
-            awaitDragEnded(scenario, sourceId)
+            awaitNativeDrag(scenario, sourceId, draggingExpected = false)
         }
     }
 
-    private fun awaitDragEnded(scenario: ActivityScenario<MainActivity>, actionId: String) {
+    private fun awaitNativeDrag(scenario: ActivityScenario<MainActivity>, actionId: String, draggingExpected: Boolean) {
         val deadline = SystemClock.uptimeMillis() + 3_000
         do {
             var dragging = false
             scenario.onActivity { activity ->
                 dragging = descendants(activity.window.decorView).any { it.tag == actionId && it.alpha < 1f }
             }
-            if (!dragging) return
+            if (dragging == draggingExpected) return
             SystemClock.sleep(25)
         } while (SystemClock.uptimeMillis() < deadline)
-        fail("The native drag must end and restore the '$actionId' row within three seconds")
+        fail("The native drag for '$actionId' must ${if (draggingExpected) "start" else "end and restore the row"} within three seconds")
     }
 
     private fun injectTouch(downTime: Long, action: Int, x: Float, y: Float) {

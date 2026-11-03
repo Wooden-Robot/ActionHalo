@@ -7,7 +7,6 @@ import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.inspector.WindowInspector
 import android.widget.Button
@@ -141,6 +140,7 @@ class AppRulesUiTest {
     }
 
     private fun drag(root: View, cancel: Boolean, preview: () -> Unit) {
+        instrumentation.settleInput()
         lateinit var start: Rect
         lateinit var end: Rect
         instrumentation.runOnMainSync {
@@ -160,13 +160,13 @@ class AppRulesUiTest {
         val y = start.exactCenterY()
         val targetY = end.top + end.height() * 0.75f
         inject(down, MotionEvent.ACTION_DOWN, x, y)
-        SystemClock.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 150)
-        for (step in 1..10) {
-            inject(down, MotionEvent.ACTION_MOVE, x, y + (targetY - y) * step / 10f)
-            SystemClock.sleep(25)
-        }
-        instrumentation.waitForIdleSync()
         try {
+            awaitNativeDrag(root, draggingExpected = true)
+            for (step in 1..10) {
+                inject(down, MotionEvent.ACTION_MOVE, x, y + (targetY - y) * step / 10f)
+                SystemClock.sleep(25)
+            }
+            instrumentation.settleInput()
             instrumentation.runOnMainSync {
                 val row = descendants(root).single { it.tag == "google" }
                 val checkbox = descendants(row).filterIsInstance<CheckBox>().single()
@@ -182,15 +182,20 @@ class AppRulesUiTest {
                 // Cancelling the native drag does not release the injected touch pointer.
                 inject(down, MotionEvent.ACTION_UP, x, targetY)
             }
-            val until = SystemClock.uptimeMillis() + 3_000
-            var dragging: Boolean
-            do {
-                dragging = false
-                instrumentation.runOnMainSync { dragging = descendants(root).any { it.tag == "google" && it.alpha < 1f } }
-                if (dragging) SystemClock.sleep(25)
-            } while (dragging && SystemClock.uptimeMillis() < until)
-            assertFalse("The drag must finish and restore row opacity", dragging)
+            awaitNativeDrag(root, draggingExpected = false)
         }
+    }
+
+    private fun awaitNativeDrag(root: View, draggingExpected: Boolean) {
+        val until = SystemClock.uptimeMillis() + 3_000
+        var dragging = !draggingExpected
+        do {
+            instrumentation.runOnMainSync { dragging = descendants(root).any { it.tag == "google" && it.alpha < 1f } }
+            if (dragging == draggingExpected) return
+            SystemClock.sleep(25)
+        } while (SystemClock.uptimeMillis() < until)
+        assertEquals("The native drag must ${if (draggingExpected) "start" else "finish and restore row opacity"}",
+            draggingExpected, dragging)
     }
 
     private fun clickDialog(root: View, id: Int) {

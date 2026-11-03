@@ -24,6 +24,7 @@ import android.widget.TextView;
 
 /** Foreign APK activity deliberately needs no runtime supplied only by the target APK. */
 public class SelectionFixtureActivity extends Activity {
+    public static final String IME_VISIBLE_NODE_EXTRA = "com.actionhalo.android.fixture.IME_VISIBLE";
     public static final String EXTRA_SELECT_ALL = "select_all";
     public static final String EXTRA_TEXT = "fixture_text";
     public static final String EXTRA_MODE = "fixture_mode";
@@ -112,6 +113,15 @@ public class SelectionFixtureActivity extends Activity {
             return;
         }
         editor = new EditText(this) {
+            @Override public void onInitializeAccessibilityNodeInfo(android.view.accessibility.AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(info);
+                android.view.WindowInsets insets = getRootWindowInsets();
+                if (android.os.Build.VERSION.SDK_INT >= 30 && insets != null) {
+                    info.getExtras().putBoolean(IME_VISIBLE_NODE_EXTRA,
+                        insets.isVisible(android.view.WindowInsets.Type.ime()));
+                }
+            }
+
             @Override protected void onSelectionChanged(int start, int end) {
                 super.onSelectionChanged(start, end);
                 post(() -> publishHandleGeometry(this));
