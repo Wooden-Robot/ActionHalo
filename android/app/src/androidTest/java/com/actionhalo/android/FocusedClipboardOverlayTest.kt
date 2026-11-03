@@ -23,6 +23,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityWindowInfo
+import android.view.inspector.WindowInspector
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -1400,16 +1401,9 @@ class FocusedClipboardOverlayTest {
         }
     }
 
-    private fun actionWindowExists(): Boolean {
-        val windows = automation.windows
-        try { return windows.any { it.title?.toString() == "ActionHalo selected text action" } }
-        finally {
-            if (Build.VERSION.SDK_INT < 33) {
-                @Suppress("DEPRECATION")
-                windows.forEach { it.recycle() }
-            }
-        }
-    }
+    private fun actionWindowExists(): Boolean =
+        ownOverlayWindows().any { it.second == "ActionHalo selected text action" }
+
 
     private fun showPanel(focusable: Boolean, readOnFocus: Boolean): ProbePanel {
         val result = AtomicReference<ProbePanel>()
@@ -1571,10 +1565,11 @@ class FocusedClipboardOverlayTest {
     }
 
     private fun standardToolbarWindowId(): Int? {
+        val local = localWindowIds()
         val windows = automation.windows
         try {
             for (window in windows) {
-                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+                if (window.id in local || window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
                 val parent = window.parent ?: continue
                 @Suppress("DEPRECATION")
                 if (Build.VERSION.SDK_INT < 33) parent.recycle()
@@ -1595,10 +1590,11 @@ class FocusedClipboardOverlayTest {
     }
 
     private fun fixtureCopyPopupShown(): Boolean {
+        val local = localWindowIds()
         val windows = automation.windows
         try {
             for (window in windows) {
-                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+                if (window.id in local || window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
                 val parent = window.parent ?: continue
                 @Suppress("DEPRECATION")
                 if (Build.VERSION.SDK_INT < 33) parent.recycle()
@@ -1684,10 +1680,11 @@ class FocusedClipboardOverlayTest {
     private fun hostFocusedAndSeeded(): Boolean = focusedSeedHostWindowId() != null
 
     private fun focusedSeedHostWindowId(): Int? {
+        val local = localWindowIds()
         val windows = automation.windows
         try {
             for (window in windows) {
-                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION || !window.isFocused) continue
+                if (window.id in local || window.type != AccessibilityWindowInfo.TYPE_APPLICATION || !window.isFocused) continue
                 val root = window.root ?: continue
                 try {
                     if (root.packageName?.toString() != testPackage) continue
@@ -1719,45 +1716,65 @@ class FocusedClipboardOverlayTest {
 
     private fun ordinaryHaloWindowId(): Int? {
         val owned = ownOverlayWindows().filter { it.second != "ActionHalo selection helper" }.map { it.first }
-        val windows = automation.windows
-        fun hasVisibleButton(node: AccessibilityNodeInfo, depth: Int): Boolean {
-            if (depth > 8 || !node.isVisibleToUser) return false
-            if (node.className?.toString() == "android.widget.Button") return true
-            for (index in 0 until node.childCount) {
-                val child = node.getChild(index) ?: continue
-                try { if (hasVisibleButton(child, depth + 1)) return true } finally { recycle(child) }
+        return inspectLocalWindows { roots ->
+            owned.firstOrNull { id ->
+                roots.firstOrNull { localWindowId(it) == id }?.let { root ->
+                    findLocalAccessibleView(root) { it.className?.toString() == "android.widget.Button" } != null
+                } == true
             }
-            return false
-        }
-        try {
-            for (window in windows) {
-                if (window.id !in owned) continue
-                val root = window.root ?: continue
-                try { if (hasVisibleButton(root, 0)) return window.id } finally { recycle(root) }
-            }
-            return null
-        } finally {
-            @Suppress("DEPRECATION")
-            if (Build.VERSION.SDK_INT < 33) windows.forEach { it.recycle() }
         }
     }
 
-    private fun ownOverlayWindows(): List<Pair<Int, String?>> {
-        val windows = automation.windows
+    private fun ownOverlayWindows(): List<Pair<Int, String?>> = inspectLocalWindows { roots ->
+        roots.mapNotNull { root ->
+            val params = root.layoutParams as? WindowManager.LayoutParams ?: return@mapNotNull null
+            if (params.type != WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY) return@mapNotNull null
+            val id = localWindowId(root)
+            if (id < 0) null else id to params.title?.toString()?.takeIf { it.isNotEmpty() }
+        }
+    }
+
+    // Android 11 shares one AccessibilityCache between UiAutomation and the real service.
+    // Caching our own nodes lets UiAutomation refresh them while holding the cache lock,
+    // blocking the main thread that must answer that refresh. Inspect the attached Views
+    // on their own thread, including LayoutParams: the shared window cache can also omit
+    // a restored, visible overlay after selection dragging. Foreign-app nodes and window
+    // metadata still use UiAutomation.
+    private fun <T> inspectLocalWindows(inspect: (List<View>) -> T): T {
+        val result = AtomicReference<T>()
+        instrumentation.runOnMainSync {
+            result.set(inspect(WindowInspector.getGlobalWindowViews().filter { it.isAttachedToWindow }))
+        }
+        return result.get()
+    }
+
+    private fun localWindowIds(): Set<Int> = inspectLocalWindows { roots -> roots.map(::localWindowId).toSet() }
+
+    private fun localWindowId(root: View): Int {
+        val node = root.createAccessibilityNodeInfo()
+        return try { node.windowId } finally { recycle(node) }
+    }
+
+    private fun findLocalAccessibleView(root: View, depth: Int = 0,
+        matches: (AccessibilityNodeInfo) -> Boolean): View? {
+        if (depth > 8 || !root.isShown) return null
+        val node = root.createAccessibilityNodeInfo()
         try {
-            val owned = mutableListOf<Pair<Int, String?>>()
-            for (window in windows) {
-                if (window.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue
-                val root = window.root ?: continue
-                try {
-                    if (root.packageName?.toString() == context.packageName) owned.add(window.id to window.title?.toString())
-                }
-                finally { recycle(root) }
-            }
-            return owned
-        } finally {
-            @Suppress("DEPRECATION")
-            if (Build.VERSION.SDK_INT < 33) windows.forEach { it.recycle() }
+            if (!node.isVisibleToUser) return null
+            if (matches(node)) return root
+        } finally { recycle(node) }
+        val children = arrayListOf<View>()
+        root.addChildrenForAccessibility(children)
+        for (child in children) {
+            findLocalAccessibleView(child, depth + 1, matches)?.let { return it }
+        }
+        return null
+    }
+
+    private fun findLocalHaloButton(roots: List<View>, windowId: Int, label: String): View? {
+        val root = roots.firstOrNull { localWindowId(it) == windowId } ?: return null
+        return findLocalAccessibleView(root) {
+            it.isClickable && (it.contentDescription?.toString() == label || it.text?.toString() == label)
         }
     }
 
@@ -1771,39 +1788,17 @@ class FocusedClipboardOverlayTest {
     }
 
     private fun clickHaloAction(windowId: Int, label: String): Boolean {
-        val windows = automation.windows
-        try {
-            val root = windows.firstOrNull { it.id == windowId }?.root ?: return false
-            try {
-                val matches = root.findAccessibilityNodeInfosByText(label)
-                try {
-                    return matches.firstOrNull { it.isClickable &&
-                        (it.contentDescription?.toString() == label || it.text?.toString() == label) }
-                        ?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
-                } finally { matches.forEach(::recycle) }
-            } finally { recycle(root) }
-        } finally {
-            @Suppress("DEPRECATION")
-            if (Build.VERSION.SDK_INT < 33) windows.forEach { it.recycle() }
+        return inspectLocalWindows { roots ->
+            findLocalHaloButton(roots, windowId, label)
+                ?.performAccessibilityAction(AccessibilityNodeInfo.ACTION_CLICK, null) == true
         }
     }
 
     private fun haloButtonBounds(windowId: Int, label: String): Rect? {
-        val windows = automation.windows
-        try {
-            val root = windows.firstOrNull { it.id == windowId }?.root ?: return null
-            try {
-                val matches = root.findAccessibilityNodeInfosByText(label)
-                try {
-                    val button = matches.firstOrNull { it.isClickable &&
-                        (it.contentDescription?.toString() == label || it.text?.toString() == label) }
-                        ?: return null
-                    return Rect().also(button::getBoundsInScreen)
-                } finally { matches.forEach(::recycle) }
-            } finally { recycle(root) }
-        } finally {
-            @Suppress("DEPRECATION")
-            if (Build.VERSION.SDK_INT < 33) windows.forEach { it.recycle() }
+        return inspectLocalWindows { roots ->
+            val button = findLocalHaloButton(roots, windowId, label) ?: return@inspectLocalWindows null
+            val node = button.createAccessibilityNodeInfo()
+            try { Rect().also(node::getBoundsInScreen) } finally { recycle(node) }
         }
     }
 
@@ -1899,10 +1894,11 @@ class FocusedClipboardOverlayTest {
     }
 
     private fun findSelectionEditor(): AccessibilityNodeInfo? {
+        val local = localWindowIds()
         val windows = automation.windows
         try {
             for (window in windows) {
-                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
+                if (window.id in local || window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
                 val root = window.root ?: continue
                 try {
                     if (root.packageName?.toString() != testPackage) continue
