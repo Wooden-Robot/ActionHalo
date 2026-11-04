@@ -294,6 +294,7 @@ class ActionManagementUiTest {
         val beforeDrag = preferences.all.toMap()
 
         ActivityScenario.launch<MainActivity>(MainActivity.pageIntent(context, MainActivity.Page.ACTIONS)).use { scenario ->
+            awaitDragWindow(scenario)
             lateinit var scroll: ScrollView
             lateinit var list: View
             lateinit var sourceBounds: Rect
@@ -314,7 +315,7 @@ class ActionManagementUiTest {
                 val source = descendants(activity.window.decorView).single {
                     it.contentDescription?.toString() == activity.getString(R.string.action_manage_description, google.title)
                 }
-                sourceBounds = Rect().also { assertTrue(source.getGlobalVisibleRect(it)) }
+                sourceBounds = source.visibleScreenBounds()
                 assertEquals(source.height, sourceBounds.height())
                 rowHeight = (source.parent as View).height
                 val location = IntArray(2).also(scroll::getLocationOnScreen)
@@ -344,7 +345,7 @@ class ActionManagementUiTest {
                 assertEquals(beforeDrag, preferences.all)
 
                 scenario.onActivity { activity ->
-                    val visibleList = Rect().also { assertTrue(list.getGlobalVisibleRect(it)) }
+                    val visibleList = list.visibleScreenBounds()
                     releaseY = minOf(edgeY - HaloUi.dp(activity, 64),
                         visibleList.exactCenterY())
                     assertTrue(visibleList.contains(x.toInt(), releaseY.toInt()))
@@ -369,6 +370,7 @@ class ActionManagementUiTest {
 
     private fun dragAction(scenario: ActivityScenario<MainActivity>, sourceTitle: String, targetTitle: String,
         fromToggle: Boolean, cancel: Boolean, checkPreview: () -> Unit) {
+        awaitDragWindow(scenario)
         lateinit var sourceBounds: Rect
         lateinit var targetBounds: Rect
         lateinit var sourceId: String
@@ -391,8 +393,8 @@ class ActionManagementUiTest {
                 }
             val target = views.filterIsInstance<Switch>().single { it.text.toString() == targetTitle }
             sourceId = (source.parent as View).tag as String
-            sourceBounds = Rect().also { assertTrue(source.getGlobalVisibleRect(it)) }
-            targetBounds = Rect().also { assertTrue(target.getGlobalVisibleRect(it)) }
+            sourceBounds = source.visibleScreenBounds()
+            targetBounds = target.visibleScreenBounds()
             assertEquals(source.height, sourceBounds.height())
             assertEquals(target.height, targetBounds.height())
         }
@@ -423,6 +425,23 @@ class ActionManagementUiTest {
             }
             if (!cancel) awaitNativeDrag(scenario, sourceId, draggingExpected = false)
         }
+    }
+
+    private fun awaitDragWindow(scenario: ActivityScenario<MainActivity>) {
+        val deadline = SystemClock.uptimeMillis() + 3_000
+        do {
+            instrumentation.settleInput()
+            var ready = false
+            scenario.onActivity { ready = it.hasWindowFocus() && it.window.decorView.isLaidOut }
+            if (ready) return
+        } while (SystemClock.uptimeMillis() < deadline)
+        fail("The settings window must have input focus before a physical drag")
+    }
+
+    private fun View.visibleScreenBounds() = Rect().also { rect ->
+        assertTrue(getLocalVisibleRect(rect))
+        val origin = IntArray(2).also(::getLocationOnScreen)
+        rect.offset(origin[0], origin[1])
     }
 
     private fun awaitNativeDrag(scenario: ActivityScenario<MainActivity>, actionId: String, draggingExpected: Boolean) {

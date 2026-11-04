@@ -927,6 +927,13 @@ class SelectionTriggerDiagnosticTest {
         if (mode == "web" && !standardMenu) {
             assertTrue("The editable WebView fixture must expose its selection text",
                 node.text != null)
+            if (Build.VERSION.SDK_INT == 26) {
+                // Let the old WebView focus and resize for the keyboard before positioning its selection handles.
+                assertTrue(node.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                await("The editable WebView must have input focus") { node.refresh() && node.isFocused }
+                automation.waitForIdle(250, 6_000)
+                assertTrue(node.refresh())
+            }
         }
         var expectedSelection: String? = null
         val bounds = Rect().also(node::getBoundsInScreen)
@@ -968,10 +975,18 @@ class SelectionTriggerDiagnosticTest {
                 // Drag the real handle so Chromium publishes both the range and menu lifecycle.
                 val density = instrumentation.targetContext.resources.displayMetrics.density
                 var handles = emptyList<Rect>()
+                var legacyFrames: List<Rect>? = null
                 // A newly created WebView handle can report its size before its screen position.
                 // This fixture selects the first word, whose right handle belongs inside the text bounds.
                 await("The first word's selection handle must reach the rendered text") {
-                    handles = automation.windows.mapNotNull { window ->
+                    val maxSize = (64 * density).toInt()
+                    handles = if (Build.VERSION.SDK_INT == 26 && hostPackage == FIXTURE_PACKAGE) {
+                        val frames = legacyWebHandleFrames()
+                        if (frames != legacyFrames) Log.i(TAG, "mode=$mode nativePopupFrames=$frames")
+                        legacyFrames = frames
+                        frames.filter { it.width() in 1..maxSize && it.height() in 1..maxSize &&
+                            it.centerX() in bounds.left..bounds.right && it.top >= bounds.top }
+                    } else automation.windows.mapNotNull { window ->
                         if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@mapNotNull null
                         val parent = window.parent ?: return@mapNotNull null
                         val sameHost = try { parent.id == node.windowId } finally {
@@ -980,7 +995,6 @@ class SelectionTriggerDiagnosticTest {
                         }
                         if (!sameHost) return@mapNotNull null
                         val rect = Rect().also(window::getBoundsInScreen)
-                        val maxSize = (64 * density).toInt()
                         if (rect.width() !in 1..maxSize || rect.height() !in 1..maxSize) return@mapNotNull null
                         // WebView can move the real handle before its accessibility window bounds update.
                         window.root?.let { root ->
@@ -1054,6 +1068,15 @@ class SelectionTriggerDiagnosticTest {
             }
         }
     }
+
+    // Android 8 can cache both accessibility popup bounds at the WebView origin after they move.
+    private fun legacyWebHandleFrames(): List<Rect> =
+        shell("dumpsys window windows").splitToSequence("\n  Window #")
+            .filter { window -> window.lineSequence().first().contains(" PopupWindow:") &&
+                window.lineSequence().any { it.contains("mParentWindow=") && it.contains("$FIXTURE_PACKAGE/") } }
+            .mapNotNull { window -> Regex("""mFrame=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]""").find(window)?.destructured
+                ?.let { (l, t, r, b) -> Rect(l.toInt(), t.toInt(), r.toInt(), b.toInt()) } }
+            .toList()
 
     private fun findTextNode(hostPackage: String): AccessibilityNodeInfo? =
         foreignWindows().asSequence().mapNotNull { it.root }

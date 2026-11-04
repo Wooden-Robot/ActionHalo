@@ -13,7 +13,6 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.WebView;
@@ -94,12 +93,7 @@ public class SelectionFixtureActivity extends Activity {
             web.setId(View.generateViewId());
             // A plain text control exposes its value and selection on the same accessibility node.
             String text = "Selection fixture: Alpha beta gamma delta. 你好，ActionHalo 🌍";
-            boolean editable = getIntent().getBooleanExtra("editable_web", false);
-            // Old WebViews can leave selection handles at the origin when the keyboard opens during long press.
-            if (editable && android.os.Build.VERSION.SDK_INT <= 30) {
-                getWindow().addFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
-            }
-            String content = editable
+            String content = getIntent().getBooleanExtra("editable_web", false)
                 ? "<textarea style='font:inherit;line-height:inherit;padding:0;border:0;width:100%;height:300px'>" + text + "</textarea>"
                 : "<p>" + text + "</p>";
             web.loadDataWithBaseURL("https://actionhalo.test/",
