@@ -180,6 +180,22 @@ class SelectionTriggerDiagnosticTest {
         assertTrue("The replacement popup must be a new child of the original selection window", replacementWindow >= 0 && replacementWindow != oldToolbar)
         await("The same popup must publish its actual Copy button without another window operation") { toolbar() == replacementWindow }
         await("The returned toolbar's content must restore the existing native halo") { visible() }
+        val windows = automation.windows
+        val bounds = try { Rect().also(windows.single { it.id == replacementWindow }::getBoundsInScreen) } finally {
+            @Suppress("DEPRECATION")
+            if (Build.VERSION.SDK_INT < 33) windows.forEach { it.recycle() }
+        }
+        val down = SystemClock.uptimeMillis()
+        inject(down, down, MotionEvent.ACTION_DOWN, bounds.exactCenterX(), bounds.exactCenterY())
+        try {
+            await("An outside press must briefly hide the wheel") { !visible() }
+        } finally {
+            // Cancel the physical press without executing Copy or closing its popup.
+            inject(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_CANCEL, bounds.exactCenterX(), bounds.exactCenterY())
+        }
+        await("An unchanged readable toolbar must restore its wheel after input settles") {
+            toolbar() == replacementWindow && visible()
+        }
         assertTrue(currentNativeHalo() === original)
         assertFreshNodeRange(0, SelectionFixtureActivity.SAMPLE_TEXT.length)
         assertEquals(SelectionFixtureActivity.SAMPLE_TEXT, original.selectedText)
@@ -992,6 +1008,8 @@ class SelectionTriggerDiagnosticTest {
                     inject(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x + shift, y)
                 }
                 if (mode == "web") {
+                    // Chromium can publish the final range after the handle receives ACTION_UP.
+                    automation.waitForIdle(250, 6_000)
                     await("Dragging the native handle must change the actual selection range") {
                         if (!node.refresh()) return@await false
                         val sample = synchronized(selectionSamples) { selectionSamples.lastOrNull() }

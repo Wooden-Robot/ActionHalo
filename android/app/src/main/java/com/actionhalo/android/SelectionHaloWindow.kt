@@ -101,9 +101,13 @@ internal class SelectionHaloWindow(
         placementBlocked = false
         if (areas.none { Rect.intersects(frame, it) }) return updateVisibility()
         val source = Rect().apply { areas.forEach(::union) }
-        val next = HaloSafeArea.initialFrame(screen, source, size, margin,
-            HaloAppearance.initialPosition(root.context), keyboardBounds + areas)
-        if (next.width() != size || areas.any { Rect.intersects(next, it) }) {
+        val obstacles = keyboardBounds + areas
+        val position = HaloAppearance.initialPosition(root.context)
+        fun fit(gap: Int) = HaloSafeArea.initialFrame(screen, source, size, gap, position, obstacles)
+            .takeIf { candidate -> candidate.width() == size && obstacles.none { Rect.intersects(candidate, it) } }
+        // Drop the decorative gap before hiding a wheel that still fits clear of every control.
+        val next = fit(margin) ?: fit(0)
+        if (next == null) {
             // Keep the source usable when a full-size wheel cannot fit between its controls.
             placementBlocked = true
             return updateVisibility()

@@ -80,6 +80,11 @@ class AppearanceUxTest {
             val menu = RadialMenuView(context)
             val window = SelectionHaloWindow(context, manager, Rect(0, 0, 500, 600), Rect(), menu)
             val originalSize = window.params.width
+            val exactFit = Rect(0, 0, 500, 600 - originalSize)
+            window.updateProtectedAreas(listOf(exactFit))
+            assertEquals(View.VISIBLE, menu.visibility)
+            assertEquals(originalSize, window.params.width)
+            assertEquals("The full-size wheel must fit just below the protected area", exactFit.bottom, window.params.y)
             window.updateProtectedAreas(listOf(Rect(0, 280, 500, 320)))
             assertEquals("The setting must remain stable when no full-size placement fits", originalSize, window.params.width)
             assertEquals(View.INVISIBLE, menu.visibility)

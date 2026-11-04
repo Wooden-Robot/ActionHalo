@@ -83,8 +83,10 @@ class SelectionAccessibilityService : AccessibilityService() {
     private val showPending = Runnable { presentPendingSelection() }
     private val resumeSelection = Runnable {
         val shown = overlay ?: return@Runnable
-        if (selectionToolbarWindowId == null && selectionStillValid(shown.selectedText) &&
-            overlaySelection?.key?.windowId?.let { SourceWindowState.read(this, it) } == SourceWindowState.State.PRESENT) {
+        val selected = overlaySelection ?: return@Runnable
+        if (selectionStillValid(shown.selectedText) &&
+            SourceWindowState.read(this, selected.key.windowId) == SourceWindowState.State.PRESENT &&
+            (selectionToolbarWindowId == null || HaloSafeArea.selectionToolbarWindowId(this, selected.key.windowId) != null)) {
             overlayWindow?.resumeSelection()
         }
     }
@@ -530,8 +532,8 @@ class SelectionAccessibilityService : AccessibilityService() {
             clearSelection()
             return
         }
-        // shortcut: Custom controls without a readable menu expose no release signal; retain the existing range-settle fallback.
-        if (toolbar == null && selectionToolbarWindowId == null) handler.postDelayed(resumeSelection, SELECTION_DELAY_MS)
+        // shortcut: Without readable menu metadata, use range settling until a release signal is available.
+        if (toolbar != null || selectionToolbarWindowId == null) handler.postDelayed(resumeSelection, SELECTION_DELAY_MS)
     }
 
     private fun sourceWindowVisible(id: Int): Boolean {
@@ -605,7 +607,7 @@ class SelectionAccessibilityService : AccessibilityService() {
         SourceAppControls.bind(view, sourcePackage, sourceWindowId, ::dismissCurrentSelection)
         val window = SelectionHaloWindow(actionContext, windowManager, availableScreenBounds(), sourceBounds, view, 0f,
             onOutsideTouch = {
-                if (selectionToolbarWindowId == null) handler.postDelayed(resumeSelection, SELECTION_DELAY_MS)
+                handler.postDelayed(resumeSelection, SELECTION_DELAY_MS)
             }, keyboardBounds = keyboardBounds())
         window.updateProtectedAreas(protectedAreas)
         val toolbar = sourceWindowId?.let { HaloSafeArea.selectionToolbarWindowId(this, it) }
