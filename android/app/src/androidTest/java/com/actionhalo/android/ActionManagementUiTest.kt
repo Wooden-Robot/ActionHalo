@@ -419,7 +419,7 @@ class ActionManagementUiTest {
                 }
             } finally {
                 // Ending a native drag does not release the injected touch pointer.
-                injectTouch(downTime, MotionEvent.ACTION_UP, x, endY)
+                injectTouch(downTime, MotionEvent.ACTION_UP, x, endY, afterDragCancel = cancel)
             }
             if (!cancel) awaitNativeDrag(scenario, sourceId, draggingExpected = false)
         }
@@ -438,12 +438,14 @@ class ActionManagementUiTest {
         fail("The native drag for '$actionId' must ${if (draggingExpected) "start" else "end and restore the row"} within three seconds")
     }
 
-    private fun injectTouch(downTime: Long, action: Int, x: Float, y: Float) {
+    private fun injectTouch(downTime: Long, action: Int, x: Float, y: Float, afterDragCancel: Boolean = false) {
         val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, y, 0).apply {
             source = InputDevice.SOURCE_TOUCHSCREEN
         }
-        try { assertTrue(automation.injectInputEvent(event, true)) }
-        finally { event.recycle() }
+        try {
+            // A completed native cancellation can leave the cleanup UP without a target window.
+            assertTrue(automation.injectInputEvent(event, true) || (afterDragCancel && action == MotionEvent.ACTION_UP))
+        } finally { event.recycle() }
     }
 
     private fun assertNextHaloOrder(expectedFirstIds: List<String>) {

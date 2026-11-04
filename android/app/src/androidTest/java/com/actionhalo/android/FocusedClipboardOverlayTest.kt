@@ -1342,9 +1342,10 @@ class FocusedClipboardOverlayTest {
         val otherServices = serviceNames(shell("settings get secure enabled_accessibility_services").trim())
             .filterNot { ComponentName.unflattenFromString(it) == component }
         writeSecure("enabled_accessibility_services", otherServices.joinToString(":"))
-        await("The real accessibility service must unbind") { connectedService() == null }
+        await("Both the app and framework must release the accessibility connection") {
+            connectedService() == null && service.serviceInfo == null
+        }
         instrumentation.runOnMainSync {
-            assertNull("The retained service reference must no longer have framework service info", service.serviceInfo)
             val assistant = TelegramCopyAssistant(service, { Rect(0, 0, 1, 1) }, { false }, {},
                 { _, _, _, _, _, _ -> })
             try {

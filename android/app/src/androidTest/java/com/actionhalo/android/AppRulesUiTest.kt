@@ -184,7 +184,7 @@ class AppRulesUiTest {
                 }
             } finally {
                 // Cancelling the native drag does not release the injected touch pointer.
-                inject(down, MotionEvent.ACTION_UP, x, targetY)
+                inject(down, MotionEvent.ACTION_UP, x, targetY, afterDragCancel = cancel)
             }
             if (!cancel) awaitNativeDrag(root, draggingExpected = false)
         }
@@ -211,8 +211,11 @@ class AppRulesUiTest {
         add(view)
         if (view is ViewGroup) for (index in 0 until view.childCount) addAll(descendants(view.getChildAt(index)))
     }
-    private fun inject(down: Long, action: Int, x: Float, y: Float) {
+    private fun inject(down: Long, action: Int, x: Float, y: Float, afterDragCancel: Boolean = false) {
         val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
-        try { assertTrue(automation.injectInputEvent(event, true)) } finally { event.recycle() }
+        try {
+            // A completed native cancellation can leave the cleanup UP without a target window.
+            assertTrue(automation.injectInputEvent(event, true) || (afterDragCancel && action == MotionEvent.ACTION_UP))
+        } finally { event.recycle() }
     }
 }

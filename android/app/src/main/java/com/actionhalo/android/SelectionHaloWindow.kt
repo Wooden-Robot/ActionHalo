@@ -38,6 +38,8 @@ internal class SelectionHaloWindow(
     private val viewport = Rect(screen)
     val root = object : FrameLayout(context) {
         override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            // Hidden windows can still receive queued input, including outside-touch notifications.
+            if (selectionMoving || placementBlocked) return false
             if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
                 waitingForMenuReturn = true
                 menuWasHidden = false
