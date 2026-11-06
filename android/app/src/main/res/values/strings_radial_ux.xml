@@ -1,0 +1,6 @@
+<resources>
+    <string name="radial_compact_close">Choose an action · tap here to close</string>
+    <string name="clipboard_read_retry">Read text again</string>
+    <string name="clipboard_focus_waiting">Waiting for clipboard access…</string>
+    <string name="clipboard_read_unavailable">Text is unavailable. Tap the retry arrow.</string>
+</resources>

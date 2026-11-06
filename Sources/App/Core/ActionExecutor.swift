@@ -54,11 +54,8 @@ final class ActionExecutor: Sendable {
     ) {
         switch action {
         case .copy:
-            simulateKeyCombo(
-                key: .c,
-                modifiers: .maskCommand,
-                targetProcessIdentifier: targetProcessIdentifier
-            )
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
         case .cut:
             simulateKeyCombo(
                 key: .x,

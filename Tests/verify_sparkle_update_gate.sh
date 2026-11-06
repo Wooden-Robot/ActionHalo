@@ -62,8 +62,8 @@ expect_failure "an additional non-ActionHalo exported UTI" \
     bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
 
 cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"
-/usr/libexec/PlistBuddy -c "Set :SUFeedURL https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/appcast.xml" "$source_plist"
-expect_failure "the legacy shared appcast URL" \
+/usr/libexec/PlistBuddy -c "Set :SUFeedURL https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/actionhalo-appcast.xml" "$source_plist"
+expect_failure "the retired long appcast URL" \
     bash "$gate_script" --info-plist "$source_plist" --package-resolved "$resolved_file"
 
 cp "$project_root/Sources/App/Resources/Info.plist" "$source_plist"

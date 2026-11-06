@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="page_size_title">每页显示数量</string>
+    <string name="page_size_current">每页显示：%1$d 个操作</string>
+    <string name="page_size_option">%1$d 个操作</string>
+</resources>

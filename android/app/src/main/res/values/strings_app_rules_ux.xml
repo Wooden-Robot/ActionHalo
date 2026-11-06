@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_rules_hub_title">Apps and rules</string>
+    <string name="app_rules_hub_hint">Choose an app to see its trigger, available actions, and why actions are hidden.</string>
+    <string name="app_rules_only_selected">Selected apps only</string>
+    <string name="app_rules_only_configured">Configured apps only</string>
+    <string name="app_rules_disabled_summary">Apps with automatic popups disabled: %1$d</string>
+    <string name="app_rules_saved">App settings saved</string>
+    <string name="app_rules_available_actions">Available actions (%1$d): %2$s</string>
+    <string name="app_rules_hidden_actions">Hidden actions</string>
+    <string name="app_rules_no_actions">None</string>
+    <string name="app_rules_hidden_scope">%1$s · excluded by this action’s app scope</string>
+    <string name="app_rules_hidden_custom">%1$s · not selected in this app’s action list</string>
+    <string name="app_rules_hidden_global">%1$s · disabled in the global action list</string>
+    <string name="app_rules_effective_off">Automatic wheel and helper buttons disabled. Manual entries remain available.</string>
+    <string name="app_rules_effective_paused">Automatic entries are temporarily paused.</string>
+    <string name="app_rules_effective_consent">Selection access is off; manual entries remain available.</string>
+    <string name="app_rules_effective_auto">Adjusting a readable text selection can open the wheel automatically.</string>
+    <string name="app_rules_effective_button">Uses the Open wheel helper where supported.</string>
+    <string name="app_rules_effective_manual">Automatic entries are off; use a manual entry.</string>
+    <string name="app_rules_effective_note">The source app still needs to expose a readable selection or supported menu.</string>
+    <string name="app_rules_edit_scope">Edit this action’s app scope</string>
+    <string name="app_rules_draft_preview">Preview for these settings</string>
+</resources>

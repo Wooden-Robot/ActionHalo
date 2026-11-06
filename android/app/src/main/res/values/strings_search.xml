@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="action_douban_book">Douban Books</string>
+    <string name="action_douban_movie">Douban Movies</string>
+    <string name="action_neodb">NeoDB Media</string>
+    <string name="action_neodb_book">NeoDB Books</string>
+    <string name="action_github">GitHub</string>
+    <string name="action_telegram">Telegram Search</string>
+    <string name="action_telegram_unavailable">Telegram could not open. Install or enable an official Telegram app, sign in, then try again.</string>
+</resources>

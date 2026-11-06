@@ -1394,7 +1394,24 @@ struct LegacyDataImporter {
     private func writePreservingPermissions(_ data: Data, to url: URL) throws {
         let attributes = try fileManager.attributesOfItem(atPath: url.path)
         let permissions = attributes[.posixPermissions]
-        try data.write(to: url, options: [])
+        // Conversion only touches the private staging copy. Read-only source
+        // files must remain read-only after their contents have been converted.
+        if let mode = permissions as? NSNumber, mode.intValue & 0o200 == 0 {
+            try fileManager.setAttributes(
+                [.posixPermissions: mode.intValue | 0o200],
+                ofItemAtPath: url.path
+            )
+        }
+        do {
+            try data.write(to: url, options: [])
+        } catch {
+            if let permissions {
+                try? fileManager.setAttributes(
+                    [.posixPermissions: permissions], ofItemAtPath: url.path
+                )
+            }
+            throw error
+        }
         if let permissions {
             try fileManager.setAttributes(
                 [.posixPermissions: permissions],

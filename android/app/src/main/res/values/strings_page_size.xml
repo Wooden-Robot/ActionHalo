@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="page_size_title">Actions per page</string>
+    <string name="page_size_current">Actions per page: %1$d</string>
+    <string name="page_size_option">%1$d</string>
+</resources>

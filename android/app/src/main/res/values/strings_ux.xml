@@ -1,0 +1,21 @@
+<resources>
+    <string name="action_edit_text">Edit selected text</string>
+    <string name="edit_text_hint">Correct this selection, then choose an action. Changes apply only to this session.</string>
+    <string name="edit_text_continue">Choose an action</string>
+    <string name="action_retry_hint">Try again or choose another action</string>
+    <string name="destination_menu">Opening app</string>
+    <string name="destination_title">Open %1$s with</string>
+    <string name="destination_default">Default behavior</string>
+    <string name="destination_web">Website · default browser or handler</string>
+    <string name="destination_unavailable">%1$s · currently unavailable</string>
+    <string name="destination_fallback">Preferred app unavailable; opened the website</string>
+    <string name="home_enable">Enable automatic selection</string>
+    <string name="home_authorize">Restore accessibility permission</string>
+    <string name="home_reconnect">Service disconnected · show recovery steps</string>
+    <string name="home_reconnect_body">Permission is still enabled, but the service has disconnected. Allow background activity in app settings. If it stays disconnected, turn the ActionHalo service off and on in accessibility settings. You can use copied text while recovering.</string>
+    <string name="undo_change">Changed · undo</string>
+    <string name="actions_disable_all">Turn off all actions</string>
+    <string name="actions_reset_all">Restore default actions</string>
+    <string name="actions_reset_confirm">Restore built-in actions and remove custom actions? You can undo immediately afterward.</string>
+    <string name="app_rules_active">Per-app selection rules are enabled</string>
+</resources>

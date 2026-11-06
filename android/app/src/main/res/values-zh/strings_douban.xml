@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="action_douban">豆瓣</string>
+    <string name="action_douban_web_fallback">无法打开豆瓣 App，已转到网页搜索。</string>
+</resources>

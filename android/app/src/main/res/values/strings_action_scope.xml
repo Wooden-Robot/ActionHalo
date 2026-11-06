@@ -1,0 +1,14 @@
+<resources>
+    <string name="action_scope_menu">Active apps</string>
+    <string name="action_scope_title">Active apps · %1$s</string>
+    <string name="action_scope_hint">Choose the source apps where this action appears. This also applies to each app’s custom action list. “Only selected apps” hides the action when the source is unknown, such as a manual clipboard entry.</string>
+    <string name="action_scope_all">All apps</string>
+    <string name="action_scope_only">Only selected apps</string>
+    <string name="action_scope_except">All except selected apps</string>
+    <string name="action_scope_search">Search app name or package</string>
+    <string name="action_scope_count">Selected: %1$d</string>
+    <string name="action_scope_no_apps">No matching apps. Saved apps remain listed even if unavailable on this phone.</string>
+    <string name="action_scope_select_app">Select at least one app, or choose All apps.</string>
+    <string name="action_scope_invalid">Could not save. Select up to 200 apps and make sure the action still exists.</string>
+    <string name="action_scope_blocked">This action is unavailable for the source app.</string>
+</resources>

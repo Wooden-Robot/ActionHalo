@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Model a host that supports third-party text processors on Android 11+. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+    </queries>
+    <application>
+        <activity
+            android:name="com.actionhalo.android.fixture.SelectionFixtureActivity"
+            android:exported="true"
+            android:label="ActionHalo selection fixture"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+        <activity
+            android:name="com.actionhalo.android.fixture.ClipboardOverlayHostActivity"
+            android:exported="true"
+            android:label="ActionHalo clipboard overlay fixture"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+    </application>
+</manifest>

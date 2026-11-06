@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="health_status">System enabled setting: %1$s\nSystem service list: %2$s\nCurrent connection: %3$s\nBattery optimization: %4$s</string>
+    <string name="health_on">On</string>
+    <string name="health_off">Off</string>
+    <string name="health_unknown">Unknown</string>
+    <string name="health_listed">Listed</string>
+    <string name="health_not_listed">Not listed</string>
+    <string name="health_connected">Connected</string>
+    <string name="health_disconnected">Disconnected</string>
+    <string name="health_battery_unrestricted">Exempt</string>
+    <string name="health_battery_optimized">Still optimized</string>
+</resources>

@@ -279,6 +279,7 @@
 "No recent selection failure" = "最近没有选中失败";
 "%@ · %@ · %d chars" = "%@ · %@ · %d 个字符";
 "%@ · %@" = "%@ · %@";
+"Auto trigger is disabled" = "自动触发已关闭";
 "Accessibility permission is missing" = "辅助功能权限缺失";
 "ActionHalo is disabled in the current app" = "ActionHalo 在当前应用中已被禁用";
 "ActionHalo is intentionally suppressed for the current frontmost app" = "ActionHalo 已针对当前前台应用主动抑制";
@@ -351,3 +352,5 @@
 "ENTER · SELECT  ESC · CLOSE" = "回车执行 · Esc 关闭";
 "Use arrow keys or Tab to choose an action, Enter to run it, and Escape to close." = "使用方向键或 Tab 选择动作，按回车执行，按 Esc 关闭。";
 "Another plugin operation is in progress. Please try again shortly." = "另一个插件操作正在进行，请稍后重试。";
+"Plugin Operation in Progress" = "插件操作正在进行";
+"Wait for the current plugin save, installation, or deletion to finish before quitting or restarting ActionHalo." = "请等待当前插件保存、安装或删除操作完成后，再退出或重启 ActionHalo。";

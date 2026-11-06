@@ -13,7 +13,7 @@ info_plist=""
 artifact_app=""
 require_ad_hoc=false
 package_resolved="$project_root/Package.resolved"
-expected_feed_url="https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/actionhalo-appcast.xml"
+expected_feed_url="https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/appcast.xml"
 expected_public_key="PEn1mxr6DuGIBoGHNbx21ZANmnIi6gr/kBaaYRcKTTY="
 expected_sparkle_version="2.9.4"
 expected_sparkle_revision="b6496a74a087257ef5e6da1c5b29a447a60f5bd7"

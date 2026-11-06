@@ -1,0 +1,53 @@
+<resources>
+    <string name="app_name">ActionHalo</string>
+    <string name="try_title">TAKE IT FOR A SPIN</string>
+    <string name="sample_text">Small actions, big possibilities.</string>
+    <string name="sample_hint">Text to search, translate, or share</string>
+    <string name="show_halo">Open the halo ↗</string>
+    <string name="gesture_hint">Tap an icon, or move around the center and release to execute. A first press in blank space outside the wheel moves its center. Moving too far away cancels selection; move back to continue.</string>
+    <string name="appearance_title">HALO ATMOSPHERE</string>
+    <string name="gta_mode_title">GTA mode</string>
+    <string name="gta_mode_body">A black-and-white weapon wheel over a hazy backdrop. Live background blur is used when supported, while the wheel stays sharp. Enabled by default. Turn it off to use the orange halo.</string>
+    <string name="access_title">YOUR TEXT, YOUR SHORTCUT</string>
+    <string name="manual_title">Ready when you select</string>
+    <string name="manual_body">In supported apps, select text and choose ActionHalo from the text menu. You can also share text to ActionHalo.</string>
+    <string name="auto_title">Show automatically</string>
+    <string name="auto_off">Optional · accessibility access required</string>
+    <string name="auto_waiting">Waiting for accessibility access</string>
+    <string name="access_settings">Manage accessibility access</string>
+    <string name="access_already_enabled_title">Accessibility access is already on</string>
+    <string name="access_already_enabled_body">You do not need to grant access again. Check the current service connection on the home screen. Open the system list only if you want to change the system permission.</string>
+    <string name="access_overview">Open system list</string>
+    <string name="consent_title">Let the halo follow your selection</string>
+    <string name="consent_body">When enabled, ActionHalo uses Android accessibility access to read selected text and its position in other apps and show the action halo. Password fields are excluded. Selected text is processed temporarily on your device and is not saved or logged. Only an action you tap can send that text to the website or app you choose.\n\nThis feature is optional. Text-menu and share actions work without this permission. You can turn automatic mode off here at any time.</string>
+    <string name="consent_accept">Agree and continue</string>
+    <string name="cancel">Cancel</string>
+    <string name="actions_title">MAKE IT YOURS</string>
+    <string name="actions_body">Long press and drag an action to reorder it. Use ⋮ to move it up or down, or edit website names, URLs and icons. Change the number per page under Halo atmosphere.</string>
+    <string name="action_manage_description">Manage %1$s</string>
+    <string name="action_move_up">Move up</string>
+    <string name="action_move_down">Move down</string>
+    <string name="edit_action">Edit action</string>
+    <string name="custom_updated">Action updated.</string>
+    <string name="action_icon_label">Icon</string>
+    <string-array name="action_icon_names">
+        <item>Copy</item><item>Globe</item><item>Link</item><item>Share</item><item>Search</item>
+        <item>Book</item><item>Film</item><item>Books</item><item>Earth</item><item>Paper plane</item>
+        <item>Google</item><item>Translate</item><item>Baidu</item><item>Douban</item>
+    </string-array>
+    <string name="add_action">＋ Add a website action</string>
+    <string name="custom_title">New website action</string>
+    <string name="name_hint">Name, e.g. Wikipedia</string>
+    <string name="url_hint">https://en.wikipedia.org/w/index.php?search={text}</string>
+    <string name="custom_help">Use an http or https URL with {text} where the selected text should go. Text is encoded automatically.</string>
+    <string name="save">Save</string>
+    <string name="delete">Delete</string>
+    <string name="remove_title">Delete “%1$s”?</string>
+    <string name="custom_saved">Action saved and enabled. Additional actions appear on the next page.</string>
+    <string name="custom_invalid">Enter a name and a valid http(s) URL containing {text}.</string>
+    <string name="privacy_footer">No account. No selection history.\nText only leaves your device when you choose an external action.</string>
+    <string name="empty_text">Select or enter some text first.</string>
+    <string name="text_too_long">Choose a shorter selection (up to 32,768 characters).</string>
+    <string name="no_actions">Enable at least one action in ActionHalo.</string>
+    <string name="settings_unavailable">Accessibility settings could not be opened on this device.</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <!-- Consent and automatic-mode flags must be chosen again on a different device. -->
+    <cloud-backup><exclude domain="sharedpref" path="." /></cloud-backup>
+    <device-transfer><exclude domain="sharedpref" path="." /></device-transfer>
+</data-extraction-rules>

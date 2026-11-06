@@ -41,25 +41,17 @@ reject_pattern() {
 
 require_fixed "$(<"$makefile")" 'SPARKLE_ACCOUNT ?= ActionHalo' \
     "the default Sparkle Keychain account must use the independent ActionHalo signing key"
-require_fixed "$(<"$makefile")" 'APPCAST_NAME = actionhalo-appcast.xml' \
-    "the installable ActionHalo feed must not reuse the legacy appcast filename"
-require_fixed "$(<"$makefile")" 'LEGACY_SPARKLE_ACCOUNT ?= ActionHaloLegacyMigration' \
-    "the informational migration feed must use a separate legacy-key account"
-require_fixed "$(<"$makefile")" 'LEGACY_SPARKLE_PUBLIC_KEY = YpDJbUKWW/mYy47N4BULh0vfKr4PGvV5dv5OAGyJrAo=' \
-    "the informational migration feed must remain verifiable by existing installations"
-require_fixed "$(<"$makefile")" 'LEGACY_APPCAST_NAME = appcast.xml' \
-    "legacy installations must keep receiving the informational feed at appcast.xml"
+require_fixed "$(<"$makefile")" 'APPCAST_NAME = appcast.xml' \
+    "the installable ActionHalo feed must use the short appcast filename"
 require_fixed "$(<"$makefile")" 'tccutil reset Accessibility com.actionhalo.app' \
     "the development run target must reset the ActionHalo Accessibility identity"
 
 package_recipe="$(target_recipe package)"
 release_recipe="$(target_recipe release)"
 appcast_recipe="$(target_recipe generate-appcast)"
-legacy_appcast_recipe="$(target_recipe generate-legacy-migration-appcast)"
 publish_recipe="$(target_recipe publish-release-assets)"
-test_recipe="$(target_recipe test)"
 
-for target in package release generate-appcast generate-legacy-migration-appcast publish-release-assets; do
+for target in package release generate-appcast publish-release-assets; do
     recipe="$(target_recipe "$target")"
     reject_pattern \
         "$recipe" \
@@ -95,9 +87,6 @@ require_fixed "$release_recipe" '$(MAKE) package' \
 require_fixed "$release_recipe" \
     '$(MAKE) generate-appcast VERSION="$(VERSION)" SPARKLE_ACCOUNT="$(SPARKLE_ACCOUNT)"' \
     "release must generate the Ed25519-signed Sparkle appcast"
-require_fixed "$release_recipe" \
-    '$(MAKE) generate-legacy-migration-appcast VERSION="$(VERSION)" LEGACY_SPARKLE_ACCOUNT="$(LEGACY_SPARKLE_ACCOUNT)"' \
-    "release must generate the separately signed informational migration feed"
 
 require_fixed "$appcast_recipe" 'Tools/verify_release_dmg.sh' \
     "generate-appcast must validate the community DMG before signing it"
@@ -112,43 +101,22 @@ require_fixed "$appcast_recipe" '--embed-release-notes' \
 require_fixed "$appcast_recipe" 'Tools/verify_sparkle_appcast.sh' \
     "generate-appcast must cryptographically verify the feed and archive"
 
-require_fixed "$legacy_appcast_recipe" 'Tools/generate_legacy_migration_appcast.sh' \
-    "the legacy target must use the audited informational-feed generator"
-require_fixed "$legacy_appcast_recipe" '--output "$(LEGACY_APPCAST_PATH)"' \
-    "the legacy target must write the old clients' appcast.xml path"
-require_fixed "$legacy_appcast_recipe" '--account "$(LEGACY_SPARKLE_ACCOUNT)"' \
-    "the legacy target must use the isolated legacy trust-root account"
-require_fixed "$legacy_appcast_recipe" '--expected-public-key "$(LEGACY_SPARKLE_PUBLIC_KEY)"' \
-    "the legacy target must pin the public key trusted by existing installations"
-
 require_fixed "$publish_recipe" \
     '$(MAKE) generate-appcast VERSION="$(VERSION)" SPARKLE_ACCOUNT="$(SPARKLE_ACCOUNT)"' \
     "publish-release-assets must generate the community appcast without a Team ID"
-require_fixed "$publish_recipe" \
-    '$(MAKE) generate-legacy-migration-appcast VERSION="$(VERSION)" LEGACY_SPARKLE_ACCOUNT="$(LEGACY_SPARKLE_ACCOUNT)"' \
-    "publish-release-assets must regenerate the informational migration feed before upload"
 require_fixed "$publish_recipe" '$(BUILD_DIR)/$(DMG_NAME)#$(DMG_NAME)' \
     "publish-release-assets must upload the community DMG"
 require_fixed "$publish_recipe" '$(APPCAST_PATH)#$(APPCAST_NAME)' \
     "publish-release-assets must upload the dedicated signed ActionHalo appcast with the DMG"
-require_fixed "$publish_recipe" '$(LEGACY_APPCAST_PATH)#$(LEGACY_APPCAST_NAME)' \
-    "publish-release-assets must upload the separately signed informational migration feed"
-require_fixed "$publish_recipe" 'grep -Fxq "$(LEGACY_APPCAST_NAME)"' \
-    "publish-release-assets must refuse to replace an existing informational migration feed"
-require_fixed "$publish_recipe" 'LOCAL_LEGACY_APPCAST_DIGEST=' \
-    "publish-release-assets must hash the local informational migration feed"
-require_fixed "$publish_recipe" 'REMOTE_LEGACY_APPCAST_DIGEST=' \
-    "publish-release-assets must read the remote informational migration feed digest"
-require_fixed "$publish_recipe" '[ "$${REMOTE_LEGACY_APPCAST_DIGEST}" = "$${LOCAL_LEGACY_APPCAST_DIGEST}" ]' \
-    "publish-release-assets must verify the informational migration feed digest before publication"
-require_fixed "$test_recipe" 'Tests/verify_legacy_migration_appcast_gate.sh' \
-    "make test must exercise the enclosure-free informational migration feed gate"
+require_fixed "$publish_recipe" '[ "$${REMOTE_DMG_DIGEST}" = "$${LOCAL_DMG_DIGEST}" ]' \
+    "publish-release-assets must verify the remote DMG digest before publication"
+require_fixed "$publish_recipe" '[ "$${REMOTE_APPCAST_DIGEST}" = "$${LOCAL_APPCAST_DIGEST}" ]' \
+    "publish-release-assets must verify the remote appcast digest before publication"
 
-for target in package release generate-appcast generate-legacy-migration-appcast publish-release-assets; do
+for target in package release generate-appcast publish-release-assets; do
     dry_run="$fixture_dir/$target.log"
     make -C "$project_root" --no-print-directory -n "$target" VERSION=9.8.7 \
-        SPARKLE_ACCOUNT=CommunityContractTest \
-        LEGACY_SPARKLE_ACCOUNT=LegacyCommunityContractTest >"$dry_run"
+        SPARKLE_ACCOUNT=CommunityContractTest >"$dry_run"
     dry_output="$(<"$dry_run")"
     reject_pattern \
         "$dry_output" \
@@ -175,21 +143,27 @@ require_fixed "$release_dry_run" 'bash Tools/sign_sparkle_framework.sh' \
     "release dry-run must include Sparkle helper signing"
 require_fixed "$release_dry_run" '.build/artifacts/sparkle/Sparkle/bin/generate_appcast' \
     "release dry-run must include appcast generation"
-require_fixed "$release_dry_run" 'bash Tools/generate_legacy_migration_appcast.sh' \
-    "release dry-run must include the informational migration feed generator"
+reject_pattern "$release_dry_run" 'generate_legacy_migration_appcast|LEGACY_SPARKLE' \
+    "release must generate only the ActionHalo update feed"
 
 publish_dry_run="$(<"$fixture_dir/publish-release-assets.log")"
-require_fixed "$publish_dry_run" 'gh release upload' \
-    "publish dry-run must upload the DMG and both appcasts"
-require_fixed "$publish_dry_run" '.build/ActionHalo.dmg#ActionHalo.dmg' \
-    "publish dry-run must include the ActionHalo DMG asset"
-require_fixed "$publish_dry_run" '.build/actionhalo-appcast.xml#actionhalo-appcast.xml' \
-    "publish dry-run must include the installable ActionHalo feed"
-require_fixed "$publish_dry_run" '.build/appcast.xml#appcast.xml' \
-    "publish dry-run must include the informational migration feed"
-require_fixed "$publish_dry_run" 'REMOTE_LEGACY_APPCAST_DIGEST=' \
-    "publish dry-run must include remote verification for the informational migration feed"
+upload_line="$(grep '^gh release upload ' <<<"$publish_dry_run")"
+[[ "$upload_line" == 'gh release upload "v9.8.7" ".build/ActionHalo.dmg#ActionHalo.dmg" ".build/appcast.xml#appcast.xml" --repo "github.com/Wooden-Robot/ActionHalo"' ]] \
+    || fail "publish must upload exactly the DMG and one ActionHalo update feed"
 require_fixed "$publish_dry_run" 'gh release edit' \
     "publish dry-run must publish only after verification"
+
+draft_asset_check="$(awk '/^EXISTING=/{checking=1} checking {print; if ($0 !~ /\\$/) exit}' <<<"$publish_dry_run")"
+[[ -n "$draft_asset_check" ]] || fail "publish must check for existing draft assets"
+for existing_asset in "" ActionHalo.dmg actionhalo-appcast.xml appcast.xml; do
+    if (
+        gh() { printf '%s\n' "$existing_asset"; }
+        eval "$draft_asset_check"
+    ) >"$fixture_dir/draft-assets.log" 2>&1; then
+        [[ -z "$existing_asset" ]] || fail "publish accepted a draft containing $existing_asset"
+    else
+        [[ -n "$existing_asset" ]] || fail "publish rejected an empty draft"
+    fi
+done
 
 echo "Community release Makefile contract tests passed."

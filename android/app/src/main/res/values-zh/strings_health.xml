@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="health_status">系统启用名单：%1$s\n系统服务列表：%2$s\n当前服务连接：%3$s\n省电优化：%4$s</string>
+    <string name="health_on">开启</string>
+    <string name="health_off">关闭</string>
+    <string name="health_unknown">未知</string>
+    <string name="health_listed">已列出</string>
+    <string name="health_not_listed">未列出</string>
+    <string name="health_connected">已连接</string>
+    <string name="health_disconnected">未连接</string>
+    <string name="health_battery_unrestricted">已豁免</string>
+    <string name="health_battery_optimized">仍受优化</string>
+</resources>

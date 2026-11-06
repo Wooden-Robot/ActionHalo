@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="halo_preview_title">实时预览</string>
+    <string name="halo_preview_body">可在缩小的圆环中点击、拖动和翻页；这里只显示动作名称。完整背景虚化效果可在实际圆环中查看。</string>
+    <string name="halo_preview_scene">阅读 · 选字 · 探索</string>
+    <string name="halo_preview_ready">按住、移动、松手，试试选择动作。</string>
+    <string name="halo_preview_selected">已选择：%1$s · 仅预览</string>
+    <string name="halo_preview_dismissed">预览已关闭。</string>
+    <string name="halo_preview_restart">重新试用圆环</string>
+    <string name="halo_position_title">初始位置</string>
+    <string name="halo_position_current">初始位置：%1$s</string>
+    <string name="halo_position_body">圆环出现时优先放在顺手的位置，并避开键盘；开始操作后保持位置稳定。</string>
+    <string-array name="halo_position_names">
+        <item>自动</item><item>左下方</item><item>右下方</item>
+    </string-array>
+</resources>

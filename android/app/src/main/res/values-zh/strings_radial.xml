@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="radial_accessibility_menu">ActionHalo 操作菜单</string>
+    <string name="radial_choose_action">选择一个操作</string>
+    <string name="radial_tap_to_close">轻点关闭</string>
+    <string name="radial_close_menu">关闭操作菜单</string>
+    <string name="radial_close_menu_with_selection">关闭操作菜单。已选文字：%1$s</string>
+</resources>

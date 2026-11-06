@@ -484,15 +484,42 @@ final class PluginManager: Sendable {
                 }
             }
 
-            if let plugin = PluginLoader.load(from: packageURL),
-               let scriptValue = plugin.action.scriptReference,
-               case .bundledFile(let scriptURL) = resolvedPluginScriptSource(
-                   scriptValue,
-                   pluginDirectoryURL: packageURL,
-                   fileManager: fileManager
-               ) {
-                paths.append(scriptURL)
+            // Read the reference even when its file is temporarily missing.
+            // The same bounded package inspection keeps unsafe trees unwatched.
+            let configURL = packageURL.appendingPathComponent("Config.json")
+            guard let directories = packageDirectoriesWithinLimits(packageURL, fileManager: fileManager),
+                  let values = try? configURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                  values.isRegularFile == true, values.isSymbolicLink != true,
+                  let size = values.fileSize, size <= PluginLoader.maximumConfigBytes,
+                  let data = try? Data(contentsOf: configURL),
+                  let config = try? JSONDecoder().decode(PluginConfig.self, from: data),
+                  let action = PluginAction(config: config.action, allowNativeCommands: false),
+                  let scriptValue = action.scriptReference else { continue }
+
+            // Canonicalize the existing root before appending a missing file.
+            // Foundation keeps /private aliases for nonexistent URLs, while
+            // canonicalizing the existing package and its parent directories.
+            let rootURL = packageURL.standardizedFileURL.resolvingSymlinksInPath()
+            let reference = scriptValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !["/", "~/", "../"].contains(where: { reference.hasPrefix($0) }) else { continue }
+            let scriptURL = rootURL.appendingPathComponent(reference).standardizedFileURL
+            guard scriptURL.path.hasPrefix(rootURL.path + "/") else { continue }
+
+            switch resolvedPluginScriptSource(scriptValue, pluginDirectoryURL: packageURL, fileManager: fileManager) {
+            case .bundledFile(let url):
+                paths.append(url)
+            case .inline:
+                // Missing filenames with spaces are legacy inline candidates.
+                // Keep their existing parent chain without changing execution.
+                guard !scriptValue.contains(where: \.isNewline), scriptValue.contains("/") else { continue }
+            case nil:
+                break
             }
+            // Only ancestors of the configured script need descriptors, not
+            // unrelated resource directories (at most the package depth limit).
+            paths.append(contentsOf: directories.filter {
+                scriptURL.path.hasPrefix($0.standardizedFileURL.resolvingSymlinksInPath().path + "/")
+            })
         }
 
         var seenPaths: Set<String> = []
@@ -611,7 +638,7 @@ final class PluginManager: Sendable {
             }
 
             do {
-                try fileManager.moveItem(at: packageURL, to: visibleURL)
+                try Self.movePluginPackagePreservingPermissions(at: packageURL, to: visibleURL, fileManager: fileManager)
                 NSLog("[ActionHalo] Repaired hidden plugin package: \(packageURL.lastPathComponent) -> \(visibleURL.lastPathComponent)")
             } catch {
                 NSLog("[ActionHalo] Failed to repair hidden plugin package \(packageURL.path): \(error.localizedDescription)")
@@ -691,10 +718,17 @@ final class PluginManager: Sendable {
             }
 
             if fileManager.fileExists(atPath: destinationURL.path) {
+                guard let destinationPlugin = PluginLoader.load(from: destinationURL),
+                      destinationPlugin.id == backupPlugin.id else {
+                    // A failed rollback deliberately preserves this backup if
+                    // another item occupies the destination. Keep that recovery
+                    // copy until a valid replacement for the same plugin exists.
+                    continue
+                }
                 if (try? fileManager.removeItem(at: pendingURL)) != nil {
                     result.removedRedundantBackups += 1
                 }
-            } else if (try? fileManager.moveItem(at: pendingURL, to: destinationURL)) != nil {
+            } else if (try? Self.movePluginPackagePreservingPermissions(at: pendingURL, to: destinationURL, fileManager: fileManager)) != nil {
                 result.restoredBackupPackages += 1
             }
         }
@@ -840,7 +874,7 @@ final class PluginManager: Sendable {
     func setPluginEnabled(_ identifier: String, enabled: Bool) {
         if let plugin = plugins.first(where: { $0.id == identifier }) {
             plugin.isEnabled = enabled
-            savePluginStates()
+            savePluginState(plugin)
             NotificationCenter.default.post(name: PluginManager.pluginsReloadedNotification, object: self)
         }
     }
@@ -944,10 +978,37 @@ final class PluginManager: Sendable {
     }
 
     func removeTrustedExecutionSnapshot(_ snapshot: TrustedExecutionSnapshot) {
+        Self.removeDisposablePluginDirectory(snapshot.containerURL)
+    }
+
+    static func removeDisposablePluginDirectory(
+        _ directoryURL: URL,
+        fileManager: FileManager = .default
+    ) {
         do {
-            try FileManager.default.removeItem(at: snapshot.containerURL)
+            try fileManager.removeItem(at: directoryURL)
         } catch {
-            NSLog("[ActionHalo] Failed to remove trusted plugin execution snapshot: \(error.localizedDescription)")
+            // Copies preserve read-only directory permissions. Only make this
+            // disposable tree writable after execution, then retry its removal.
+            let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+            guard let values = try? directoryURL.resourceValues(forKeys: keys),
+                  values.isDirectory == true, values.isSymbolicLink != true else { return }
+            do {
+                try Self.makeSnapshotDirectoryWritable(directoryURL, fileManager: fileManager)
+                if let items = fileManager.enumerator(
+                    at: directoryURL, includingPropertiesForKeys: Array(keys)
+                ) {
+                    for case let directory as URL in items {
+                        guard let values = try? directory.resourceValues(forKeys: keys),
+                              values.isDirectory == true, values.isSymbolicLink != true,
+                              Self.isPluginDirectory(directory, inside: directoryURL) else { continue }
+                        try Self.makeSnapshotDirectoryWritable(directory, fileManager: fileManager)
+                    }
+                }
+                try fileManager.removeItem(at: directoryURL)
+            } catch {
+                NSLog("[ActionHalo] Failed to remove disposable plugin directory: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -1050,23 +1111,20 @@ final class PluginManager: Sendable {
         return DispatchQueue.main.sync(execute: prompt)
     }
     
-    private func savePluginStates() {
-        var disabledPlugins: [String] = []
-        var userEnabledPlugins: [String] = []
-        
-        for plugin in plugins {
-            if plugin.config.isDefaultDisabled == true {
-                if plugin.isEnabled {
-                    userEnabledPlugins.append(plugin.id)
-                }
-            } else {
-                if !plugin.isEnabled {
-                    disabledPlugins.append(plugin.id)
-                }
-            }
+    private func savePluginState(_ plugin: Plugin) {
+        // A temporarily invalid package is absent from `plugins`. Updating one
+        // toggle must not erase that package's saved choice.
+        var disabledPlugins = Set(UserDefaults.standard.stringArray(forKey: "disabledPlugins") ?? [])
+        var userEnabledPlugins = Set(UserDefaults.standard.stringArray(forKey: "userEnabledPlugins") ?? [])
+        disabledPlugins.remove(plugin.id)
+        userEnabledPlugins.remove(plugin.id)
+        if plugin.config.isDefaultDisabled == true {
+            if plugin.isEnabled { userEnabledPlugins.insert(plugin.id) }
+        } else if !plugin.isEnabled {
+            disabledPlugins.insert(plugin.id)
         }
-        UserDefaults.standard.set(disabledPlugins, forKey: "disabledPlugins")
-        UserDefaults.standard.set(userEnabledPlugins, forKey: "userEnabledPlugins")
+        UserDefaults.standard.set(disabledPlugins.sorted(), forKey: "disabledPlugins")
+        UserDefaults.standard.set(userEnabledPlugins.sorted(), forKey: "userEnabledPlugins")
     }
     
     private func restorePluginStates() {
@@ -1177,13 +1235,20 @@ final class PluginManager: Sendable {
         }
     }
 
-    func removeDuplicateUserPlugins(for identifier: String, keeping preservedURL: URL? = nil) {
-        guard Self.tryBeginPluginMutation() else { return }
+    @discardableResult
+    func removeDuplicateUserPlugins(for identifier: String, keeping preservedURL: URL? = nil) -> Error? {
+        guard Self.tryBeginPluginMutation() else { return PluginMutationError.busy }
         defer { Self.endPluginMutation() }
+        var firstError: Error?
         for url in userPluginURLs(for: identifier) where !Self.shouldPreservePluginURL(url, preservedURL: preservedURL) {
             guard Self.isPluginDirectory(url, inside: userPluginsURL) else { continue }
-            try? FileManager.default.removeItem(at: url)
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch {
+                firstError = firstError ?? error
+            }
         }
+        return firstError
     }
 
     private static func shouldPreservePluginURL(_ url: URL, preservedURL: URL?) -> Bool {
@@ -1208,8 +1273,15 @@ final class PluginManager: Sendable {
 
         if let userOverrideURL,
            Self.isPluginDirectory(userOverrideURL, inside: userPluginsURL) {
-            // Delete the user override file physically
+            // The catalog exposes one item per ID. Remove its duplicate user
+            // packages too, otherwise deleting it merely reveals another copy.
+            // Refresh even after partial failure so the catalog matches disk.
+            defer { reloadPlugins() }
+            if let error = removeDuplicateUserPlugins(for: plugin.id, keeping: userOverrideURL) {
+                throw error
+            }
             try FileManager.default.removeItem(at: userOverrideURL)
+            return
         } else if isBuiltIn {
             // Soft delete the built-in plugin by marking it in UserDefaults
             // This avoids breaking the app's code signature by deleting files inside the .app bundle
@@ -1447,8 +1519,7 @@ final class PluginManager: Sendable {
         case .url(let template):
             executeURLAction(template: template, text: text)
         case .copy:
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            ActionExecutor.shared.execute(action: .copy, text: text)
         case .paste:
             guard let targetProcessIdentifier,
                   NSWorkspace.shared.frontmostApplication?.processIdentifier == targetProcessIdentifier else {
@@ -1615,7 +1686,8 @@ final class PluginManager: Sendable {
     }
 
     static func renderedURLString(template: String, text: String) -> String {
-        if template.trimmingCharacters(in: .whitespacesAndNewlines) == "{text}" {
+        let template = template.trimmingCharacters(in: .whitespacesAndNewlines)
+        if template == "{text}" {
             return normalizedDirectURLString(from: text)
         }
 
@@ -1632,11 +1704,40 @@ final class PluginManager: Sendable {
     }
 
     private static func normalizedDirectURLString(from text: String) -> String {
-        var urlString = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !urlString.contains("://") {
-            urlString = "https://\(urlString)"
+        let urlString = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let scheme = URL(string: urlString)?.scheme {
+            // A bare host and port also parses as a scheme. Preserve that
+            // existing shorthand without mistaking a URL in the query for one.
+            if (scheme.contains(".") || scheme.lowercased() == "localhost"),
+               let components = URLComponents(string: "https://\(urlString)"),
+               components.host != nil, components.port != nil {
+                return "https://\(urlString)"
+            }
+            return urlString
         }
-        return urlString
+        return "https://\(urlString)"
+    }
+
+    private static func prepareSnapshotScriptDirectory(
+        for scriptURL: URL,
+        snapshot: TrustedExecutionSnapshot
+    ) throws {
+        guard isPluginDirectory(scriptURL, inside: snapshot.plugin.directoryURL),
+              isPluginDirectory(snapshot.plugin.directoryURL, inside: snapshot.containerURL) else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        try makeSnapshotDirectoryWritable(scriptURL.deletingLastPathComponent())
+    }
+
+    private static func makeSnapshotDirectoryWritable(
+        _ directory: URL,
+        fileManager: FileManager = .default
+    ) throws {
+        let attributes = try fileManager.attributesOfItem(atPath: directory.path)
+        if let permissions = attributes[.posixPermissions] as? Int, permissions & 0o200 == 0 {
+            // Only the private disposable copy needs to accept rendered UTF-8.
+            try fileManager.setAttributes([.posixPermissions: permissions | 0o200], ofItemAtPath: directory.path)
+        }
     }
     
     private func executeShellScript(
@@ -1647,6 +1748,7 @@ final class PluginManager: Sendable {
     ) {
         Self.verboseLog("Entering executeShellScript for plugin: \(plugin.id)")
         let scriptContent: String?
+        var bundledScriptURL: URL?
         
         switch source {
         case .script(let scriptName):
@@ -1655,6 +1757,7 @@ final class PluginManager: Sendable {
                 pluginDirectoryURL: plugin.directoryURL
             ) {
             case .bundledFile(let scriptURL):
+                bundledScriptURL = scriptURL
                 var enc: String.Encoding = .utf8
                 scriptContent = try? String(contentsOf: scriptURL, usedEncoding: &enc)
                 Self.verboseLog("Loaded shell script from file: \(scriptURL.path) (encoding: \(enc))")
@@ -1677,6 +1780,11 @@ final class PluginManager: Sendable {
         }
         
         Self.verboseLog("Shell script content resolved, preparing to run bash")
+        // `plugin` belongs to the confirmed disposable execution snapshot.
+        // Preserve file scripts' relative location for $0/BASH_SOURCE resources.
+        let scriptFile = bundledScriptURL ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".sh")
+        let isBundledScript = bundledScriptURL != nil
         
         DispatchQueue.global(qos: .userInitiated).async {
             defer { self.removeTrustedExecutionSnapshot(cleanupSnapshot) }
@@ -1689,9 +1797,10 @@ final class PluginManager: Sendable {
                 return
             }
             defer { try? FileManager.default.removeItem(at: textFile) }
-            let scriptFile = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString + ".sh")
             do {
+                if isBundledScript {
+                    try Self.prepareSnapshotScriptDirectory(for: scriptFile, snapshot: cleanupSnapshot)
+                }
                 try content.write(to: scriptFile, atomically: true, encoding: .utf8)
             } catch {
                 NSLog("[ActionHalo] Failed to prepare shell script: \(error.localizedDescription)")
@@ -1727,6 +1836,7 @@ final class PluginManager: Sendable {
     ) {
         Self.verboseLog("Entering executeAppleScript for plugin: \(plugin.id)")
         var source: String?
+        var bundledScriptURL: URL?
         
         switch actionSource {
         case .script(let scriptName):
@@ -1735,6 +1845,7 @@ final class PluginManager: Sendable {
                 pluginDirectoryURL: plugin.directoryURL
             ) {
             case .bundledFile(let scriptURL):
+                bundledScriptURL = scriptURL
                 var enc: String.Encoding = .utf8
                 let fileSource = try? String(contentsOf: scriptURL, usedEncoding: &enc)
                 source = fileSource.map { Self.renderedAppleScriptSource($0, text: text) }
@@ -1758,12 +1869,14 @@ final class PluginManager: Sendable {
         }
         
         Self.verboseLog("Preparing to execute AppleScript of length: \(appleScriptSource.count)")
+        let tempFile = bundledScriptURL ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".applescript")
+        let isBundledScript = bundledScriptURL != nil
         
         // Execute via osascript passing a temporary file path
         DispatchQueue.global(qos: .userInitiated).async {
             defer { self.removeTrustedExecutionSnapshot(cleanupSnapshot) }
             let tempDir = FileManager.default.temporaryDirectory
-            let tempFile = tempDir.appendingPathComponent(UUID().uuidString + ".applescript")
             // Write selected text to a temp file so AppleScript can read it with proper UTF-8 encoding
             // This avoids encoding issues with CJK characters via environment variables
             let textFile = tempDir.appendingPathComponent(UUID().uuidString + ".txt")
@@ -1785,6 +1898,9 @@ final class PluginManager: Sendable {
                     with: fileReadExpr
                 )
                 
+                if isBundledScript {
+                    try Self.prepareSnapshotScriptDirectory(for: tempFile, snapshot: cleanupSnapshot)
+                }
                 try finalSource.write(to: tempFile, atomically: true, encoding: .utf8)
                 Self.verboseLog("Wrote temp AppleScript file to \(tempFile.path)")
                 
@@ -1985,7 +2101,15 @@ final class PluginManager: Sendable {
                 return nil
             }
             guard data.count <= maximumFileBytes else { return nil }
-            return String(data: data, encoding: .utf8)
+            let encoding: String.Encoding
+            if data.starts(with: [0xff, 0xfe, 0x00, 0x00]) || data.starts(with: [0x00, 0x00, 0xfe, 0xff]) {
+                encoding = .utf32
+            } else if data.starts(with: [0xff, 0xfe]) || data.starts(with: [0xfe, 0xff]) {
+                encoding = .utf16
+            } else {
+                encoding = .utf8
+            }
+            return String(data: data, encoding: encoding)
         case nil:
             return nil
         }
@@ -2159,13 +2283,12 @@ final class PluginManager: Sendable {
             in: userPluginsURL,
             prefix: "backup"
         )
-        var didMoveDestinationToBackup = false
-        var shouldRemoveBackup = true
+        var shouldRemoveBackup = false
         
         defer {
-            try? fileManager.removeItem(at: stagingURL)
+            Self.removeDisposablePluginDirectory(stagingURL, fileManager: fileManager)
             if shouldRemoveBackup {
-                try? fileManager.removeItem(at: backupURL)
+                Self.removeDisposablePluginDirectory(backupURL, fileManager: fileManager)
             }
         }
         
@@ -2181,18 +2304,17 @@ final class PluginManager: Sendable {
                 return .failed(.stagedValidationFailed)
             }
 
-            if fileManager.fileExists(atPath: destinationURL.path) {
-                try fileManager.moveItem(at: destinationURL, to: backupURL)
-                didMoveDestinationToBackup = true
-            }
-
             do {
-                try fileManager.moveItem(at: stagingURL, to: destinationURL)
+                if fileManager.fileExists(atPath: destinationURL.path) {
+                    try Self.movePluginPackagePreservingPermissions(at: destinationURL, to: backupURL, fileManager: fileManager)
+                }
+                try Self.movePluginPackagePreservingPermissions(at: stagingURL, to: destinationURL, fileManager: fileManager)
+                shouldRemoveBackup = true
             } catch {
                 shouldRemoveBackup = Self.restoreBackedUpPackageIfNeeded(
                     backupURL: backupURL,
                     destinationURL: destinationURL,
-                    didMoveDestinationToBackup: didMoveDestinationToBackup,
+                    didMoveDestinationToBackup: fileManager.fileExists(atPath: backupURL.path),
                     fileManager: fileManager,
                     logPrefix: "Plugin install"
                 )
@@ -2215,13 +2337,27 @@ final class PluginManager: Sendable {
         maxFileCount: Int = maximumInstallPackageFileCount,
         maxTotalBytes: Int = maximumInstallPackageBytes
     ) -> Bool {
-        guard maxFileCount > 0, maxTotalBytes >= 0 else { return false }
+        packageDirectoriesWithinLimits(
+            packageURL,
+            fileManager: fileManager,
+            maxFileCount: maxFileCount,
+            maxTotalBytes: maxTotalBytes
+        ) != nil
+    }
+
+    private static func packageDirectoriesWithinLimits(
+        _ packageURL: URL,
+        fileManager: FileManager = .default,
+        maxFileCount: Int = maximumInstallPackageFileCount,
+        maxTotalBytes: Int = maximumInstallPackageBytes
+    ) -> [URL]? {
+        guard maxFileCount > 0, maxTotalBytes >= 0 else { return nil }
 
         let rootKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
         guard let rootValues = try? packageURL.resourceValues(forKeys: rootKeys),
               rootValues.isDirectory == true,
               rootValues.isSymbolicLink != true else {
-            return false
+            return nil
         }
 
         let resourceKeys: [URLResourceKey] = [
@@ -2241,43 +2377,78 @@ final class PluginManager: Sendable {
                 return false
             }
         ) else {
-            return false
+            return nil
         }
 
         let rootPath = packageURL.standardizedFileURL.path
         let rootPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        var directories: [URL] = []
         var entryCount = 0
         var totalBytes = 0
 
         for case let itemURL as URL in enumerator {
             guard let values = try? itemURL.resourceValues(forKeys: Set(resourceKeys)),
                   values.isSymbolicLink != true else {
-                return false
+                return nil
             }
 
             let itemPath = itemURL.standardizedFileURL.path
-            guard itemPath.hasPrefix(rootPrefix) else { return false }
+            guard itemPath.hasPrefix(rootPrefix) else { return nil }
             let relativePath = String(itemPath.dropFirst(rootPrefix.count))
             guard !relativePath.isEmpty,
                   relativePath.split(separator: "/").count <= Plugin.maximumPackageTreeDepth,
                   entryCount < maxFileCount else {
-                return false
+                return nil
             }
             entryCount += 1
 
             if values.isDirectory == true {
+                directories.append(itemURL)
                 continue
             }
             guard values.isRegularFile == true,
                   let fileSize = values.fileSize,
                   fileSize >= 0,
                   fileSize <= maxTotalBytes - totalBytes else {
-                return false
+                return nil
             }
             totalBytes += fileSize
         }
 
-        return !enumerationFailed && entryCount > 0
+        return !enumerationFailed && entryCount > 0 ? directories : nil
+    }
+
+    static func movePluginPackagePreservingPermissions(
+        at sourceURL: URL,
+        to destinationURL: URL,
+        fileManager: FileManager = .default
+    ) throws {
+        let attributes = try fileManager.attributesOfItem(atPath: sourceURL.path)
+        guard let permissions = attributes[.posixPermissions] as? Int,
+              permissions & 0o200 == 0 else {
+            try fileManager.moveItem(at: sourceURL, to: destinationURL)
+            return
+        }
+
+        // Older macOS versions require write access to the moved directory itself.
+        try fileManager.setAttributes([.posixPermissions: permissions | 0o200], ofItemAtPath: sourceURL.path)
+        var restoreURL = sourceURL
+        do {
+            try fileManager.moveItem(at: sourceURL, to: destinationURL)
+            restoreURL = destinationURL
+            try fileManager.setAttributes([.posixPermissions: permissions], ofItemAtPath: restoreURL.path)
+        } catch {
+            if restoreURL == destinationURL {
+                do {
+                    try fileManager.moveItem(at: destinationURL, to: sourceURL)
+                    restoreURL = sourceURL
+                } catch {
+                    NSLog("[ActionHalo] Failed to roll back plugin move after restoring permissions failed: \(error.localizedDescription)")
+                }
+            }
+            try? fileManager.setAttributes([.posixPermissions: permissions], ofItemAtPath: restoreURL.path)
+            throw error
+        }
     }
 
     static func restoreBackedUpPackageIfNeeded(
@@ -2295,7 +2466,7 @@ final class PluginManager: Sendable {
         }
 
         do {
-            try fileManager.moveItem(at: backupURL, to: destinationURL)
+            try Self.movePluginPackagePreservingPermissions(at: backupURL, to: destinationURL, fileManager: fileManager)
             return true
         } catch {
             NSLog("[ActionHalo] \(logPrefix) could not restore backup at \(backupURL.path): \(error.localizedDescription)")
@@ -2326,7 +2497,8 @@ final class PluginManager: Sendable {
     func runProcessWithTimeout(
         _ process: Process,
         timeout: TimeInterval,
-        logPrefix: String
+        logPrefix: String,
+        stderrEOFHandler: (@Sendable () -> Void)? = nil
     ) -> Int32? {
         let errorPipe = Pipe()
         let stderrAccumulator = PluginProcessStderrAccumulator()
@@ -2334,6 +2506,8 @@ final class PluginManager: Sendable {
         errorPipe.fileHandleForReading.readabilityHandler = { handle in
             let availableData = handle.availableData
             guard !availableData.isEmpty else {
+                handle.readabilityHandler = nil
+                stderrEOFHandler?()
                 stderrReachedEOF.signal()
                 return
             }

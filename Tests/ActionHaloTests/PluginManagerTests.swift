@@ -146,6 +146,48 @@ final class PluginManagerTests: GlobalStateTestCase {
         
         XCTAssertEqual(available.map(\.id), ["com.test.match", "com.test.nomatch"])
     }
+
+    @MainActor
+    func testChangingOnePluginPreservesUnavailablePluginsEnabledPreferences() async throws {
+        let manager = PluginManager.shared
+        var packages: [URL] = []
+        var originalConfigs: [Data] = []
+        for (index, defaultDisabled) in [false, true, false].enumerated() {
+            let package = manager.userPluginsURL.appendingPathComponent("State\(index).actionhaloext")
+            try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+            let data = Data("""
+            {"name":"State \(index)","identifier":"com.test.state.\(index)","isDefaultDisabled":\(defaultDisabled),"action":{"type":"copy"}}
+            """.utf8)
+            try data.write(to: package.appendingPathComponent("Config.json"))
+            packages.append(package)
+            originalConfigs.append(data)
+        }
+        func reload() async {
+            let loaded = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: manager)
+            manager.reloadPlugins()
+            await fulfillment(of: [loaded], timeout: 3)
+        }
+        await reload()
+        manager.setPluginEnabled("com.test.state.0", enabled: false)
+        manager.setPluginEnabled("com.test.state.1", enabled: true)
+
+        for package in packages.prefix(2) {
+            try Data("{".utf8).write(to: package.appendingPathComponent("Config.json"))
+        }
+        await reload()
+        XCTAssertFalse(manager.plugins.contains { $0.id == "com.test.state.0" || $0.id == "com.test.state.1" })
+        manager.setPluginEnabled("com.test.state.2", enabled: false)
+        XCTAssertTrue(UserDefaults.standard.stringArray(forKey: "disabledPlugins")?.contains("com.test.state.0") == true)
+        XCTAssertTrue(UserDefaults.standard.stringArray(forKey: "userEnabledPlugins")?.contains("com.test.state.1") == true)
+
+        for index in 0..<2 {
+            try originalConfigs[index].write(to: packages[index].appendingPathComponent("Config.json"))
+        }
+        await reload()
+        XCTAssertFalse(try XCTUnwrap(manager.plugins.first { $0.id == "com.test.state.0" }).isEnabled)
+        XCTAssertTrue(try XCTUnwrap(manager.plugins.first { $0.id == "com.test.state.1" }).isEnabled)
+        XCTAssertFalse(try XCTUnwrap(manager.plugins.first { $0.id == "com.test.state.2" }).isEnabled)
+    }
     
     func testPresentationPluginsKeepsAllEnabledPluginsVisible() {
         let manager = PluginManager.shared
@@ -662,6 +704,33 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertEqual(watchableNames, [pluginsURL.lastPathComponent, "Custom.actionhaloext"])
     }
 
+    func testWatchablePluginPathsKeepsNestedParentsWithoutFollowingUnsafePackages() throws {
+        let root = PluginManager.shared.userPluginsURL
+        let package = root.appendingPathComponent("Nested.actionhaloext")
+        let nested = package.appendingPathComponent("scripts/nested")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        let unrelated = package.appendingPathComponent("resources/unrelated")
+        try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: true)
+        try #"{"name":"Nested","identifier":"com.test.nested-watch","action":{"type":"shell-script","script":"scripts/nested/main.sh"}}"#
+            .write(to: package.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+
+        XCTAssertNil(PluginLoader.load(from: package))
+        let safePaths = PluginManager.watchablePluginPaths(userPluginsURL: root)
+        XCTAssertTrue(safePaths.contains { PluginManager.sameFileURL($0, nested) })
+        XCTAssertTrue(safePaths.contains { PluginManager.sameFileURL($0, nested.deletingLastPathComponent()) })
+        XCTAssertFalse(safePaths.contains { PluginManager.sameFileURL($0, unrelated) })
+        XCTAssertFalse(safePaths.contains { PluginManager.sameFileURL($0, unrelated.deletingLastPathComponent()) })
+
+        let outside = try makePluginBundle(identifier: "com.test.outside-watch", name: "Outside")
+        try FileManager.default.createSymbolicLink(
+            at: package.appendingPathComponent("outside"),
+            withDestinationURL: outside
+        )
+        let unsafePaths = PluginManager.watchablePluginPaths(userPluginsURL: root)
+        XCTAssertFalse(unsafePaths.contains { PluginManager.sameFileURL($0, outside) })
+        XCTAssertFalse(unsafePaths.contains { PluginManager.sameFileURL($0, nested) })
+    }
+
     @MainActor
     func testWatchablePluginPathDiscoveryDoesNotRunOnMainThread() async {
         let fileManager = ThreadRecordingFileManager()
@@ -806,6 +875,52 @@ final class PluginManagerTests: GlobalStateTestCase {
             manager.plugins.first(where: { $0.id == identifier })
         )
         XCTAssertNotEqual(reloadedPlugin.packageFingerprint, initialFingerprint)
+    }
+
+    @MainActor
+    func testRestoringMissingNestedScriptAutomaticallyReloadsPlugin() async throws {
+        let manager = PluginManager.shared
+        for (index, scriptName) in ["main.sh", "my script", "my script.bash"].enumerated() {
+            let identifier = "com.test.restored-nested-script.\(index)"
+            let package = manager.userPluginsURL.appendingPathComponent("Nested\(index).actionhaloext")
+            let scripts = package.appendingPathComponent("scripts/nested")
+            try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+            try """
+            {"name":"Nested","identifier":"\(identifier)","action":{"type":"shell-script","script":"scripts/nested/\(scriptName)"}}
+            """.write(to: package.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+            let script = scripts.appendingPathComponent(scriptName)
+            try "exit 0".write(to: script, atomically: true, encoding: .utf8)
+            manager.plugins = [try XCTUnwrap(PluginLoader.load(from: package))]
+            await manager.startWatchingPluginDirectories().value
+            defer { manager.stopWatchingPluginDirectories() }
+
+            let removed = expectation(description: "Deleting the nested script triggers a reload")
+            removed.assertForOverFulfill = false
+            let firstObserver = NotificationCenter.default.addObserver(
+                forName: PluginManager.pluginsReloadedNotification, object: manager, queue: .main
+            ) { _ in
+                if !FileManager.default.fileExists(atPath: script.path) { removed.fulfill() }
+            }
+            try FileManager.default.removeItem(at: script)
+            await fulfillment(of: [removed], timeout: 3)
+            NotificationCenter.default.removeObserver(firstObserver)
+
+            // Finish discovery without the script, so a stale watcher cannot
+            // hide the regression, including filenames treated as legacy inline.
+            await manager.startWatchingPluginDirectories().value
+            let restored = expectation(description: "Restored nested script reloads without a manual reload")
+            restored.assertForOverFulfill = false
+            let secondObserver = NotificationCenter.default.addObserver(
+                forName: PluginManager.pluginsReloadedNotification, object: manager, queue: .main
+            ) { _ in
+                if manager.plugins.contains(where: { $0.id == identifier }),
+                   FileManager.default.fileExists(atPath: script.path) { restored.fulfill() }
+            }
+            defer { NotificationCenter.default.removeObserver(secondObserver) }
+            try "exit 0".write(to: script, atomically: true, encoding: .utf8)
+            await fulfillment(of: [restored], timeout: 3)
+            XCTAssertTrue(manager.plugins.contains { $0.id == identifier })
+        }
     }
 
     @MainActor
@@ -990,6 +1105,82 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertNil(manager.makeTrustedExecutionSnapshot(for: plugin))
     }
 
+    @MainActor
+    func testBundledShellScriptKeepsItsResourcePathsInsideDisposableSnapshot() async throws {
+        let manager = PluginManager.shared
+        let cases: [(String.Encoding, Bool)] = [(.utf8, false), (.utf16, false), (.utf16, true)]
+        for (index, testCase) in cases.enumerated() {
+            let (encoding, readOnly) = testCase
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            temporaryDirectories.append(root)
+            let package = root.appendingPathComponent("Resource Plugin.actionhaloext")
+            let scripts = package.appendingPathComponent("scripts/nested")
+            try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+            try """
+            {"name":"Resources","identifier":"com.test.script-resources.\(index)","action":{"type":"shell-script","script":"scripts/nested/main.sh"}}
+            """.write(to: package.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+            let source = #"""
+            set -e
+            test -f "$(dirname "$0")/helper.txt"
+            printf '%s\n' "${BASH_SOURCE[0]}" > "$ACTIONHALO_TEXT"
+            cat "$(dirname "${BASH_SOURCE[0]}")/helper.txt" >> "$ACTIONHALO_TEXT"
+            printf '\nDONE\n' >> "$ACTIONHALO_TEXT"
+            """#
+            let script = scripts.appendingPathComponent("main.sh")
+            try source.write(to: script, atomically: true, encoding: encoding)
+            try "resource 中文".write(to: scripts.appendingPathComponent("helper.txt"), atomically: true, encoding: .utf8)
+            let packageDirectories = [package, scripts.deletingLastPathComponent(), scripts]
+            if readOnly {
+                for directory in packageDirectories {
+                    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+                }
+            }
+            defer {
+                if readOnly {
+                    for directory in packageDirectories {
+                        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+                    }
+                }
+            }
+            let originalBytes = try Data(contentsOf: script)
+            let plugin = try XCTUnwrap(PluginLoader.load(from: package))
+            let originalFingerprint = try XCTUnwrap(plugin.packageFingerprint)
+            manager.setExecutionTrusted(true, for: plugin)
+            let resultFile = root.appendingPathComponent("result.txt")
+
+            manager.executePlugin(plugin, with: resultFile.path, targetProcessIdentifier: nil, targetFocusedElement: nil)
+            var result = ""
+            for _ in 0..<60 {
+                result = (try? String(contentsOf: resultFile, encoding: .utf8)) ?? ""
+                if result.hasSuffix("\nDONE\n") { break }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            XCTAssertTrue(result.hasSuffix("\nresource 中文\nDONE\n"))
+            let executionPath = try XCTUnwrap(result.split(separator: "\n").first).description
+            XCTAssertTrue(executionPath.hasSuffix("/Resource Plugin.actionhaloext/scripts/nested/main.sh"))
+            XCTAssertNotEqual(executionPath, script.path)
+            let container = URL(fileURLWithPath: executionPath)
+                .deletingLastPathComponent().deletingLastPathComponent()
+                .deletingLastPathComponent().deletingLastPathComponent()
+            XCTAssertTrue(container.lastPathComponent.hasPrefix("ActionHalo-Trusted-Execution-"))
+            for _ in 0..<60 where FileManager.default.fileExists(atPath: container.path) {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: container.path))
+            XCTAssertEqual(try Data(contentsOf: script), originalBytes)
+            XCTAssertEqual(plugin.packageFingerprint, originalFingerprint)
+            XCTAssertTrue(manager.isExecutionTrusted(for: plugin))
+            if readOnly {
+                for directory in packageDirectories {
+                    XCTAssertEqual(
+                        try FileManager.default.attributesOfItem(atPath: directory.path)[.posixPermissions] as? Int,
+                        0o555
+                    )
+                }
+            }
+        }
+    }
+
     func testUserPluginURLFindsLegacyNamedOverrideByIdentifier() throws {
         let manager = PluginManager.shared
         let legacyURL = manager.userPluginsURL.appendingPathComponent("Legacy Name.actionhaloext")
@@ -1029,6 +1220,65 @@ final class PluginManagerTests: GlobalStateTestCase {
         manager.removeDuplicateUserPlugins(for: identifier, keeping: packageURL)
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: packageURL.path))
+    }
+
+    @MainActor
+    func testDeletingDuplicateUserPackagesDoesNotRevealAnotherCopyOrHideBundledDefault() async throws {
+        let manager = PluginManager.shared
+        for selectedBuiltIn in [false, true] {
+            let identifier = "com.test.duplicate-delete.\(selectedBuiltIn)"
+            let source = try makePluginBundle(identifier: identifier, name: "Duplicate")
+            try FileManager.default.createDirectory(at: manager.userPluginsURL, withIntermediateDirectories: true)
+            var userPackages: [URL] = []
+            for name in ["First", "Second"] {
+                let package = manager.userPluginsURL.appendingPathComponent("\(name)-\(selectedBuiltIn).actionhaloext")
+                try FileManager.default.copyItem(at: source, to: package)
+                userPackages.append(package)
+            }
+            let bundled = makePlugin(
+                name: "Bundled", identifier: identifier, order: 0,
+                directory: manager.builtInPluginsURL.appendingPathComponent("Bundled.actionhaloext").path
+            )
+            let selected = selectedBuiltIn ? bundled : try XCTUnwrap(PluginLoader.load(from: userPackages[0]))
+            let loaded = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: manager)
+            try manager.deletePlugin(selected)
+            await fulfillment(of: [loaded], timeout: 3)
+
+            XCTAssertTrue(userPackages.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+            XCTAssertFalse(manager.plugins.contains { $0.id == identifier })
+            XCTAssertFalse(UserDefaults.standard.stringArray(forKey: "deletedBuiltInPlugins")?.contains(identifier) == true)
+            let restored = PluginManager.mergePluginsPreservingExisting(
+                user: PluginLoader.scanDirectory(manager.userPluginsURL),
+                builtIn: selectedBuiltIn ? [bundled] : []
+            ).filter { $0.id == identifier }
+            XCTAssertEqual(restored.count, selectedBuiltIn ? 1 : 0)
+            if selectedBuiltIn { XCTAssertTrue(restored.first === bundled) }
+        }
+    }
+
+    @MainActor
+    func testPartialDuplicateDeletionFailureStillReloadsAndPreservesSelectedPackage() async throws {
+        let manager = PluginManager.shared
+        let identifier = "com.test.partial-delete"
+        let source = try makePluginBundle(identifier: identifier, name: "Selected")
+        try FileManager.default.createDirectory(at: manager.userPluginsURL, withIntermediateDirectories: true)
+        let packages = ["Selected", "A-ReadOnly", "B-Removable"].map {
+            manager.userPluginsURL.appendingPathComponent("\($0).actionhaloext")
+        }
+        for package in packages { try FileManager.default.copyItem(at: source, to: package) }
+        let selected = try XCTUnwrap(PluginLoader.load(from: packages[0]))
+        manager.plugins = [selected]
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: packages[1].path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: packages[1].path) }
+        let loaded = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: manager)
+
+        XCTAssertThrowsError(try manager.deletePlugin(selected))
+        await fulfillment(of: [loaded], timeout: 3)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: packages[0].path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: packages[1].path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: packages[2].path))
+        XCTAssertEqual(manager.plugins.filter { $0.id == identifier }.count, 1)
     }
 
     func testInstallPluginRejectsInvalidPluginPackage() throws {
@@ -1461,6 +1711,50 @@ final class PluginManagerTests: GlobalStateTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: backupURL.path))
     }
 
+    func testRecoveryPreservesRollbackBackupUntilDestinationIsAValidReplacement() throws {
+        let identifier = "com.test.rollback-recovery"
+        let destinationConfigs = [
+            "{invalid JSON",
+            pluginConfig(identifier: "com.test.unrelated", name: "Unrelated"),
+            pluginConfig(identifier: identifier, name: "Replacement"),
+        ]
+        for (index, config) in destinationConfigs.enumerated() {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            temporaryDirectories.append(root)
+            let backup = root.appendingPathComponent(".backup-test.actionhaloext.pending")
+            let destination = root.appendingPathComponent("\(identifier).actionhaloext")
+            try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+            let originalConfig = pluginConfig(identifier: identifier, name: "Original")
+            try originalConfig.write(to: backup.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+            try config.write(to: destination.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+
+            XCTAssertFalse(PluginManager.restoreBackedUpPackageIfNeeded(
+                backupURL: backup,
+                destinationURL: destination,
+                didMoveDestinationToBackup: true,
+                logPrefix: "Recovery regression"
+            ))
+            let result = PluginManager.recoverInterruptedPluginOperations(in: root, minimumAge: 0)
+
+            XCTAssertEqual(result.restoredBackupPackages, 0)
+            XCTAssertEqual(result.removedRedundantBackups, index == 2 ? 1 : 0)
+            XCTAssertEqual(
+                try String(contentsOf: destination.appendingPathComponent("Config.json"), encoding: .utf8),
+                config
+            )
+            if index < 2 {
+                XCTAssertEqual(PluginLoader.load(from: backup)?.id, identifier)
+                XCTAssertEqual(
+                    try String(contentsOf: backup.appendingPathComponent("Config.json"), encoding: .utf8),
+                    originalConfig
+                )
+            } else {
+                XCTAssertFalse(FileManager.default.fileExists(atPath: backup.path))
+            }
+        }
+    }
+
     func testRestoreBackedUpPackagePreservesBackupWhenDestinationAlreadyExists() throws {
         let parentURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         temporaryDirectories.append(parentURL)
@@ -1615,6 +1909,31 @@ final class PluginManagerTests: GlobalStateTestCase {
         )
     }
 
+    func testPluginProcessRunnerStopsObservingEarlyStderrEOFWhileChildContinues() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(directory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let eofCount = LockedState(initialState: 0)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "exec 2>/dev/null; sleep 0.2; printf completed > done.txt"]
+        process.currentDirectoryURL = directory
+
+        let status = PluginManager.shared.runProcessWithTimeout(
+            process,
+            timeout: 3,
+            logPrefix: "Early stderr EOF test",
+            stderrEOFHandler: { eofCount.withLock { $0 += 1 } }
+        )
+
+        XCTAssertEqual(status, 0)
+        XCTAssertEqual(eofCount.withLock { $0 }, 1)
+        XCTAssertEqual(
+            try String(contentsOf: directory.appendingPathComponent("done.txt"), encoding: .utf8),
+            "completed"
+        )
+    }
+
     func testResolvedPluginScriptSourceAllowsBundledFilesAndInlineCode() throws {
         let bundleURL = try makeScriptPluginBundle(
             identifier: "com.test.script-source",
@@ -1670,6 +1989,50 @@ final class PluginManagerTests: GlobalStateTestCase {
             PluginManager.renderedURLString(template: "{text}", text: "https://example.com?a=1&b=2"),
             "https://example.com?a=1&b=2"
         )
+    }
+
+    func testRenderedDirectURLRecognizesLeadingSchemesAndKeepsHostPortShorthand() throws {
+        let cases: [(String, String)] = [
+            ("www.example.com/redirect?next=https://other.example/path", "https://www.example.com/redirect?next=https://other.example/path"),
+            ("www.example.com:8443/path", "https://www.example.com:8443/path"),
+            ("localhost:3000/path", "https://localhost:3000/path"),
+            ("https://example.com/?next=http://other.example", "https://example.com/?next=http://other.example"),
+            ("mailto:person@example.com", "mailto:person@example.com"),
+            ("dict://word", "dict://word"),
+        ]
+        for (text, expected) in cases {
+            let rendered = PluginManager.renderedURLString(template: "{text}", text: text)
+            XCTAssertEqual(rendered, expected)
+            let scheme = try XCTUnwrap(URL(string: rendered)?.scheme?.lowercased())
+            XCTAssertTrue(PluginManager.allowedPluginURLSchemes.contains(scheme))
+        }
+        for unsupported in ["tg://resolve?domain=test", "javascript:alert(1)", "file:///tmp/example"] {
+            let rendered = PluginManager.renderedURLString(template: "{text}", text: unsupported)
+            XCTAssertEqual(rendered, unsupported)
+            let scheme = try XCTUnwrap(URL(string: rendered)?.scheme?.lowercased())
+            XCTAssertFalse(PluginManager.allowedPluginURLSchemes.contains(scheme))
+        }
+    }
+
+    func testLoadedURLTemplateRendersWithTheSameWhitespaceNormalizationAsValidation() throws {
+        let package = try makePluginBundle(identifier: "com.test.padded-url", name: "Padded URL")
+        let template = " \nhttps://example.com/search?q={text}\t "
+        let configData = try JSONSerialization.data(withJSONObject: [
+            "name": "Padded URL",
+            "identifier": "com.test.padded-url",
+            "action": ["type": "url", "url": template],
+        ])
+        try configData.write(to: package.appendingPathComponent("Config.json"))
+        let plugin = try XCTUnwrap(PluginLoader.load(from: package))
+        guard case .url(let loadedTemplate) = plugin.action else {
+            return XCTFail("Expected loaded URL action")
+        }
+        XCTAssertEqual(loadedTemplate, template)
+        XCTAssertTrue(PluginManager.isAllowedPluginURLTemplate(loadedTemplate))
+        let rendered = PluginManager.renderedURLString(template: loadedTemplate, text: "one & two")
+        XCTAssertEqual(rendered, "https://example.com/search?q=one%20%26%20two")
+        XCTAssertEqual(try XCTUnwrap(URL(string: rendered)).scheme, "https")
+        XCTAssertEqual(try Data(contentsOf: package.appendingPathComponent("Config.json")), configData)
     }
 
     func testPluginURLSchemeAllowlistRejectsRiskySchemes() {

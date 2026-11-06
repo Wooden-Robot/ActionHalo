@@ -1,0 +1,53 @@
+<resources>
+    <string name="app_name">ActionHalo</string>
+    <string name="try_title">试试圆环</string>
+    <string name="sample_text">小小的行动，更多的可能。</string>
+    <string name="sample_hint">输入想要搜索、翻译或分享的文字</string>
+    <string name="show_halo">呼出圆环 ↗</string>
+    <string name="gesture_hint">点击图标，或围绕中心滑动后松手执行。首次按圆环外空白处可定位；移得太远取消选择，滑回可继续。</string>
+    <string name="appearance_title">圆环氛围</string>
+    <string name="gta_mode_title">GTA 氛围</string>
+    <string name="gta_mode_body">黑白武器轮盘与朦胧背景。支持时实时虚化原应用画面，圆环保持清晰。默认开启，关闭后使用橙色圆环。</string>
+    <string name="access_title">随选，随用</string>
+    <string name="manual_title">选中文字，就能开始</string>
+    <string name="manual_body">在支持的应用中选中文字，从选文菜单里选择 ActionHalo。也可以通过「分享」将文字发送到 ActionHalo。</string>
+    <string name="auto_title">自动弹出圆环</string>
+    <string name="auto_off">可选功能 · 需要无障碍权限</string>
+    <string name="auto_waiting">等待开启系统无障碍权限</string>
+    <string name="access_settings">管理无障碍权限</string>
+    <string name="access_already_enabled_title">无障碍权限已开启</string>
+    <string name="access_already_enabled_body">无需重复授权。服务当前是否连接，可以在首页查看。仅在需要修改系统授权时，再打开系统无障碍总列表。</string>
+    <string name="access_overview">打开系统总列表</string>
+    <string name="consent_title">让圆环跟随你的选区</string>
+    <string name="consent_body">开启后，ActionHalo 将通过 Android 无障碍权限读取其他应用中的选中文字和位置，以显示操作圆环。密码输入框会被排除。选中文字仅在设备上临时处理，不保存、不记录。只有点击操作后，文字才会交给你选择的网站或应用。\n\n此功能为可选项。选文菜单和分享入口无需此权限。你可以随时在这里关闭自动模式。</string>
+    <string name="consent_accept">同意并继续</string>
+    <string name="cancel">取消</string>
+    <string name="actions_title">你的圆环，你来定</string>
+    <string name="actions_body">长按操作行并拖拽即可排序。点击 ⋮ 可上移、下移，或编辑网站名称、网址与图标；每页数量在「圆环氛围」中修改。</string>
+    <string name="action_manage_description">管理%1$s</string>
+    <string name="action_move_up">上移</string>
+    <string name="action_move_down">下移</string>
+    <string name="edit_action">编辑操作</string>
+    <string name="custom_updated">操作已更新。</string>
+    <string name="action_icon_label">图标</string>
+    <string-array name="action_icon_names">
+        <item>复制</item><item>经纬地球</item><item>链接</item><item>分享</item><item>搜索</item>
+        <item>书本</item><item>胶片</item><item>竖排书籍</item><item>大陆地球</item><item>纸飞机</item>
+        <item>Google</item><item>翻译</item><item>百度</item><item>豆瓣</item>
+    </string-array>
+    <string name="add_action">＋ 添加网站操作</string>
+    <string name="custom_title">新的网站操作</string>
+    <string name="name_hint">名称，例如：维基百科</string>
+    <string name="url_hint">https://zh.wikipedia.org/w/index.php?search={text}</string>
+    <string name="custom_help">填写 http 或 https 网址，用 {text} 代表选中文字。文字会自动编码。</string>
+    <string name="save">保存</string>
+    <string name="delete">删除</string>
+    <string name="remove_title">删除「%1$s」？</string>
+    <string name="custom_saved">操作已保存并启用，超出一页的操作会显示在下一页。</string>
+    <string name="custom_invalid">请填写名称和包含 {text} 的有效 http(s) 网址。</string>
+    <string name="privacy_footer">无需账号，不保存选文历史。\n仅在你选择外部操作时发送对应文字。</string>
+    <string name="empty_text">请先选中或输入一些文字。</string>
+    <string name="text_too_long">请选择较短的文字，最多支持 32,768 个字符。</string>
+    <string name="no_actions">请先在 ActionHalo 中启用至少一个操作。</string>
+    <string name="settings_unavailable">无法打开此设备的无障碍设置。</string>
+</resources>

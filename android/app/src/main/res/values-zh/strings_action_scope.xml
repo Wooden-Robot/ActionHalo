@@ -1,0 +1,14 @@
+<resources>
+    <string name="action_scope_menu">生效 App</string>
+    <string name="action_scope_title">生效 App · %1$s</string>
+    <string name="action_scope_hint">按选中文字的来源 App 决定是否显示此动作，也约束各 App 的独立动作组合。选择“仅指定 App”时，来源未知的分享、手动剪贴板入口不会显示此动作。</string>
+    <string name="action_scope_all">全部 App</string>
+    <string name="action_scope_only">仅指定 App</string>
+    <string name="action_scope_except">排除指定 App</string>
+    <string name="action_scope_search">搜索应用名称或包名</string>
+    <string name="action_scope_count">已选择：%1$d</string>
+    <string name="action_scope_no_apps">没有匹配的 App。已保存但本机不可用的 App 仍会保留在列表中。</string>
+    <string name="action_scope_select_app">请至少勾选一个 App，或选择“全部 App”。</string>
+    <string name="action_scope_invalid">无法保存。最多选择 200 个 App，并确认此动作仍然存在。</string>
+    <string name="action_scope_blocked">此动作不在当前来源 App 中生效。</string>
+</resources>

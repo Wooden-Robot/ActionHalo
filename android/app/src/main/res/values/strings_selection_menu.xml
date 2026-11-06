@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="selection_adjustment_hint">Where selection changes are exposed, the initial selection stays quiet and adjusting it opens the wheel. Menu-only apps show the wheel directly. Selection handles remain usable; GTA background effects start when you operate the wheel.</string>
+    <string name="selection_initial_waiting">Initial selection ignored · adjust the handles or open ActionHalo from the selection menu</string>
+    <string name="selection_open_halo">Open halo</string>
+    <string name="selection_menu_helper_shown">Button mode · Open halo button available</string>
+    <string name="standard_menu_title">Selection menu compatibility</string>
+    <string name="standard_menu_body">A verified Copy menu can show the wheel directly in menu-only apps. Where selection changes are exposed, adjusting the selection opens it. Handles remain usable; only choosing an action copies the exact text.</string>
+    <string name="standard_menu_off">Optional · enable to support more apps</string>
+    <string name="standard_menu_ready">Connected · adjust selected text or use a recognized Copy menu</string>
+    <string name="standard_menu_consent_title">Show the halo for text selection menus?</string>
+    <string name="standard_menu_consent_body">ActionHalo uses accessibility access to recognize Android text selection menus and changes to the selection. Where selection changes are exposed, the initial selection stays quiet and adjusting it opens the wheel. If only a supported Copy menu is available, the wheel appears directly and selection handles remain usable. An Open halo button appears only for apps you explicitly set to button mode. Showing either control does not copy or read text. Only after you choose an action will it press the verified Copy button, read that new text in a visible window, and perform your chosen action.\n\nIt does not scan page or chat contents, monitor the clipboard, or save selected text. Text is only passed to the app or website chosen by your action. You can turn this optional feature off at any time. Apps that do not expose their selection menu still require Share or the clipboard shortcut.</string>
+</resources>

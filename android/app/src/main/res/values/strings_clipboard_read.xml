@@ -1,0 +1,8 @@
+<resources>
+    <string name="clipboard_no_text">Copy some text first, then open the halo again.</string>
+    <string name="clipboard_not_fresh">This copy could not be confirmed. Use the Copied text halo quick setting after copying.</string>
+    <string name="clipboard_unlock">Unlock your phone to use copied text.</string>
+    <string name="diagnostic_copy_received">Telegram Copy detected; opening the halo</string>
+    <string name="diagnostic_copy_shown">Halo shown for the Telegram copy</string>
+    <string name="diagnostic_copy_unconfirmed">No fresh text confirmed for this copy</string>
+</resources>

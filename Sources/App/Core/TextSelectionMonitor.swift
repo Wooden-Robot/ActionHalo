@@ -341,8 +341,14 @@ final class TextSelectionMonitor {
     private var runLoopSource: CFRunLoopSource?
     private var isMonitoring = false
     private(set) var lastMonitoringStartFailure: MonitoringStartFailure?
-    var onPhysicalMouseDown: (() -> Void)?
+    enum MenuMouseDownResult {
+        case noMenu
+        case dismissedMenu
+        case menuClick
+    }
+    var onPhysicalMouseDown: ((CGEventType, NSPoint, CGEventTimestamp) -> MenuMouseDownResult)?
     private var mouseDownLocation: NSPoint?
+    private var mouseDownDismissedMenu = false
     private var mouseDownDragPasteboardChangeCount: Int?
     private var mouseDownWindowSnapshot: FrontmostWindowSnapshot?
     private var mouseDownProcessIdentifier: pid_t?
@@ -396,6 +402,15 @@ final class TextSelectionMonitor {
     nonisolated static let accessibilityPollingDelay: TimeInterval = 0.1
     nonisolated static let observerTimeout: TimeInterval = 0.8
     nonisolated static let duplicateCopyFallbackSuppressionInterval: TimeInterval = 1
+    nonisolated static let pendingInteractionCancelEventMask: NSEvent.EventTypeMask = [
+        .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel
+    ]
+    nonisolated static let emptyInputCancelEventMask = pendingInteractionCancelEventMask.union(.flagsChanged)
+    nonisolated static let mouseEventMask: CGEventMask =
+        (1 << CGEventType.leftMouseDown.rawValue) |
+        (1 << CGEventType.leftMouseUp.rawValue) |
+        (1 << CGEventType.rightMouseDown.rawValue) |
+        (1 << CGEventType.otherMouseDown.rawValue)
     
     private init() {}
 
@@ -428,18 +443,18 @@ final class TextSelectionMonitor {
             return false
         }
         
-        let eventMask: CGEventMask = (1 << CGEventType.leftMouseDown.rawValue) |
-                                      (1 << CGEventType.leftMouseUp.rawValue)
-        
         // Create event tap callback
         let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
             let monitorAddress = UInt(bitPattern: refcon)
             let eventType = type
             let eventLocation = event.location
+            let eventTimestamp = event.timestamp
             if type == .tapDisabledByTimeout ||
                 type == .tapDisabledByUserInput ||
                 type == .leftMouseDown ||
+                type == .rightMouseDown ||
+                type == .otherMouseDown ||
                 type == .leftMouseUp {
                 // Preserve callback order and the event's own coordinates.
                 // Reading NSEvent.mouseLocation after an asynchronous hop can
@@ -465,11 +480,7 @@ final class TextSelectionMonitor {
                         ) else {
                             return
                         }
-                        if eventType == .leftMouseDown {
-                            monitor.handleMouseDown(at: mouseLocation)
-                        } else {
-                            monitor.handleMouseUp(at: mouseLocation)
-                        }
+                        monitor.handleMouseButtonEvent(eventType, at: mouseLocation, timestamp: eventTimestamp)
                     }
                 }
             }
@@ -483,7 +494,7 @@ final class TextSelectionMonitor {
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .listenOnly,
-            eventsOfInterest: eventMask,
+            eventsOfInterest: Self.mouseEventMask,
             callback: callback,
             userInfo: selfPointer
         )
@@ -704,11 +715,25 @@ final class TextSelectionMonitor {
         return true
     }
 
-    private func handleMouseDown(at mouseLocation: NSPoint) {
-        // A new physical gesture supersedes all delayed work from the previous one.
-        onPhysicalMouseDown?()
-        cancelPendingInteraction()
+    func handleMouseButtonEvent(_ type: CGEventType, at point: NSPoint, timestamp: CGEventTimestamp = 0) {
+        switch type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            // Every new click supersedes delayed work, but only left drags select text.
+            let menuResult = onPhysicalMouseDown?(type, point, timestamp) ?? .noMenu
+            cancelPendingInteraction()
+            // Menu clicks must not reopen a popup and cancel the action being executed.
+            if type == .leftMouseDown && menuResult != .menuClick {
+                mouseDownDismissedMenu = menuResult == .dismissedMenu
+                handleMouseDown(at: point)
+            }
+        case .leftMouseUp:
+            handleMouseUp(at: point)
+        default:
+            break
+        }
+    }
 
+    private func handleMouseDown(at mouseLocation: NSPoint) {
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication else { return }
         guard !Self.shouldAlwaysSuppressForFrontmostApp(
             bundleID: frontmostApp.bundleIdentifier,
@@ -772,9 +797,15 @@ final class TextSelectionMonitor {
                         .isInsideFocusedElementBounds ?? false
             }
         }
-        mouseDownPreviouslyAcquiredText = AccessibilityManager.shared.lastSelectionAcquiredText
-        mouseDownPreviousAcquisitionAge = AccessibilityManager.shared.lastSelectionAcquisitionStatus.map {
-            Date().timeIntervalSince($0.timestamp)
+        if let previousAcquisition = AccessibilityManager.shared.lastSelectionAcquisitionStatus,
+           previousAcquisition.matchesContext(
+            processIdentifier: processIdentifier, windowID: windowSnapshot.windowID
+           ) {
+            mouseDownPreviouslyAcquiredText = AccessibilityManager.shared.lastSelectionAcquiredText
+            mouseDownPreviousAcquisitionAge = Date().timeIntervalSince(previousAcquisition.timestamp)
+        } else {
+            mouseDownPreviouslyAcquiredText = nil
+            mouseDownPreviousAcquisitionAge = nil
         }
     }
 
@@ -783,6 +814,7 @@ final class TextSelectionMonitor {
         mouseDownFocusTask = nil
         mouseDownGestureID = nil
         mouseDownLocation = nil
+        mouseDownDismissedMenu = false
         mouseDownDragPasteboardChangeCount = nil
         mouseDownWindowSnapshot = nil
         mouseDownProcessIdentifier = nil
@@ -868,6 +900,7 @@ final class TextSelectionMonitor {
         let distance = sqrt(dx * dx + dy * dy)
         let snapshotAtMouseDown = mouseDownSelectionSnapshot
         let selectionBaseline = mouseDownSelectionBaseline
+        let shouldCheckEmptyInput = !mouseDownDismissedMenu
         
         resetMouseDownState()
         
@@ -897,6 +930,7 @@ final class TextSelectionMonitor {
             self.pendingSelectionBundleID = selectionBundleID
             self.pendingSelectionWindowID = selectionWindowID
             self.pendingSelectionWindowSnapshot = windowSnapshotAtMouseUp
+            startPendingSelectionCancellation(requestID: taskID)
             
             // Read immediately; the resolver retries only when freshness is uncertain.
             DispatchQueue.main.async { [weak self] in
@@ -1005,7 +1039,11 @@ final class TextSelectionMonitor {
                         startedInTextContext: self.pendingSelectionStartedInTextContext,
                         endedInTextContext: self.pendingSelectionEndedInTextContext
                     ), let text = currentSnapshot?.usableText {
-                        AccessibilityManager.shared.recordSelectionAcquisition(source: .accessibility, text: text)
+                        AccessibilityManager.shared.recordSelectionAcquisition(
+                            source: .accessibility, text: text,
+                            processIdentifier: self.pendingSelectionProcessIdentifier,
+                            windowID: self.pendingSelectionWindowID
+                        )
                         self.handleSelectionFound(text: text, location: upLocation, taskID: taskID)
                     } else {
                         AccessibilityManager.shared.recordSelectionAttemptFailure(.accessibilityEmptySelection)
@@ -1027,14 +1065,16 @@ final class TextSelectionMonitor {
                     }
                 }
             }
-        } else {
+        } else if shouldCheckEmptyInput {
             // It was just a click. Check if it's inside a text input field.
             let emptyInputCheckID = UUID()
             pendingEmptyInputCheckID = emptyInputCheckID
             emptyInputCancelMonitor = NSEvent.addGlobalMonitorForEvents(
-                matching: [.keyDown, .rightMouseDown]
-            ) { [weak self] _ in
-                self?.cancelPendingEmptyInputCheck()
+                matching: Self.emptyInputCancelEventMask
+            ) { [weak self] event in
+                guard let self, self.pendingEmptyInputCheckID == emptyInputCheckID,
+                      !AccessibilityManager.isCopyFallbackEvent(event.cgEvent) else { return }
+                self.cancelPendingInteraction()
             }
             pendingEmptyInputTask = Task { @MainActor [weak self] in
                 // Allow macOS to publish focus after the physical click.
@@ -1189,7 +1229,9 @@ final class TextSelectionMonitor {
                 ), let text = currentSnapshot?.usableText {
                     AccessibilityManager.shared.recordSelectionAcquisition(
                         source: .accessibility,
-                        text: text
+                        text: text,
+                        processIdentifier: self.pendingSelectionProcessIdentifier,
+                        windowID: self.pendingSelectionWindowID
                     )
                     self.handleSelectionFound(
                         text: text,
@@ -1273,7 +1315,9 @@ final class TextSelectionMonitor {
                     if copiedTextAllowed {
                         AccessibilityManager.shared.recordSelectionAcquisition(
                             source: .copyFallback,
-                            text: copiedText
+                            text: copiedText,
+                            processIdentifier: self.pendingSelectionProcessIdentifier,
+                            windowID: self.pendingSelectionWindowID
                         )
                         self.handleSelectionFound(
                             text: copiedText,
@@ -1331,7 +1375,9 @@ final class TextSelectionMonitor {
                 let location = NSEvent.mouseLocation
                 AccessibilityManager.shared.recordSelectionAcquisition(
                     source: .accessibility,
-                    text: text
+                    text: text,
+                    processIdentifier: self.pendingSelectionProcessIdentifier,
+                    windowID: self.pendingSelectionWindowID
                 )
                 self.handleSelectionFound(
                     text: text,
@@ -1470,6 +1516,7 @@ final class TextSelectionMonitor {
         pendingSelectionWindowID = nil
         pendingSelectionWindowSnapshot = nil
         cancelPendingEmptyInputCheck()
+        cancelPendingSelectionPresentation()
         
         stopSelectionObserver()
     }
@@ -1578,13 +1625,23 @@ final class TextSelectionMonitor {
         }
 
         pendingPresentationWorkItem = workItem
-        presentationCancelMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.keyDown, .leftMouseDown, .rightMouseDown]
-        ) { [weak self] _ in
-            self?.cancelPendingSelectionPresentation()
-        }
+        startPendingSelectionCancellation(requestID: presentationRequestID)
 
         DispatchQueue.main.async(execute: workItem)
+    }
+
+    private func startPendingSelectionCancellation(requestID: UUID) {
+        presentationCancelMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: Self.pendingInteractionCancelEventMask
+        ) { [weak self] event in
+            guard let self,
+                  self.pendingSelectionTaskID == requestID ||
+                    self.pendingPresentationRequestID == requestID,
+                  !AccessibilityManager.isCopyFallbackEvent(event.cgEvent) else { return }
+            // Keep cancellation active through AX retries and copy fallback;
+            // the fallback's explicitly tagged Cmd+C must not cancel itself.
+            self.cancelPendingInteraction()
+        }
     }
 
     private func cancelPendingSelectionPresentation() {

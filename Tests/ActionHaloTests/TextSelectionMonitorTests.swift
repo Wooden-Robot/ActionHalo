@@ -2,6 +2,15 @@ import XCTest
 @testable import ActionHalo
 
 final class TextSelectionMonitorTests: XCTestCase {
+    func testPendingInteractionCancellationCoversNewInputWithoutCancellingHeldModifiers() {
+        let events = TextSelectionMonitor.pendingInteractionCancelEventMask
+        for input: NSEvent.EventTypeMask in [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel] {
+            XCTAssertTrue(events.contains(input))
+        }
+        XCTAssertFalse(events.contains(.flagsChanged))
+        XCTAssertFalse(events.contains(.leftMouseDragged))
+    }
+
     func testEmptyInputPopupRequiresConfirmedUnprotectedEditableHitWithoutSelection() {
         func assessment(
             protection: AccessibilityManager.ProtectedTextAssessment = .unprotected,
@@ -769,6 +778,33 @@ final class TextSelectionMonitorTests: XCTestCase {
             previouslyAcquiredText: "selected",
             previousAcquisitionAge: 46 * 60
         ))
+    }
+
+    func testRecentSameCopiedTextIsOnlySuppressedWithinItsOriginalProcessAndWindow() {
+        let acquisition = AccessibilityManager.SelectionAcquisitionStatus(
+            source: .copyFallback, timestamp: Date(), textLength: 8,
+            processIdentifier: 42, windowID: 100
+        )
+        let contexts: [(pid_t, CGWindowID, Bool)] = [
+            (42, 100, false), (43, 100, true), (42, 101, true)
+        ]
+        for (processIdentifier, windowID, shouldAccept) in contexts {
+            let sameContext = acquisition.matchesContext(
+                processIdentifier: processIdentifier, windowID: windowID
+            )
+            XCTAssertEqual(TextSelectionMonitor.shouldHandleCopiedDragSelection(
+                copiedText: "selected",
+                snapshotAtMouseDown: nil,
+                currentSnapshot: nil,
+                frontmostBundleID: "ru.keepcoder.Telegram",
+                startedInTextContext: false,
+                endedInTextContext: false,
+                startedInsideFocusedElementBounds: false,
+                endedInsideFocusedElementBounds: false,
+                previouslyAcquiredText: sameContext ? "selected" : nil,
+                previousAcquisitionAge: sameContext ? 0.1 : nil
+            ), shouldAccept)
+        }
     }
 
     func testSelectionContextAllowsTelegramFallbackWithoutFocusedElement() {

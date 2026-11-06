@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="radial_previous_page">上一页操作</string>
+    <string name="radial_next_page">下一页操作</string>
+    <string name="radial_page_description">第 %1$d 页，共 %2$d 页</string>
+    <string name="radial_page_label">%1$d / %2$d</string>
+</resources>

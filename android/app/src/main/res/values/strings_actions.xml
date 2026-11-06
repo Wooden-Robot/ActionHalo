@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="action_copy">Copy</string>
+    <string name="action_google">Google</string>
+    <string name="action_translate">Translate with Google</string>
+    <string name="action_translation_target">en</string>
+    <string name="action_open_url">Open link</string>
+    <string name="action_share">Share</string>
+    <string name="action_baidu">Baidu</string>
+    <string name="action_unknown">This action no longer exists.</string>
+    <string name="action_title_required">Enter a name for this action.</string>
+    <string name="action_invalid_template">Use an HTTP or HTTPS URL with {text} in its path or query, for example https://www.google.com/search?q={text}.</string>
+    <string name="action_invalid_url">Select an HTTP or HTTPS link, or a domain such as example.com.</string>
+    <string name="action_no_text">Select some text first.</string>
+    <string name="action_copied">Text copied</string>
+    <string name="action_no_app">No app is available to handle this action.</string>
+    <string name="action_not_allowed">Android did not allow this action.</string>
+</resources>

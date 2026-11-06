@@ -204,7 +204,7 @@
 "A plugin with this identifier already exists" = "A plugin with this identifier already exists";
 "Failed to write plugin: %@" = "Failed to write plugin: %@";
 "Core Plugin Cannot Be Deleted" = "Core Plugin Cannot Be Deleted";
-"This is a core system plugin and cannot be completely deleted. If you don't want to use it, please click the circle on the left to disable it." = "This is a core system plugin and cannot be completely deleted. If you don't want to use it, please click the circle on the left to disable it.";
+"This is a core system plugin and cannot be completely deleted. If you don't want to use it, please click the circle on the left to disable it." = "This is a core system plugin and cannot be completely deleted. To disable it, clear its checkbox in the plugin list.";
 "Delete Built-in Plugin?" = "Delete Built-in Plugin?";
 "Restore Default?" = "Restore Default?";
 "Delete Plugin?" = "Delete Plugin?";
@@ -279,6 +279,7 @@
 "No recent selection failure" = "No recent selection failure";
 "%@ · %@ · %d chars" = "%@ · %@ · %d chars";
 "%@ · %@" = "%@ · %@";
+"Auto trigger is disabled" = "Auto trigger is disabled";
 "Accessibility permission is missing" = "Accessibility permission is missing";
 "ActionHalo is disabled in the current app" = "ActionHalo is disabled in the current app";
 "ActionHalo is intentionally suppressed for the current frontmost app" = "ActionHalo is intentionally suppressed for the current frontmost app";
@@ -361,3 +362,5 @@
 "ENTER · SELECT  ESC · CLOSE" = "ENTER · SELECT  ESC · CLOSE";
 "Use arrow keys or Tab to choose an action, Enter to run it, and Escape to close." = "Use arrow keys or Tab to choose an action, Enter to run it, and Escape to close.";
 "Another plugin operation is in progress. Please try again shortly." = "Another plugin operation is in progress. Please try again shortly.";
+"Plugin Operation in Progress" = "Plugin Operation in Progress";
+"Wait for the current plugin save, installation, or deletion to finish before quitting or restarting ActionHalo." = "Wait for the current plugin save, installation, or deletion to finish before quitting or restarting ActionHalo.";

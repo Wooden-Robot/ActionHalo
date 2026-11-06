@@ -53,6 +53,27 @@ final class AppDelegateTests: XCTestCase {
         ))
     }
 
+    func testDisablingInvalidatesSuspendedManualInteraction() async {
+        let delegate = AppDelegate()
+        let generation = delegate.beginNewInteraction()
+        var resume: CheckedContinuation<Void, Never>?
+        let suspendedResult = Task { @MainActor in
+            await withCheckedContinuation { resume = $0 }
+            return AppDelegate.isInteractionCurrent(
+                expectedGeneration: generation,
+                currentGeneration: delegate.interactionGeneration
+            )
+        }
+        while resume == nil { await Task.yield() }
+
+        delegate.setEnabled(false)
+        resume?.resume()
+
+        let accepted = await suspendedResult.value
+        XCTAssertFalse(accepted, "Disabling must invalidate work that was already awaiting AX or copy completion")
+        XCTAssertGreaterThan(delegate.interactionGeneration, generation)
+    }
+
     func testPastePopupCompletionRejectsCancelledReplacedAndSupersededRequests() {
         let requestID = UUID()
         XCTAssertTrue(AppDelegate.shouldCompletePastePopupRequest(
@@ -114,6 +135,80 @@ final class AppDelegateTests: XCTestCase {
     func testEventTapFailureOffersAccessibilityReset() {
         XCTAssertFalse(AppDelegate.shouldOfferAccessibilityPermissionReset(for: .accessibilityPermissionMissing))
         XCTAssertTrue(AppDelegate.shouldOfferAccessibilityPermissionReset(for: .eventTapCreationFailed))
+    }
+
+    @MainActor
+    private final class PermissionRecoveryProbe {
+        var permissionGranted = false
+        var startupSucceeds = false
+        var startupAttempts = 0
+        var recoveryNotices = 0
+    }
+
+    func testPermissionRecoveryRetriesAfterNextGrantAndOnlyReportsSuccessfulStartup() throws {
+        let delegate = AppDelegate()
+        let probe = PermissionRecoveryProbe()
+        delegate.waitAndRecoverPermission(
+            accessibilityEnabled: { probe.permissionGranted },
+            restartServices: {
+                probe.startupAttempts += 1
+                return probe.startupSucceeds
+            },
+            didRecover: { probe.recoveryNotices += 1 }
+        )
+        let timer = try XCTUnwrap(delegate.permissionRecoveryTimer)
+        defer { timer.invalidate() }
+
+        timer.fire()
+        XCTAssertEqual(probe.startupAttempts, 0)
+        probe.permissionGranted = true
+        timer.fire()
+        XCTAssertEqual(probe.startupAttempts, 1)
+        XCTAssertEqual(probe.recoveryNotices, 0)
+        XCTAssertTrue(timer.isValid)
+        timer.fire()
+        timer.fire()
+        XCTAssertEqual(probe.startupAttempts, 1)
+
+        probe.permissionGranted = false
+        timer.fire()
+        probe.permissionGranted = true
+        probe.startupSucceeds = true
+        timer.fire()
+        XCTAssertEqual(probe.startupAttempts, 2)
+        XCTAssertEqual(probe.recoveryNotices, 1)
+        XCTAssertFalse(timer.isValid)
+        XCTAssertNil(delegate.permissionRecoveryTimer)
+    }
+
+    func testExplicitPermissionRecoveryRequestAllowsRetryWithoutDuplicatingTimer() throws {
+        let delegate = AppDelegate()
+        let probe = PermissionRecoveryProbe()
+        let beginRecovery = {
+            delegate.waitAndRecoverPermission(
+                accessibilityEnabled: { true },
+                restartServices: {
+                    probe.startupAttempts += 1
+                    return probe.startupSucceeds
+                },
+                didRecover: { probe.recoveryNotices += 1 }
+            )
+        }
+        beginRecovery()
+        let timer = try XCTUnwrap(delegate.permissionRecoveryTimer)
+        defer { timer.invalidate() }
+        timer.fire()
+        timer.fire()
+        XCTAssertEqual(probe.startupAttempts, 1)
+        XCTAssertEqual(probe.recoveryNotices, 0)
+
+        probe.startupSucceeds = true
+        beginRecovery()
+        XCTAssertTrue(delegate.permissionRecoveryTimer === timer)
+        timer.fire()
+        XCTAssertEqual(probe.startupAttempts, 2)
+        XCTAssertEqual(probe.recoveryNotices, 1)
+        XCTAssertNil(delegate.permissionRecoveryTimer)
     }
 
     func testAccessibilityResetArgumentsUseActionHaloBundleID() {
@@ -777,6 +872,106 @@ final class AppDelegateGlobalStateTests: GlobalStateTestCase {
     override func setUp() {
         super.setUp()
         isolateStandardUserDefaults(keys: [PluginManager.perAppDisabledPluginsKey])
+    }
+
+    func testDisablingCancelsPermissionRecoveryWithoutRestartOrSuccessNotice() throws {
+        let delegate = AppDelegate()
+        let callbackCount = LockedState(initialState: 0)
+        delegate.waitAndRecoverPermission(
+            accessibilityEnabled: { true },
+            restartServices: {
+                callbackCount.withLock { $0 += 1 }
+                return true
+            },
+            didRecover: { callbackCount.withLock { $0 += 1 } }
+        )
+        let timer = try XCTUnwrap(delegate.permissionRecoveryTimer)
+        delegate.setEnabled(false)
+        XCTAssertFalse(timer.isValid)
+        XCTAssertNil(delegate.permissionRecoveryTimer)
+        timer.fire()
+        XCTAssertEqual(callbackCount.withLock { $0 }, 0)
+    }
+
+    func testQuitIsCancelledDuringBackgroundPluginMutationAndCanRetryAfterCompletion() throws {
+        let acquired = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let completed = DispatchSemaphore(value: 0)
+        let lockAcquired = LockedState(initialState: false)
+        DispatchQueue.global().async {
+            let ownsLock = PluginManager.tryBeginPluginMutation()
+            lockAcquired.withLock { $0 = ownsLock }
+            acquired.signal()
+            guard ownsLock else {
+                completed.signal()
+                return
+            }
+            _ = release.wait(timeout: .now() + 5)
+            PluginManager.endPluginMutation()
+            completed.signal()
+        }
+        defer { release.signal() }
+        XCTAssertEqual(acquired.wait(timeout: .now() + 2), .success)
+        XCTAssertTrue(lockAcquired.withLock { $0 })
+
+        let delegate = AppDelegate()
+        var alertCount = 0
+        let reply = delegate.applicationShouldTerminate(NSApplication.shared) { alert in
+            alertCount += 1
+            XCTAssertEqual(alert.messageText, "Plugin Operation in Progress".localized)
+            return .alertSecondButtonReturn
+        }
+        XCTAssertEqual(reply, .terminateCancel)
+        XCTAssertEqual(alertCount, 1)
+
+        release.signal()
+        XCTAssertEqual(completed.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared) { _ in
+            XCTFail("No warning should remain after the transaction finishes")
+            return .alertFirstButtonReturn
+        }, .terminateNow)
+    }
+
+    func testQuitRejectsHiddenCleanEditorWhilePersistenceCompletionIsPending() throws {
+        let manager = PluginManager.shared
+        let previousRoot = manager.userPluginsDirectoryOverride
+        let previousPlugins = manager.plugins
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let package = root.appendingPathComponent("QuitGuard.actionhaloext")
+        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+        try #"{"name":"Quit Guard","identifier":"com.test.quit-guard","action":{"type":"copy"}}"#
+            .write(to: package.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+        manager.userPluginsDirectoryOverride = root
+        defer {
+            manager.userPluginsDirectoryOverride = previousRoot
+            manager.plugins = previousPlugins
+            try? FileManager.default.removeItem(at: root)
+        }
+        let plugin = try XCTUnwrap(PluginLoader.load(from: package))
+        let editor = PluginEditorWindow(plugin: plugin)
+        defer { editor.close() }
+        XCTAssertFalse(editor.isVisible)
+        XCTAssertFalse(editor.hasUnsavedChanges)
+        editor.deletePluginAfterConfirmation(plugin)
+        XCTAssertTrue(editor.isPersisting)
+
+        let delegate = AppDelegate()
+        var alertCount = 0
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared) { alert in
+            alertCount += 1
+            XCTAssertEqual(alert.messageText, "Plugin Operation in Progress".localized)
+            return .alertFirstButtonReturn
+        }, .terminateCancel)
+        XCTAssertEqual(alertCount, 1)
+
+        let finished = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                MainActor.assumeIsolated { !editor.isPersisting }
+            },
+            object: nil
+        )
+        wait(for: [finished], timeout: 5)
+        XCTAssertFalse(editor.isPersisting)
     }
 
     func testEmptyInputPastePluginRespectsPerAppDisabledOverrides() throws {

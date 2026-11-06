@@ -3,6 +3,26 @@ import XCTest
 
 final class AccessibilityManagerTests: XCTestCase {
     @MainActor
+    func testCopyFallbackMarkerSurvivesNSEventBridgeWithoutTreatingUnmarkedCommandCAsSynthetic() throws {
+        let source = CGEventSource(stateID: .hidSystemState)
+        for isKeyDown in [true, false] {
+            let event = try XCTUnwrap(CGEvent(
+                keyboardEventSource: source, virtualKey: 8, keyDown: isKeyDown
+            ))
+            event.flags = .maskCommand
+            let unmarked = try XCTUnwrap(NSEvent(cgEvent: event))
+            XCTAssertFalse(AccessibilityManager.isCopyFallbackEvent(unmarked.cgEvent))
+
+            event.setIntegerValueField(
+                .eventSourceUserData, value: AccessibilityManager.copyFallbackEventMarker
+            )
+            let marked = try XCTUnwrap(NSEvent(cgEvent: event))
+            XCTAssertTrue(AccessibilityManager.isCopyFallbackEvent(marked.cgEvent))
+        }
+        XCTAssertFalse(AccessibilityManager.isCopyFallbackEvent(nil))
+    }
+
+    @MainActor
     func testAccessibilityScreenPointUsesPrimaryGlobalCoordinates() throws {
         guard let primaryScreen = NSScreen.screens.first else {
             throw XCTSkip("No main screen available")
@@ -1201,7 +1221,7 @@ final class AccessibilityManagerTests: XCTestCase {
     func testCancelledCopyPollingDoesNotRestoreOverUsersFirstNewCopy() throws {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
         let initialState = AccessibilityManager.PasteboardState(
             changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
@@ -1214,7 +1234,7 @@ final class AccessibilityManagerTests: XCTestCase {
         // Synthetic Cmd+C produced nothing. A new gesture cancels the request,
         // and the user's physical copy is the first new clipboard generation.
         coordinator.cancelRequest(requestID)
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("new user copy", forType: .string))
         let currentState = AccessibilityManager.PasteboardState(
             changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
@@ -1240,14 +1260,14 @@ final class AccessibilityManagerTests: XCTestCase {
     func testCopyPollingDoesNotClaimClipboardChangeFromDifferentTarget() throws {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
         let initialState = AccessibilityManager.PasteboardState(
             changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
         )
         let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(from: pasteboard))
         defer { snapshot.discardTemporaryFiles() }
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("copied in another application", forType: .string))
         let currentState = AccessibilityManager.PasteboardState(
             changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
@@ -1273,14 +1293,14 @@ final class AccessibilityManagerTests: XCTestCase {
     func testCopyPollingRechecksCancellationAfterTargetValidation() {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
         let initialState = AccessibilityManager.PasteboardState(
             changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
         )
         let coordinator = CopyFallbackRequestCoordinator()
         let requestID = coordinator.beginRequest()
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("new user copy", forType: .string))
 
         let observation = AccessibilityManager.pollPasteboardForCopiedText(
@@ -1300,12 +1320,12 @@ final class AccessibilityManagerTests: XCTestCase {
     func testCopyPollingWaitsForTextInPreviouslyUnclaimedGeneration() {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
         let initialState = AccessibilityManager.PasteboardState(
             changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
         )
-        let copyGeneration = pasteboard.clearContents()
+        let copyGeneration = pasteboard.declareTypes([.string], owner: nil)
         var contextCheckCount = 0
 
         let observation = AccessibilityManager.pollPasteboardForCopiedText(
@@ -1333,12 +1353,12 @@ final class AccessibilityManagerTests: XCTestCase {
         for suppliesTextAgain in [false, true] {
             let pasteboard = NSPasteboard.withUniqueName()
             defer { pasteboard.releaseGlobally() }
-            pasteboard.clearContents()
+            pasteboard.declareTypes([.string], owner: nil)
             XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
             let initialState = AccessibilityManager.PasteboardState(
                 changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
             )
-            pasteboard.clearContents()
+            pasteboard.declareTypes([.string], owner: nil)
             XCTAssertTrue(pasteboard.setString("selected text", forType: .string))
             let claimedState = AccessibilityManager.PasteboardState(
                 changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
@@ -1370,7 +1390,7 @@ final class AccessibilityManagerTests: XCTestCase {
     func testCopyPollingConfirmedBeforeCancellationStillRestoresOriginalClipboard() throws {
         let pasteboard = NSPasteboard.withUniqueName()
         defer { pasteboard.releaseGlobally() }
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("original clipboard", forType: .string))
         let initialState = AccessibilityManager.PasteboardState(
             changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
@@ -1379,7 +1399,7 @@ final class AccessibilityManagerTests: XCTestCase {
         defer { snapshot.discardTemporaryFiles() }
         let coordinator = CopyFallbackRequestCoordinator()
         let requestID = coordinator.beginRequest()
-        pasteboard.clearContents()
+        pasteboard.declareTypes([.string], owner: nil)
         XCTAssertTrue(pasteboard.setString("selected text", forType: .string))
         let copiedState = AccessibilityManager.PasteboardState(
             changeCount: pasteboard.changeCount, string: pasteboard.string(forType: .string)
@@ -1847,7 +1867,7 @@ final class AccessibilityManagerTests: XCTestCase {
         let payload = Data(repeating: 0x5A, count: 32)
         if let name = ProcessInfo.processInfo.environment[environmentKey] {
             let pasteboard = NSPasteboard(name: NSPasteboard.Name(name))
-            pasteboard.clearContents()
+            pasteboard.declareTypes([type], owner: nil)
             XCTAssertTrue(pasteboard.setData(payload, forType: type))
             let snapshot = try XCTUnwrap(AccessibilityManager.capturePasteboardSnapshot(
                 from: pasteboard,
@@ -1855,7 +1875,7 @@ final class AccessibilityManagerTests: XCTestCase {
             ))
             defer { snapshot.discardTemporaryFiles() }
             XCTAssertNotNil(snapshot.temporaryDirectoryURL)
-            pasteboard.clearContents()
+            pasteboard.declareTypes([.string], owner: nil)
             XCTAssertTrue(pasteboard.setString("temporary copy", forType: .string))
             XCTAssertTrue(AccessibilityManager.restorePasteboardSnapshot(snapshot, to: pasteboard))
             // Do not read the restored data here: that would materialize a lazy provider.

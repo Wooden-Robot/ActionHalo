@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="radial_previous_page">Previous actions</string>
+    <string name="radial_next_page">Next actions</string>
+    <string name="radial_page_description">Page %1$d of %2$d</string>
+    <string name="radial_page_label">%1$d / %2$d</string>
+</resources>

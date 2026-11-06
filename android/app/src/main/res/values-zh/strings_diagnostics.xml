@@ -1,0 +1,22 @@
+<resources>
+    <string name="auto_disconnected">系统权限已开，但服务尚未连接。请在无障碍设置中关闭后重新开启 ActionHalo。</string>
+    <string name="auto_connected">无障碍服务已连接 · 请到其他应用选中文字测试</string>
+    <string name="diagnostic_summary">本次检查收到选文事件：%1$d 次\n最近结果：%2$s</string>
+    <string name="diagnostic_ranges">非空范围：事件 %1$d 次 · 控件 %2$d 次\n最近非空范围：事件 %3$s · 控件 %4$s</string>
+    <string name="diagnostic_range_unavailable">未提供</string>
+    <string name="diagnostic_test">检查自动弹出</string>
+    <string name="diagnostic_test_hint">检查会清零计数并显示示例圆环。关闭圆环后，到浏览器选中文字，等一秒再返回这里查看结果。仅保留次数和范围数字，不记录选中文字或浏览历史。</string>
+    <string name="diagnostic_test_unavailable">请先开启自动弹出，并在系统设置中连接无障碍服务。</string>
+    <string name="diagnostic_waiting">尚未收到选文事件</string>
+    <string name="diagnostic_received">已收到选文事件，等待选区稳定</string>
+    <string name="diagnostic_no_source">目标应用未提供文字控件</string>
+    <string name="diagnostic_no_text">目标应用未提供可读取文字</string>
+    <string name="diagnostic_no_range">目标应用未提供有效选文范围</string>
+    <string name="diagnostic_filtered">已排除密码、敏感或不可见内容</string>
+    <string name="diagnostic_collapsed">选区已取消</string>
+    <string name="diagnostic_stale">显示前选区已改变</string>
+    <string name="diagnostic_window_changed">显示前活动窗口发生改变</string>
+    <string name="diagnostic_shown">无障碍圆环已显示</string>
+    <string name="diagnostic_test_shown">示例圆环已显示；请到其他应用选文测试</string>
+    <string name="diagnostic_blocked">系统拒绝显示无障碍圆环</string>
+</resources>

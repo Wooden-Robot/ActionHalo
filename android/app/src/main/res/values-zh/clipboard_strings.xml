@@ -1,0 +1,22 @@
+<resources>
+    <string name="clipboard_entry_title">Telegram 与更多应用</string>
+    <string name="telegram_copy_popup_title">Telegram 选文圆环</string>
+    <string name="telegram_copy_popup_off">可选功能 · 开启后需要无障碍权限</string>
+    <string name="telegram_copy_popup_ready">服务已连接 · 选好消息文字后点「打开圆环」</string>
+    <string name="telegram_copy_consent_title">选中 Telegram 文字后显示圆环？</string>
+    <string name="telegram_copy_consent_body">ActionHalo 会通过无障碍权限识别 Telegram 的选文菜单。支持选区变化时，初次选中保持静默，调整后显示圆环；没有这些变化但提供可用复制菜单时，直接显示圆环，选文手柄仍可调整。只有主动将 Telegram 设为按钮模式时，才显示「打开圆环」按钮。显示按钮或圆环时不会复制或读取文字；只有你选择操作后，才会让 Telegram 复制所选文字，再临时读取并执行你选的操作。其他提示暂时打断时，会保留待执行操作，你可以继续或取消。\n\n只检查选文菜单控件，不扫描或保存聊天正文，不在后台监听剪贴板。文字仅在本机临时处理，只会交给你所选操作对应的应用或网站。\n\n此功能为可选项，取决于 Telegram 和系统是否提供复制控件。你可以随时关闭，下拉快捷按钮无需无障碍权限。</string>
+    <string name="clipboard_entry_body">识别到 Telegram 等应用的复制菜单后直接显示圆环，选文手柄仍可调整。选择动作后才复制并执行；也可正常复制后使用下拉快捷面板中的「复制后圆环」。</string>
+    <string name="clipboard_add_tile">添加快捷按钮</string>
+    <string name="clipboard_use_text">使用已复制文字</string>
+    <string name="clipboard_tile_label">复制后圆环</string>
+    <string name="clipboard_tile_added">快捷按钮已添加。复制文字后，到下拉快捷面板点击使用。</string>
+    <string name="clipboard_tile_already_added">「复制后圆环」已在下拉快捷面板中。</string>
+    <string name="clipboard_tile_not_added">暂未添加，你可以稍后在下拉快捷面板中添加。</string>
+    <string name="clipboard_tile_manual_title">添加下拉快捷按钮</string>
+    <string name="clipboard_tile_manual_body">从屏幕顶部向下滑动两次，展开快捷面板。点击「编辑」或铅笔图标，将「%1$s」拖到已启用的按钮区域。\n\n复制文字后，点击这个按钮即可呼出圆环。不同设备的编辑入口可能略有不同。</string>
+    <string name="clipboard_open_unavailable">暂时无法呼出圆环，请到 ActionHalo 点击「使用已复制文字」。</string>
+    <!-- 保留供旧版复制助手诊断使用；当前流程直接显示圆环。 -->
+    <string name="telegram_copy_assist_failed">复制入口已失效，请重新选中文字。</string>
+    <string name="copy_probe_helper_shown">已在 Telegram 菜单旁显示复制助手</string>
+    <string name="copy_probe_helper_tapped">已点击助手，正在请求 Telegram 执行复制</string>
+</resources>

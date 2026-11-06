@@ -7,13 +7,17 @@ final class DiagnosticsWindowTests: XCTestCase {
         let acquisitionStatus = AccessibilityManager.SelectionAcquisitionStatus(
             source: .copyFallback,
             timestamp: now.addingTimeInterval(-1),
-            textLength: 11
+            textLength: 11,
+            processIdentifier: 100,
+            windowID: 10
         )
 
         let text = DiagnosticsWindow.diagnosticContextText(
             accessibilitySelectedText: "",
             lastSelectionAcquiredText: "copied text",
             acquisitionStatus: acquisitionStatus,
+            currentProcessIdentifier: 100,
+            currentWindowID: 10,
             now: now
         )
 
@@ -25,17 +29,47 @@ final class DiagnosticsWindowTests: XCTestCase {
         let acquisitionStatus = AccessibilityManager.SelectionAcquisitionStatus(
             source: .copyFallback,
             timestamp: now.addingTimeInterval(-10),
-            textLength: 11
+            textLength: 11,
+            processIdentifier: 100,
+            windowID: 10
         )
 
         let text = DiagnosticsWindow.diagnosticContextText(
             accessibilitySelectedText: "",
             lastSelectionAcquiredText: "copied text",
             acquisitionStatus: acquisitionStatus,
+            currentProcessIdentifier: 100,
+            currentWindowID: 10,
             now: now
         )
 
         XCTAssertEqual(text, "")
+    }
+
+    func testDiagnosticContextNeverBorrowsFallbackTextFromAnotherAppOrWindow() {
+        let now = Date()
+        for (acquiredPID, acquiredWindow, currentPID, currentWindow): (pid_t?, CGWindowID?, pid_t?, CGWindowID?) in [
+            (100, 10, 200, 20),
+            (100, 10, 100, 20),
+            (100, 10, nil, nil),
+            (nil, nil, 100, 10),
+            (100, nil, 100, nil)
+        ] {
+            let status = AccessibilityManager.SelectionAcquisitionStatus(
+                source: .copyFallback, timestamp: now, textLength: 11,
+                processIdentifier: acquiredPID, windowID: acquiredWindow
+            )
+            XCTAssertEqual(DiagnosticsWindow.diagnosticContextText(
+                accessibilitySelectedText: "", lastSelectionAcquiredText: "other context",
+                acquisitionStatus: status, currentProcessIdentifier: currentPID,
+                currentWindowID: currentWindow, now: now
+            ), "")
+            XCTAssertEqual(DiagnosticsWindow.diagnosticContextText(
+                accessibilitySelectedText: "current selection", lastSelectionAcquiredText: "other context",
+                acquisitionStatus: status, currentProcessIdentifier: currentPID,
+                currentWindowID: currentWindow, now: now
+            ), "current selection")
+        }
     }
 
     func testPluginPresentationStateTreatsContextFilteredPluginAsShownButDisabled() throws {
@@ -68,6 +102,19 @@ final class DiagnosticsWindowTests: XCTestCase {
 
         XCTAssertFalse(readiness.isReady)
         XCTAssertEqual(readiness.blockers, [.frontmostAppSuppressed, .noSelectionContext])
+    }
+
+    func testDisabledAutoTriggerCannotReportReadyEvenWithUsableSelection() {
+        let readiness = DiagnosticsWindow.readinessState(
+            isEnabled: false,
+            accessibilityEnabled: true,
+            isAppExcluded: false,
+            isFrontmostAppSuppressed: false,
+            selectedText: "selected text",
+            emptyInputShortcutReady: false
+        )
+        XCTAssertFalse(readiness.isReady)
+        XCTAssertEqual(readiness.blockers, [.autoTriggerDisabled])
     }
 
     private func makePlugin(

@@ -823,6 +823,7 @@ final class RadialMenuView: NSView {
               actionGate.consume() else { return false }
 
         let item = menuItems[index]
+        highlightItem(at: index)
         endInteractionSession()
         flashSector(at: index) { [weak self] in
             self?.onItemSelected?(item)

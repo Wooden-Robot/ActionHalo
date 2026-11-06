@@ -1,0 +1,25 @@
+<resources>
+    <string name="pause_title">临时暂停自动弹出</string>
+    <string name="pause_ready">自动弹出未暂停。分享和手动读取剪贴板仍可随时使用。</string>
+    <string name="pause_remaining">已暂停 · %1$d 分钟后恢复</string>
+    <string name="pause_ten_minutes">暂停 10 分钟</string>
+    <string name="pause_one_hour">暂停 1 小时</string>
+    <string name="pause_resume">立即恢复</string>
+    <string name="pause_tile_label">自动弹出</string>
+    <string name="pause_tile_paused">已暂停弹出 · 点击恢复</string>
+    <string name="pause_add_tile">添加暂停快捷开关</string>
+    <string name="pause_tile_manual">编辑系统快捷设置，添加「自动弹出」。点击选择暂停时长，再次点击即可恢复。</string>
+    <string name="app_rules_trigger">触发方式</string>
+    <string name="app_rules_default">跟随全局设置</string>
+    <string name="app_rules_auto">调整选区后自动弹出</string>
+    <string name="app_rules_button">显示「打开圆环」按钮</string>
+    <string name="app_rules_off">停用自动触发入口</string>
+    <string name="app_rules_actions_count">自定义动作：%1$d 个</string>
+    <string name="app_rules_actions_global">使用全局动作和顺序</string>
+    <string name="app_rules_actions_title">动作和排序</string>
+    <string name="app_rules_order_hint">勾选动作后长按拖拽排序，也可使用上下箭头。确认后保存修改。</string>
+    <string name="app_rules_move_up">将%1$s上移</string>
+    <string name="app_rules_move_down">将%1$s下移</string>
+    <string name="app_rules_consent_hint">原有同意设置仍然有效。自动选文需同意读取选文；仅提供选文菜单的应用需开启对应菜单兼容开关；不提供选文信息的应用需要手动入口。</string>
+    <string name="app_rules_remove">恢复全局设置</string>
+</resources>

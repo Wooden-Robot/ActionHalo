@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="action_douban_book">豆瓣读书</string>
+    <string name="action_douban_movie">豆瓣电影</string>
+    <string name="action_neodb">NeoDB 书影音</string>
+    <string name="action_neodb_book">NeoDB 书籍</string>
+    <string name="action_github">GitHub 搜索</string>
+    <string name="action_telegram">Telegram 搜索</string>
+    <string name="action_telegram_unavailable">无法打开 Telegram，请安装或启用官方客户端并登录后重试。</string>
+</resources>

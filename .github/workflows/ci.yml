@@ -13,7 +13,7 @@ permissions:
 jobs:
   test:
     if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 30
 
     steps:
@@ -47,9 +47,6 @@ jobs:
 
       - name: Test Sparkle update gate
         run: bash Tests/verify_sparkle_update_gate.sh
-
-      - name: Test legacy migration notice gate
-        run: bash Tests/verify_legacy_migration_appcast_gate.sh
 
       - name: Test GitHub Release gate
         run: bash Tests/verify_github_release_gate.sh

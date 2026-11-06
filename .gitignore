@@ -65,3 +65,7 @@ Icon
 *.dll
 *.dylib
 *.a
+
+# Android build artifacts
+*.apk
+/ActionHalo-*-SHA256SUMS.txt

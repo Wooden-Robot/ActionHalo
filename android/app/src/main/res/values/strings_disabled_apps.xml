@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="disabled_apps_title">Disabled apps</string>
+    <string name="disabled_apps_hint">Checked apps will not show the automatic wheel or helper button when you select or copy text.</string>
+    <string name="disabled_apps_search">Search app name or package</string>
+    <string name="disabled_apps_count">Disabled apps: %1$d</string>
+    <string name="disabled_apps_restore_hint">Uncheck an app to restore global trigger settings. Its custom actions and order are kept. You can still open ActionHalo manually from Share, the text menu, or the clipboard shortcut.</string>
+    <string name="disabled_apps_no_apps">No matching apps</string>
+    <string name="disabled_apps_invalid">Could not save. App rules support up to 200 apps in total. Remove some rules and try again.</string>
+</resources>
