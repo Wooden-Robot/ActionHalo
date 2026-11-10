@@ -8,6 +8,7 @@
     <string name="action_share">Share</string>
     <string name="action_baidu">Baidu</string>
     <string name="action_unknown">This action no longer exists.</string>
+    <string name="actions_changed">Actions have changed. Choose again.</string>
     <string name="action_title_required">Enter a name for this action.</string>
     <string name="action_invalid_template">Use an HTTP or HTTPS URL with {text} in its path or query, for example https://www.google.com/search?q={text}.</string>
     <string name="action_invalid_url">Select an HTTP or HTTPS link, or a domain such as example.com.</string>
@@ -15,4 +16,5 @@
     <string name="action_copied">Text copied</string>
     <string name="action_no_app">No app is available to handle this action.</string>
     <string name="action_not_allowed">Android did not allow this action.</string>
+    <string name="action_request_too_large">This request is too large for Android. Shorten the selected text or URL template.</string>
 </resources>

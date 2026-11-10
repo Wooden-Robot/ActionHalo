@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v0.3.46
+
+- 关闭自动触发后仍可使用手动快捷键；取消过期取词和延迟显示任务，修复圆环移出范围及中心取消区的边界行为。
+- 快捷键注册失败和 Telegram 搜索失败提供明确说明；迁移重试保留用户已清除的快捷键，避免旧配置重新启用它们。
+- 插件安装和保存准确报告旧副本清理失败并保留编辑草稿；HTTP(S) 模板拒绝缺少主机名的地址。
+- 脚本和 Telegram 原生搜索运行期间保护正常退出、重启和更新，待任务与剪贴板清理完成后再允许退出。
+- 黑名单说明支持换行，补充生命周期、错误恢复和迁移回归测试。
+
+- Kept manual shortcuts available when automatic triggering is disabled, cancelled stale selection and delayed presentation work, and corrected radial-menu cancellation boundaries.
+- Added actionable shortcut-registration and Telegram-search errors. Migration retries now preserve shortcuts the user explicitly cleared.
+- Reported plugin cleanup failures while preserving editor drafts, and rejected HTTP(S) templates without a host.
+- Protected normal quit, restart, and updates while scripts or native Telegram searches are running, until task and clipboard cleanup finishes.
+- Wrapped blacklist guidance and expanded lifecycle, recovery, and migration regression coverage.
+
 ## v0.3.45
 
 - macOS 更新文件统一为 `appcast.xml`，沿用 ActionHalo 独立 Ed25519 签名，停止发布旧长名和 OpenFire 迁移提示源。0.3.44 及更早版本需手动安装一次新版，之后继续自动更新。

@@ -83,6 +83,69 @@ class AppRulesStoreTest {
         try { store.pauseFor(AppRulesStore.ONE_HOUR + 1); fail("Unbounded pauses must be rejected") } catch (_: IllegalArgumentException) { }
     }
 
+    @Test fun individualProfilesRejectGrowthPastTheLimitWithoutWritingAndReuseRemovedSlots() {
+        val store = AppRulesStore(context)
+        val original = AppRulesStore.Profile(AppRulesStore.TriggerMode.AUTO)
+        repeat(AppRulesStore.MAX_PROFILES) { store.setProfile("com.example.app$it", original) }
+        assertEquals(AppRulesStore.MAX_PROFILES, store.packages().size)
+        val saved = rulesPrefs.all.toMap()
+        try {
+            store.setProfile("com.example.extra", original)
+            fail("The next app must not exceed the shared profile limit")
+        } catch (_: IllegalArgumentException) { }
+        assertEquals(saved, rulesPrefs.all.toMap())
+        assertEquals(AppRulesStore.Profile(), store.profile("com.example.extra"))
+
+        val edited = AppRulesStore.Profile(AppRulesStore.TriggerMode.BUTTON, listOf("google", "copy"))
+        store.setProfile("com.example.app0", edited)
+        assertEquals(edited, store.profile("com.example.app0"))
+        assertEquals(AppRulesStore.MAX_PROFILES, store.packages().size)
+        store.remove("com.example.app1")
+        store.setProfile("com.example.extra", original)
+        assertEquals(AppRulesStore.MAX_PROFILES, store.packages().size)
+        assertEquals(original, store.profile("com.example.extra"))
+    }
+
+    @Test fun legacyOversizedProfilesRemainEditableAndShrinkableButCannotGrowOrImport() {
+        val packages = (0 until AppRulesStore.MAX_PROFILES + 3).map { "com.example.app$it" }.toSet()
+        val legacy = JSONObject().apply {
+            packages.forEach { put(it, JSONObject().put("trigger", "AUTO")) }
+        }
+        assertTrue(rulesPrefs.edit().putString(AppRulesStore.PROFILES, legacy.toString()).commit())
+        val store = AppRulesStore(context)
+        val edited = AppRulesStore.Profile(AppRulesStore.TriggerMode.BUTTON, listOf("google", "copy"))
+        store.setProfile("com.example.app0", edited)
+        assertEquals(edited, store.profile("com.example.app0"))
+        assertEquals(packages, store.packages().toSet())
+        val saved = rulesPrefs.all.toMap()
+        try {
+            store.setProfile("com.example.extra", edited)
+            fail("Legacy configurations must not grow")
+        } catch (_: IllegalArgumentException) { }
+        assertEquals(saved, rulesPrefs.all.toMap())
+
+        store.setDisabledPackages(packages)
+        assertEquals(packages, store.disabledPackages())
+        assertEquals(edited.actions, store.profile("com.example.app0").actions)
+        store.setDisabledPackages(packages - "com.example.app0" - "com.example.app1")
+        assertEquals(packages - "com.example.app1", store.packages().toSet())
+        assertEquals(edited.copy(trigger = AppRulesStore.TriggerMode.DEFAULT), store.profile("com.example.app0"))
+        val reduced = rulesPrefs.all.toMap()
+        try {
+            store.setDisabledPackages(store.disabledPackages() + "com.example.extra")
+            fail("Bulk edits must not grow a legacy configuration")
+        } catch (_: IllegalArgumentException) { }
+        assertEquals(reduced, rulesPrefs.all.toMap())
+        store.remove("com.example.app2")
+        assertEquals(packages - "com.example.app1" - "com.example.app2", store.packages().toSet())
+        assertEquals(AppRulesStore.MAX_PROFILES + 1, store.packages().size)
+        try {
+            AppRulesStore.normalizeProfiles(rulesPrefs.getString(AppRulesStore.PROFILES, "{}")!!,
+                ActionStore(context).allActions().map { it.id }.toSet())
+            fail("Imports must still reject oversized configurations")
+        } catch (_: IllegalArgumentException) { }
+    }
+
     @Test fun importedRulesRejectUnknownFieldsBadTypesAndInvalidDestinations() {
         val ids = ActionStore(context).allActions().map { it.id }.toSet()
         val accepted = AppRulesStore.normalizeProfiles("""{"com.example.source":{"trigger":"BUTTON","actions":["copy","google"]}}""", ids)

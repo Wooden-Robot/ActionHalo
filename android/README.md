@@ -1,12 +1,94 @@
 # ActionHalo for Android
 
-ActionHalo 的原生 Android 版（当前版本 0.11.5），支持 **Android 8.0 / API 26 及以上**。使用 Kotlin 和原生 Android View，保留圆环的「点击执行」与「按住、滑动、松开执行」交互。
+ActionHalo 的原生 Android 版（当前版本 0.11.20），支持 **Android 8.0 / API 26 及以上**。使用 Kotlin 和原生 Android View，保留圆环的「点击执行」与「按住、滑动、松开执行」交互。
 
 统一提供 **Android 8.0 及以上通用 APK**，包括 vivo X200s 在内的设备无需再区分安装包架构。0.8.1 已移除浮窗翻译、ML Kit 和架构相关原生库，按架构拆包不再节省体积，因此取消分架构产物。圆环按实际窗口尺寸和屏幕密度适配，新系统 API 按版本判断并保留旧系统路径。`targetSdk 36` 不代表最低需要 Android 16，最低安装版本由 `minSdk 26` 决定，见 [Android 版本兼容规则](https://developer.android.com/guide/topics/manifest/uses-sdk-element)。
 
 通用打包不等于所有品牌和所有应用的自动弹出均已验证。跨版本模拟器回归和跳过项见[兼容回归记录](diagnostics/compatibility-regression.md)；不同厂商的无障碍、后台管理和选文菜单差异需要真机验证。保留系统选文菜单、分享和剪贴板快捷磁贴入口，兼容边界见下文「自动模式与兼容范围」。
 
 **0.9.0** 完成十项使用体验优化：按应用设置触发方式和固定动作组合；键盘避让及左右手初始位置；首页恢复入口与圆环内失败重试；配置备份；固定在外观页面上方的实时预览；动作指定打开方式；临时暂停快捷磁贴；编辑选文；删除、批量关闭和重置的短时撤销。仍提供 Android 8+ 单一通用 APK。见 [0.9.0 实现与验证](diagnostics/experience-0.9.0.md)。
+
+### 0.11.20 稳定选区与设置恢复
+
+修复原生选区句柄坐标陈旧、WebView 字符位置占位框及重复文字事件导致的圆环隐藏；拥挤布局采用安全紧凑尺寸，开始操作后固定位置和尺寸。编辑草稿、剪贴板内存快照和长设置页滚动位置在重建后恢复，更新提示处理缓存及响应乱序。
+
+执行前重新核对动作配置，阻止已删除或已修改的旧动作；超长请求显示可恢复错误，复制拒绝和配置容量不足不再误报成功。保存失败保留草稿与有效撤销，并将完整错误提示滚入键盘上方。
+
+大配置测试中，动作列表打开从约 7.3 秒降至 1.0–1.3 秒，密集来源规则筛选从约 1.5 秒降至 66–82 毫秒。最终 API 30 整套执行 314 项，唯一失败为测试缺少 GTA 外观前提，修正后单独补验通过；另有 61 项 JVM 测试通过，Lint 无错误。真机和其他 Android 版本仍需验证。
+
+### 0.11.19 区分菜单动作图标
+
+NeoDB 综合搜索改用目录图形，与 NeoDB 图书的书籍图形区分；GitHub 改用代码符号，打开链接使用外跳箭头，分享使用 Android 常见的三节点图形。图标编辑器增加打开链接、目录、代码和编辑四个选项。全部 14 个内置动作在小尺寸下具有不同图形。
+
+现有动作已覆盖复制、搜索、翻译、打开链接、分享和编辑文字，本次没有增加相似的搜索入口。需要先改字再执行动作时，可在「动作」页启用已有的「编辑文字」。已有的手动图标、启用状态和排序继续沿用。
+
+### 0.11.18 修复评论列表滑动误弹
+
+通用选文菜单兼容不再用纵向滚动列表里的「复制、转发、收藏」等按钮来判断是否选中了文字。模拟器里，上下滑动评论面板不再触发圆环，独立弹出的聊天菜单和横向滚动的工具栏仍可复制。尚未在小红书真机上验证。
+
+### 0.11.17 菜单标签暂缺时保留圆环
+
+已确认过的同一来源、同一子菜单窗口仍在时，暂时读不到动作标签或节点树会保留圆环当前的显示状态；已经因拖动隐藏的圆环也不会因此提前恢复。已确认菜单的空标签控件会主动刷新，避免标签恢复后仍读到空缓存。动作执行仍重新核对当前复制按钮。菜单关闭、来源变化、明确拒绝和授权撤回继续清理或隐藏。
+
+此项针对 0.11.16 真机报告中「创建后约 70–80 ms 读不到复制菜单即隐藏」的路径，真实窗口夹具已复现并修正。没有增加等待时长或触发门槛，保留原菜单触摸保护与重新定位。真实 vivo 微信效果仍待确认；菜单持续不公开可用复制目标时，圆环动作会继续等待或超时，不使用旧控件强行复制。见 [复现与验证](diagnostics/menu-metadata-0.11.17.md)。
+
+### 0.11.16 保护原应用菜单的触摸
+
+经过核对的原应用菜单与选文、手柄一起纳入触摸保护；圆环使用整个菜单的位置布局，避免较高聊天菜单的第二排被当成圆环动作。圆环隐藏期间到达的外部触摸不再重复启动菜单检查。保留重新定位、首次选文和重选恢复规则。
+
+真实触摸夹具已复现菜单点击被圆环抢走，以及只修穿透后圆环复制按钮仍与菜单重叠的问题。真机报告中的隐藏后外部触摸顺序也有回放测试；模拟器未复现圆环隐藏后微信菜单仍完全无法点击，不能把这些测试当作 vivo 微信实测。见 [复现与验证](diagnostics/chat-menu-touch-0.11.16.md)。
+
+### 0.11.15 重选文字后恢复圆环
+
+修复拖动手柄后圆环一直等待选文菜单「先消失、再出现」的问题。部分应用在重选期间保留复制菜单，或系统没有提供可观察的隐藏阶段；现在在原有的稳定检查中，按各入口规则重新核对来源、当前选区或可用菜单后恢复圆环。菜单实际不可用时继续隐藏，已有选文保护、首次弹出、重新定位及复制位置规则保留。
+
+没有新增触发倒计时或配置，复用原生 250 ms 与菜单 260 ms 的检查。固定测试应用已复现相同症状，真实 Codex 手机 App 仍需新版实测。见 [复现与验证](diagnostics/reselection-0.11.15.md)。
+
+### 0.11.14 首次选字直接弹出
+
+移除自动模式下「先调整一次选区」的要求。原生入口收到首次有效选区，或菜单兼容入口首次识别到经过核对的复制菜单后，即可显示圆环。长按提示与选区事件先后到达时，同一范围仍能触发，重复事件不重建已显示的圆环。主动设置的按钮模式、关闭和暂停规则继续生效。
+
+选文及周边的防误触、拖动手柄时隐藏与松手恢复、正常重新定位，以及快速复制的背景和位置处理继续保留。见 [实现与验证](diagnostics/first-selection-0.11.14.md)；原子笔记与 vivo 真机仍需新版实测。
+
+### 0.11.13 复制后保留圆环的位置
+
+通用菜单兼容入口在复制后保留圆环时，将复制前的屏幕位置和实际尺寸交给快照窗口，避免按默认位置重新布局。保留窗口完成定位后才绘制第一帧；用户重新定位后的圆环同样沿用当前位置。普通复制的关闭行为、选区周边防误触和拖动交互保持原有规则。见 [实现与验证](diagnostics/copy-position-0.11.13.md)。
+
+### 0.11.12 修正快速复制时的背景明暗闪动
+
+自动弹出的圆环不再仅因按下动作按钮就加深背景，按住达到系统长按时间或开始拖动后才显示背景效果。触摸区域仍立即展开，保留首次点击执行、重新定位与滑动选动作；通过辅助按钮主动打开圆环时保留原有背景。
+
+菜单兼容模式下，普通「复制」由原应用的复制菜单完成，不再额外打开全屏剪贴板处理窗口和重复写入。开启「复制后保留圆环」或执行其他动作时，继续使用原有的选文快照与校验。沿用 0.11.10–0.11.11 的空间不足处理和整段选文防误触，见 [实现与验证](diagnostics/copy-backdrop-0.11.12.md)。
+
+### 0.11.11 整段选中文字及周边防误触
+
+防误触范围由两个选字端点改为整段可见选文的包围区域，并向左右各扩 32dp、上下各扩 40dp，覆盖多行文字中间和选文旁的空白。应用不提供字符坐标时，合并已知选字手柄之间的范围作为估计保护区。保护区内的拖动不启动圆环重新定位；保护区外仍可正常重新定位。沿用 0.11.10 的局部触摸穿透和圆环尺寸规则。
+
+原生选文与菜单兼容入口共用计算。未增加设置或权限，厂商未公开字符或手柄坐标时仍无法准确确定整段选文位置。见 [实现与验证](diagnostics/selection-area-0.11.11.md)。
+
+### 0.11.10 空间不足时保留圆环，选字手柄局部穿透
+
+0.11.9 真机报告出现 `MENU_MATCHED → HALO_NO_SPACE → HALO_ATTACHED`，确认圆环在窗口添加前就因为无法整体避开选字手柄而被隐藏。Android 13 / API 33 及以上现在通过公开的触摸区域接口，将手柄保护区域交给原应用；即使整个方形窗口无法避让，也保留原尺寸圆环。拖动手柄时仍隐藏、松手恢复；主动操作圆环后恢复完整触摸区域，重新定位和滑动选择保持可用。
+
+Android 8–12L / API 26–32 保留原有整体避让与空间不足时隐藏的回退行为，不调用新接口。真实窗口测试已覆盖圆环与手柄重叠时的输入穿透和重新定位，尚未在用户的 vivo 真机验证。见 [实现与验证](diagnostics/handle-region-0.11.10.md)。
+
+### 0.11.9 修正缺失范围导致的圆环重建，补齐未触发诊断
+
+已识别的复制菜单仍在时，缺少选区范围的事件不再被当作取消而删除、重建圆环；明确收拢选区、关闭菜单及手柄保护仍按原规则处理。此问题已在真实 Android 窗口夹具中复现并修正，但尚不能确认它就是用户手机上微信闪现的全部原因；原子笔记未弹出的原因也未确认。
+
+「诊断 → 检查自动弹出」同时重置选文和菜单诊断。复现后复制的报告增加菜单识别结果、被排除的控件类别，以及最近 24 条固定的创建、隐藏、移除、过滤原因和相对时间；仅保存在当前进程，不记录正文、剪贴板或来源应用列表。每次重置后只复现一个应用，避免旧阶段混淆。见 [实现与验证](diagnostics/menu-lifecycle-0.11.9.md)。
+
+### 0.11.8 识别自定义选文与消息菜单
+
+「通用选文菜单兼容」不再只依赖 Android 标准菜单 ID。对同一前台应用的独立子菜单窗口，额外核对真实可点的「复制 + 剪切／全选」，或「复制 + 转发 + 收藏」组合，兼容用户截图中厂商选文工具栏与聊天消息菜单这类结构。普通复制按钮、缺少完整组合的弹窗仍不触发。仅提供菜单时可直接显示圆环，选择动作后才复制；原生选区的初选静默、圆环重新定位及手柄防误触规则保持不变。Telegram 自定义菜单仍遵守其独立开关。
+
+这验证的是固定文字合成菜单。后续真机反馈为微信圆环一闪而过、原子笔记不出现，尚未解决。主窗口内绘制、没有公开可点控件或无法核对来源的菜单仍需真机诊断。验证范围及一次未重现超时见 [实现与验证](diagnostics/custom-menus-0.11.8.md)。
+
+### 0.11.7 保留重新定位，限制选文手柄误触
+
+恢复自动选文和菜单兼容圆环的首次空白触摸定位，点选、按住滑动、翻页和后续固定中心的规则保持可用。选文手柄与端点的操作区域优先：即使浮窗正在避让、旧位置的触摸已经排队，也不进入圆环定位或 GTA 操作层。拖动选文时继续隐藏圆环，隐藏期间拒绝排队触摸，松手恢复后仍可正常重新定位。
+
+0.11.6 曾限制整个空白区域的定位；该限制已撤回。当前仅对选文操作区域及隐藏状态做触摸保护。
 
 ### 0.11.5 拖动选文时隐藏圆环
 
@@ -32,7 +114,7 @@ ActionHalo 的原生 Android 版（当前版本 0.11.5），支持 **Android 8.0
 
 圆环先使用不遮罩、不抢焦点的有限窗口，原选文手柄仍可调整，开始操作圆环后才展开 GTA 背景。用户选择动作后才复制和执行。Telegram 保留独立开关；ChatGPT 等其他应用的标准选文菜单使用「通用选文菜单兼容」，不自动扩大现有授权范围。见 [实现与验证](diagnostics/menu-fallback-0.11.2.md)。
 
-### 0.11.1 去掉自动出现的中间按钮（菜单兼容由 0.11.2 修正）
+### 0.11.1 去掉自动出现的中间按钮（初选规则已由 0.11.14 更新）
 
 默认初次选文保持静默；调整选区后松手直接显示圆环，不再额外弹出「打开圆环」按钮或轻入口。原生选区、Telegram 与通用菜单兼容共同遵守此规则。只有主动为某个应用选择「按钮模式」时，才提供该按钮。没有公开选区变化的应用仍可使用系统选文菜单、分享或剪贴板手动入口。现有应用快捷设置、复制后保留、动作搜索及配置保持可用。见 [实现与验证](diagnostics/selection-0.11.1.md)。
 
@@ -81,7 +163,7 @@ ActionHalo 的原生 Android 版（当前版本 0.11.5），支持 **Android 8.0
 
 键盘避让使用系统公开的窗口和 Insets 信息；无障碍浮层可识别悬浮键盘矩形，普通 Activity 遇到不报告遮挡范围的悬浮键盘仍可能无法完整避让。应用没有公开选区或标准菜单时，按应用规则也不能补出这些信息。备份由系统文件提供器读写；无效文件不会修改配置，跨偏好文件恢复遭遇进程被强制终止时不保证事务原子性。
 
-**0.8.7** 长按初次选中时不自动弹出圆环；同一控件的选区范围改变后才触发。重复选区事件不触发，取消后重新选字、重新长按另一处文字或切换控件，都重新作为初选处理。原生选区与菜单兼容共同遵守此规则；菜单入口初次只提供小号「打开圆环」按钮，不提供选区变化的应用可以调整完后手动点它。没有增加等待倒计时，原有手动选文、分享、剪贴板入口保留。见 [0.8.7 初选静默与验证](diagnostics/initial-selection-0.8.7.md)。
+**0.8.7（历史；初选规则已由 0.11.14 更新）** 长按初次选中时不自动弹出圆环；同一控件的选区范围改变后才触发。重复选区事件不触发，取消后重新选字、重新长按另一处文字或切换控件，都重新作为初选处理。原生选区与菜单兼容共同遵守此规则；菜单入口初次只提供小号「打开圆环」按钮，不提供选区变化的应用可以调整完后手动点它。没有增加等待倒计时，原有手动选文、分享、剪贴板入口保留。见 [0.8.7 初选静默与验证](diagnostics/initial-selection-0.8.7.md)。
 
 **0.8.6** 自动选文圆环先以可触摸穿过周围区域的独立窗口显示，保持原页面清晰，继续拖动原应用选区手柄即可改选文字。触摸圆环时才展开完整操作层并启用 GTA 虚化；第一次点图标仍在同一次松手执行。没有新增等待倒计时，手动选文、分享、剪贴板和诊断入口仍直接进入完整圆环。支持时以选区首尾字符坐标避让原生手柄，Telegram/通用菜单入口以已核对的复制菜单位置避让。见 [0.8.6 选区调整及验证](diagnostics/selection-adjustment-0.8.6.md)。
 
@@ -183,7 +265,7 @@ Google、百度、豆瓣读书、豆瓣电影、NeoDB 书影音、NeoDB 书籍�
 
 - 使用 `AccessibilityService` 的选区事件和 `TYPE_ACCESSIBILITY_OVERLAY`，不需要 root 或普通悬浮窗权限。
 - 自动模式要求目标控件公开选区信息；不同浏览器、聊天应用、自绘控件存在差异。无法读取选区时，可使用选文菜单或分享入口。系统选文菜单本身也取决于宿主应用支持；Android 11+ 的宿主若未声明第三方文本处理器的包可见性，菜单可能没有 ActionHalo，此时使用分享入口。
-- 初次选中保持静默，同一控件调整范围后才自动弹出；按钮模式由用户点击打开。滚动、切换完整应用页面、关闭屏幕、选区取消或停用对应入口时移除圆环。临时小弹窗遮挡时保留最多 30 秒，恢复后重新核对选区；无法判断来源已关闭的小窗口遮挡也只限时等待。
+- 首次有效选区即可自动弹出，按钮模式由用户点击打开；调整选区时复用圆环并更新选文。滚动、切换完整应用页面、关闭屏幕、选区取消或停用对应入口时移除圆环。临时小弹窗遮挡时保留最多 30 秒，恢复后重新核对选区；无法判断来源已关闭的小窗口遮挡也只限时等待。
 - 跳过本应用、密码输入框及系统标记为敏感的节点。支持最长 32,768 个 UTF-16 code unit 的选文，超长内容不会静默截断。
 - 自定义系统或侧载安装可能需要在应用信息中允许「受限制的设置」后，才能启用无障碍服务；请遵循设备上的系统提示。
 - 这一版提供文本动作，不包含 macOS 的 Shell、AppleScript、键盘快捷键注入、文件定位、跨应用剪切/粘贴或 `.actionhaloext` 包导入。处理文本入口不回写宿主选区；复制后的文本可自行粘贴。
@@ -192,9 +274,9 @@ Google、百度、豆瓣读书、豆瓣电影、NeoDB 书影音、NeoDB 书籍�
 
 0.7.0 新增独立的「通用选文菜单兼容」开关，新安装及升级均默认关闭，不自动扩大原有 Telegram 开关的范围。首页开启并同意说明后，系统无障碍服务已授权时即可使用；普通自动选区、Telegram 菜单和通用菜单可以分别开关。
 
-此入口只识别前台应用提供的标准 Android 浮动选文菜单及其真实复制控件，检测阶段不读取正文。有选区变化事件时，初选保持静默，调整后显示圆环；仅提供可用复制菜单时直接显示圆环。长按节点上的范围不能代替实际选区事件，原生长按标记也不会抢占这条兼容入口。主动为应用设置「按钮模式」时，才显示「打开圆环」按钮。显示按钮或圆环均不复制、不读取文字；用户选定动作后才请求宿主复制准确选文，在可见且取得焦点的操作浮层中核对本次剪贴板，再执行动作。沿用限时等待、原来源核验、取消及旧剪贴板拒绝逻辑。
+此入口识别前台应用提供的标准或已支持的自定义选文菜单及其真实复制控件，检测阶段不读取正文。首次识别到经过核对的复制菜单即可显示圆环，无需先拖动手柄。只有长按提示而没有有效选区事件时，原生入口仍会让菜单兼容处理。主动为应用设置「按钮模式」时，才显示「打开圆环」按钮。显示按钮或圆环均不复制、不读取文字；用户选定动作后才请求宿主复制准确选文，在可见且取得焦点的操作浮层中核对本次剪贴板，再执行动作。沿用限时等待、原来源核验、取消及旧剪贴板拒绝逻辑。
 
-识别范围限于前台应用的同包子菜单窗口及标准容器 `android:id/floating_popup_container`，不扫描主页面或聊天正文、不做截图识字，也不监听后台剪贴板。自绘菜单、没有公开复制控件、系统/OEM 改造的菜单或屏幕识字界面可能无法识别；不能仅因为看见「复制」字样就保证可用。X、其他真实应用及 vivo 系统上的具体组合仍需实测。未识别时，可用分享入口、系统菜单中的 ActionHalo 或复制后的快捷按钮。
+识别范围限于前台应用的同包子菜单窗口：标准容器 `android:id/floating_popup_container`，或 0.11.8 增加的完整复制命令组合。不扫描主页面或聊天正文、不做截图识字，也不监听后台剪贴板。没有独立子窗口、没有公开复制控件、无法核对来源或不符合已支持命令组合的菜单仍可能无法识别；不能仅因为看见「复制」字样就保证可用。X、其他真实应用及 vivo 系统上的具体组合仍需实测。未识别时，可用分享入口、系统菜单中的 ActionHalo 或复制后的快捷按钮。
 
 ### Telegram 选文圆环
 
@@ -203,7 +285,7 @@ Google、百度、豆瓣读书、豆瓣电影、NeoDB 书影音、NeoDB 书籍�
 **0.6.1 将此功能改为「Telegram 选文圆环」**：识别菜单后直接显示圆环，选操作后才复制文字。新安装默认关闭，升级沿用 `telegram_copy_popup_enabled` 开关；旧版复制功能已开启，升级后也保持开启。可随时在「触发与权限」关闭。用户随后确认 0.6.1 已可使用；该反馈不等于已验证每种系统弹窗或所有应用，历史复现与模拟器证据仍保留在下文。
 
 1. 在「触发与权限」开启「Telegram 选文圆环」，同意说明，并开启系统无障碍服务。
-2. 回 Telegram，在消息正文中选好部分文字。正文没有提供选区变化事件时，识别到可用复制菜单便直接显示圆环，原选文手柄仍可调整。支持选区变化的控件则保持初选静默、调整后弹出。显示圆环不复制、不读取剪贴板；主动设置的按钮模式仍按按钮打开。
+2. 回 Telegram，在消息正文中选好部分文字。首次识别到可用复制菜单便直接显示圆环，原选文手柄仍可调整。提供有效选区事件的控件也无需先调整范围。显示圆环不复制、不读取剪贴板；主动设置的按钮模式仍按按钮打开。
 3. 在圆环中点击操作，或按住、滑动后松开。ActionHalo 才会请求 Telegram 复制准确选文，核对本次文字后执行已选操作。
 4. 其他提示暂时打断时，待执行操作最多保留 30 秒；提示结束后继续，也可点击可见的「继续」或「取消」。切换其他应用、锁屏、关闭权限或超时会取消待执行操作。
 
@@ -267,7 +349,35 @@ cd android
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Android Studio 可直接打开本目录。一次构建只生成 `app/build/outputs/apk/debug/app-debug.apk`，交付文件按 Android 的 `versionName` 命名为 `ActionHalo-X.Y.Z-debug.apk`，CI 同样只保留通用包。应用已没有架构相关原生库，无需分包。版本和签名延续现有安装，可覆盖升级。debug 签名仅用于开发与试用；正式发行需配置自行保管的 release 签名密钥。文件大小、校验值与验证范围见 [0.9.1 验证记录](diagnostics/action-app-scope-0.9.1.md)。
+Android Studio 可直接打开本目录。调试包输出为 `app/build/outputs/apk/debug/app-debug.apk`，交付文件按 Android 的 `versionName` 命名为 `ActionHalo-X.Y.Z-debug.apk`，CI 同样只保留通用包。应用没有架构相关原生库，无需分包。debug 签名仅用于开发与试用；正式包使用下方的独立签名配置。
+
+### 正式签名与发布包
+
+正式版使用长期保管的专用密钥，后续更新必须沿用同一密钥。按照 [Android 应用签名指南](https://developer.android.com/studio/publish/app-signing) 首次生成密钥库，或复用已经生成的 ActionHalo 密钥，保存在 `android/signing/actionhalo-release.jks`。不要为每个版本重新生成密钥。
+
+将 [`keystore.properties.example`](keystore.properties.example) 复制为 `android/signing/keystore.properties`，填写密钥库密码、别名和密钥密码。`storeFile` 相对于 `android/` 目录，默认值为 `signing/actionhalo-release.jks`。已有配置时直接沿用，不要覆盖。`signing/` 整个目录已加入 Git 忽略；目录权限应为 `700`，密钥库和配置文件权限为 `600`。请将整个目录另行安全备份，不能上传到 Git 或 Release 附件。
+
+在仓库根目录运行：
+
+```bash
+# 先设置 JAVA_HOME 和 ANDROID_HOME
+make android-release
+```
+
+此命令构建正式签名 APK，并运行现有 JVM 单元测试（`testDebugUnitTest`）与 release Lint；缺少签名配置时明确失败。产物为 `android/app/build/outputs/apk/release/app-release.apk`。准备 0.11.20 发布附件时，在仓库根目录执行：
+
+```bash
+mkdir -p .build
+cp android/app/build/outputs/apk/release/app-release.apk .build/ActionHalo-0.11.20-release.apk
+"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs .build/ActionHalo-0.11.20-release.apk
+(cd .build && shasum -a 256 ActionHalo-0.11.20-release.apk > ActionHalo-0.11.20-release.apk.sha256)
+```
+
+发布前提交实际构建的源码，创建对应的 `android-v0.11.20` 标签，并将 APK 和 SHA-256 文件作为 `Android 0.11.20` 的附件。发布时指定 `--latest=false`，详见上方「独立版本与发布」。后续版本同步更新版本号、`versionCode`、标签及附件文件名；应用只识别已发布、非预发布版本中的匹配 APK。
+
+**从 debug 包切换到正式版：**先在应用中导出配置备份，再卸载 debug 版，安装正式版并导入备份。两个包的应用 ID 相同、签名不同，不能直接覆盖安装。卸载会清除应用本地数据；后续使用同一正式签名且版本号有效的更新可覆盖安装。
+
+### 设备验证
 
 连接测试手机或启动 Android 模拟器后：
 
@@ -284,7 +394,7 @@ JVM 测试覆盖 URL 编码和协议限制、选文长度边界、普通/GTA 圆
 - `MainActivity.kt`：体验入口、动作管理、权限说明与自动模式设置。
 - `HaloActivity.kt`：系统选文和分享入口。
 - `ClipboardHaloActivity.kt` / `ClipboardTileService.kt`：前台一次性读取复制文字、下拉快捷入口。
-- `TelegramCopyAssistant.kt`：识别前台 Telegram 部分选文菜单或已启用的标准选文菜单，初次提供小按钮，选区调整或主动打开后显示圆环；选择动作后执行真实复制控件。
+- `TelegramCopyAssistant.kt`：识别前台 Telegram 部分选文菜单或已启用的通用选文菜单，首次识别后直接显示圆环；显式按钮模式提供小按钮，选择动作后执行真实复制控件。
 - `ClipboardHaloOverlay.kt`：可见的文字操作浮层、取得焦点后的剪贴板核对与待执行动作恢复。
 - `TelegramCopyPolicy.kt`：Telegram 复制按钮识别及事件/剪贴板时效检查。
 - `RadialMenuView.kt` / `RadialGeometry.kt`：圆环绘制、触摸和无障碍按钮。
@@ -312,7 +422,7 @@ Version **0.8.1** removes the floating translator, language identification and M
 
 Version 0.8.0 introduced separate Home, Actions, Appearance, Triggers, Diagnostics and About pages, five halo sizes, 0–80% dimming, shared haptics and appearance reset. These remain available. About checks public GitHub Android APK releases manually, keeps debug/release channels separate and opens downloads in the browser.
 
-Native Android 8.0+ edition, version **0.8.7**. Select text in a supported app and choose **ActionHalo** from the selection menu, or share plain text to it. The first non-pager touch keeps the wheel in place when inside it; only a first touch outside the wheel moves its center under the finger. Later touches keep the center fixed. Move around it to select and release to execute; tap or return to the center before release to dismiss. After the first non-pager touch, a stationary touch more than 32 dp beyond the visible outer edge dismisses on release. Moving more than 32 dp beyond the visible outer edge clears the action preview; releasing there closes without executing. Moving back within this limit restores selection. Reopening allows a new first-touch anchor. Home offers a text playground and navigation. Manage action toggles and custom HTTP(S) URL templates containing `{text}` under Actions. Enabled actions are no longer capped at eight: choose 6, 8, 12 or 16 per page under Appearance (default eight), with paging arrows below. Standard mode shows icons only; dragging over an action reveals its full title in the center. New custom actions are enabled and added to later pages when needed. See the [0.7.0 PC parity record](diagnostics/pc-parity-0.7.0.md).
+Native Android 8.0+ edition, version **0.11.20**. Select text in a supported app and choose **ActionHalo** from the selection menu, or share plain text to it. The first non-pager touch keeps the wheel in place when inside it; only a first touch outside the wheel moves its center under the finger. Later touches keep the center fixed. Move around it to select and release to execute; tap or return to the center before release to dismiss. After the first non-pager touch, a stationary touch more than 32 dp beyond the visible outer edge dismisses on release. Moving more than 32 dp beyond the visible outer edge clears the action preview; releasing there closes without executing. Moving back within this limit restores selection. Reopening allows a new first-touch anchor. Home offers a text playground and navigation. Manage action toggles and custom HTTP(S) URL templates containing `{text}` under Actions. Enabled actions are no longer capped at eight: choose 6, 8, 12 or 16 per page under Appearance (default eight), with paging arrows below. Standard mode shows icons only; dragging over an action reveals its full title in the center. New custom actions are enabled and added to later pages when needed. See the [0.7.0 PC parity record](diagnostics/pc-parity-0.7.0.md).
 
 Android 8.0+ builds provide one universal APK, including for vivo X200s. Per-ABI packages are no longer produced because the native translation libraries have been removed. Installation eligibility does not establish automatic-selection compatibility with every OEM or source app; see the [compatibility regression record](diagnostics/compatibility-regression.md) for tested emulators and exclusions. The selection-menu, share and Quick Settings entries remain available as alternatives.
 
@@ -334,9 +444,9 @@ The built-in **Douban search** opens the selected query in the Douban Android ap
 
 Six additional searches are optional and disabled by default: **Douban Book, Douban Movie, NeoDB Search, NeoDB Books, GitHub Search and Telegram Search**. The default Douban Book and Movie templates directly open the same official category search pages used on desktop, preserving the book or movie category. Version 0.7.2 replaces the app-first category strategy introduced in 0.7.1; general Douban search remains app-first, falling back to the official website if the app is missing or cannot launch. NeoDB Books adds the book category filter. Telegram opens a search query in either official Android distribution, trying the second package if the first is unavailable or blocked. It does not compose or send a message; if neither package opens, it reports that search is unavailable without substituting a message or another action. Existing action preferences and custom URLs are preserved.
 
-**Standard selection menu compatibility** is a separate opt-in, disabled for both new and upgraded installations. After consent and accessibility authorization, a supported Copy menu shows the wheel directly when selection-change events are unavailable. Where those events are exposed, the initial selection stays quiet and adjusting it opens the wheel. A readable range on a long-click node alone does not prove event support. Open halo buttons appear only in explicitly chosen per-app button mode. Choosing an action invokes the verified Copy control; a visible focused overlay then validates the new clipboard text before executing. Detection only inspects same-package child menu windows with the standard container, never the main page or message body. It does not perform OCR or monitor the clipboard. Custom menus, OEM changes and unpublished Copy controls may remain unsupported. This does not establish compatibility with X, every real app or every vivo configuration; share and manual clipboard entry remain available.
+**Standard selection menu compatibility** is a separate opt-in, disabled for both new and upgraded installations. After consent and accessibility authorization, the first supported Copy menu shows the wheel directly, with or without selection-change events. A long-click hint alone leaves menu compatibility available until a valid native selection event arrives. Open halo buttons appear only in explicitly chosen per-app button mode. Choosing an action invokes the verified Copy control; a visible focused overlay then validates the new clipboard text before executing. Detection only inspects same-package child menu windows with a standard container or a verified set of editing or message commands, never the main page or message body. It does not perform OCR or monitor the clipboard. Menus without a separate child window, unsupported command groups or unpublished Copy controls may remain unsupported. This does not establish compatibility with X, every real app or every vivo configuration; share and manual clipboard entry remain available.
 
-Version 0.6.1 changed this feature to **Telegram selection halo**, off for new installations and preserving the previous preference on upgrade. Version 0.11.2 restores the direct wheel for recognized menus without selection-change events. Where those events are exposed, the initial selection stays quiet and adjusting it opens the wheel. Only an explicitly chosen per-app button mode offers Open halo. Neither control copies or reads text before an action is chosen. Choosing an action then invokes Telegram’s real Copy control. A visible accessibility overlay takes focus, checks the clipboard timestamp against this Copy operation, and executes the chosen action without launching another Activity to display the halo. Menu detection does not scan message bodies.
+Version 0.6.1 changed this feature to **Telegram selection halo**, off for new installations and preserving the previous preference on upgrade. Version 0.11.14 shows the wheel for the first recognized selection menu, without requiring the user to adjust the range. Only an explicitly chosen per-app button mode offers Open halo. Neither control copies or reads text before an action is chosen. Choosing an action then invokes Telegram’s real Copy control. A visible accessibility overlay takes focus, checks the clipboard timestamp against this Copy operation, and executes the chosen action without launching another Activity to display the halo. Menu detection does not scan message bodies.
 
 A pending action can survive a temporary interruption for up to 30 seconds, with visible Continue and Cancel controls. A successfully read snapshot is retained without rereading; an empty read allows at most one further attempt on a real focus regain, never polling. Replacing the source with a full-screen app, locking the screen, disabling access or timing out cancels the request. Small modal windows may temporarily hide the source from the accessibility window list; the action waits and revalidates the original source when it returns. See the [0.6.1 validation record](diagnostics/telegram-copy-0.6.1.md) for framework, production-window and synthetic-host checks. The user reported a 0.6.0 failure after the launch request but before a focus callback, then confirmed that 0.6.1 worked. That confirmation does not establish compatibility with every system interruption. A visible system translation capsule does not prove the cause of the earlier failure.
 
@@ -344,8 +454,10 @@ The **Copied text halo** Quick Settings tile remains a manual entry without acce
 
 If automatic selection does not work, open Diagnostics and use **Check automatic display** resets diagnostic counters and tests the actual accessibility overlay using example text. The launcher distinguishes access enabled from a connected service and shows process-local event counts, the latest nonempty range numbers, and result categories without retaining text or browsing history. A browser's native selection toolbar does not by itself guarantee usable accessibility selection data. Version 0.4.0 refreshes the source before deciding whether a selection is collapsed, preventing a stale event from discarding a fresh nonempty range. Real cancellations still dismiss the overlay.
 
-**GTA mode is on by default**, with a HUD-style wheel and a hazy backdrop, blurred in real time on supported systems. Switch it off under “Appearance” to restore the orange halo. The preference is saved and shared across every entry point. Both styles share the selected 320, 360, 400, 440 or 480 dp menu cap (400 by default) and outer wheel radius, initially fitted to the available screen with system-bar clearance and an 8 dp margin. Version 0.7.9 gives GTA slot numbers and icons separate radial bands, fitting the icons against the actual font height and their 1.22 selected scale to keep them apart. Version 0.8.2 keeps the wheel in place for a first press inside it and moves its center only for a first non-pager press outside it. Later presses, paging, cancelled gestures and external-action retries keep that center fixed. The wheel may clip at screen edges rather than shift away from the finger. Short taps on visible action icons still execute, while pager presses retain their original behavior. A drag executes only on release; the 16 dp center deadzone, disabled actions, GTA sector gaps and interrupted gestures remain non-executing. Manual entries use a full-screen touch surface. Since 0.8.7, the first long-press selection stays quiet and a changed range triggers the automatic circle. Since 0.11.2, menu-only apps show the wheel directly for a supported Copy menu; initial silence remains for controls with selection-change events. Open halo buttons appear only in explicitly chosen per-app button mode. Automatic circles still use the bounded nonmodal window introduced in 0.8.6 so the original selection handles remain available; touching the wheel expands the action surface and activates GTA background effects. Version 0.8.3 bounds selection to a 32 dp buffer beyond the visible outer edge: moving farther out clears the preview, and releasing there dismisses without executing. Moving back inside restores selection, including short movements across the boundary. Tap the center to close as before; closing returns control to the underlying app. Both styles use the selected 0–80% dimming; at 0%, the GTA vignette is also transparent. Unset dimming preserves the original mode defaults. System bars remain controlled by Android. Live blur requires Android 12+ and system support; older or disabled systems retain a shaded fallback. At 0% dimming, native GTA blur remains enabled. No cross-app screenshots are taken.
+**GTA mode is on by default**, with a HUD-style wheel and a hazy backdrop, blurred in real time on supported systems. Switch it off under “Appearance” to restore the orange halo. The preference is saved and shared across every entry point. Both styles share the selected 320, 360, 400, 440 or 480 dp menu cap (400 by default) and outer wheel radius, initially fitted to the available screen with system-bar clearance and an 8 dp margin. Version 0.7.9 gives GTA slot numbers and icons separate radial bands, fitting the icons against the actual font height and their 1.22 selected scale to keep them apart. Version 0.8.2 keeps the wheel in place for a first press inside it and moves its center only for a first non-pager press outside it. Later presses, paging, cancelled gestures and external-action retries keep that center fixed. The wheel may clip at screen edges rather than shift away from the finger. Short taps on visible action icons still execute, while pager presses retain their original behavior. A drag executes only on release; the 16 dp center deadzone, disabled actions, GTA sector gaps and interrupted gestures remain non-executing. Manual entries use a full-screen touch surface. Since 0.11.14, the first valid selection or supported Copy menu triggers the automatic circle without requiring a handle adjustment. Open halo buttons appear only in explicitly chosen per-app button mode. Automatic circles still use the bounded nonmodal window introduced in 0.8.6 so the original selection handles remain available; touching the wheel expands the action surface and activates GTA background effects. Version 0.8.3 bounds selection to a 32 dp buffer beyond the visible outer edge: moving farther out clears the preview, and releasing there dismisses without executing. Moving back inside restores selection, including short movements across the boundary. Tap the center to close as before; closing returns control to the underlying app. Both styles use the selected 0–80% dimming; at 0%, the GTA vignette is also transparent. Unset dimming preserves the original mode defaults. System bars remain controlled by Android. Live blur requires Android 12+ and system support; older or disabled systems retain a shaded fallback. At 0% dimming, native GTA blur remains enabled. No cross-app screenshots are taken.
 
 Automatic selection, Telegram menu detection and standard-menu compatibility are separately optional and require their respective in-app consent plus the Android accessibility service. The selection-event path requires exposed text selection; the menu paths require a supported Copy control. Selected text is not stored or logged; external actions only send it after an explicit user choice. Web translation sends selected text to the translation website only when explicitly selected. Local translation, model downloads and the ML Kit SDK have been removed. Internet access is used to check for updates on the first home-screen launch each local day and for manual checks. A newer release adds a download button to the home screen; automatic failures stay quiet, and manual checks remain available on the same day. Desktop scripts and plugin package imports remain unsupported.
 
 Build with JDK 17 and Android SDK 36 using the commands above. Unit tests and Lint run locally and in the dedicated Android CI workflow. Run instrumented tests with a connected device or emulator.
+
+For a signed release, configure `android/signing/keystore.properties` from the example and run `make android-release` at the repository root. Back up the signing directory securely; it is ignored by Git and must never be uploaded with release assets. See the [signing and packaging steps](#正式签名与发布包). Export settings before uninstalling a debug build to switch to the release signer. Keep that release key for every subsequent update.

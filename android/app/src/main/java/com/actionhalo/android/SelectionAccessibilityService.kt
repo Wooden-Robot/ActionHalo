@@ -189,7 +189,8 @@ class SelectionAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_LONG_CLICKED ->
                 if (nativeSelectionEnabled(event.packageName?.toString())) primeLongPress(event) else clearSelection()
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
-                if (event.windowId == lastSelection?.windowId || event.windowId == pending?.key?.windowId) {
+                if ((event.windowId == lastSelection?.windowId || event.windowId == pending?.key?.windowId) &&
+                    !isUnchangedPendingTextNotification(event)) {
                     clearSelection()
                 }
             }
@@ -213,9 +214,10 @@ class SelectionAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun openAssistedCopy(startedUptime: Long, startedWall: Long, finishedWall: Long, action: HaloAction, hostWindowId: Int, sourcePackage: String) {
+    private fun openAssistedCopy(startedUptime: Long, startedWall: Long, finishedWall: Long, action: HaloAction,
+        hostWindowId: Int, sourcePackage: String, menuBounds: Rect?) {
         if (!screenAvailable() || !copyMenuEnabled() || !appRules.allowsButton(sourcePackage, true)) return
-        clipboardHaloOverlay.show(startedUptime, startedWall, finishedWall, action, hostWindowId, sourcePackage)
+        clipboardHaloOverlay.show(startedUptime, startedWall, finishedWall, action, hostWindowId, sourcePackage, menuBounds)
     }
 
     private fun copyMenuEnabled(): Boolean = !appRules.isPaused() &&
@@ -298,6 +300,7 @@ class SelectionAccessibilityService : AccessibilityService() {
         if (event.packageName?.toString() == packageName) return
         SelectionDiagnostics.received()
         if (event.isPassword) {
+            SelectionDiagnostics.trace(SelectionDiagnostics.Trace.SOURCE_PASSWORD)
             SelectionDiagnostics.record(SelectionDiagnostics.Result.FILTERED)
             clearSelection()
             return
@@ -325,10 +328,9 @@ class SelectionAccessibilityService : AccessibilityService() {
             val range = sourceRange(source, text.length, event.fromIndex, event.toIndex)
                 ?: return rejectSelection(rangeFailure(source, event.fromIndex, event.toIndex))
             val key = SelectionKey(sourcePackage, source.windowId, source.hashCode(), range)
-            if (!initial) selectionPrimedOnly = false
-            else if (key != lastSelection && key != pending?.key) selectionPrimedOnly = true
             // Keep a dismissed selection dismissed until it changes; retain no selected text here.
-            if (!initial && (key == lastSelection || key == pending?.key)) return
+            if (!selectionPrimedOnly && (key == lastSelection || key == pending?.key)) return
+            selectionPrimedOnly = initial
             val previous = pending?.key ?: lastSelection
             val firstSelection = initial || previous == null || previous.packageName != key.packageName ||
                 previous.windowId != key.windowId || previous.nodeId != key.nodeId
@@ -360,9 +362,10 @@ class SelectionAccessibilityService : AccessibilityService() {
             }
             cancelPending()
             hideOverlay()
-            if (firstSelection && appRules.triggerMode(sourcePackage) != AppRulesStore.TriggerMode.BUTTON) {
+            // A long-click hint alone must leave menu-only compatibility available.
+            if (initial && appRules.triggerMode(sourcePackage) != AppRulesStore.TriggerMode.BUTTON) {
                 lastSelection = key
-                SelectionDiagnostics.record(SelectionDiagnostics.Result.INITIAL_SELECTION)
+                SelectionDiagnostics.record(SelectionDiagnostics.Result.LONG_PRESS_ONLY)
                 return
             }
             lastSelection = null
@@ -373,6 +376,7 @@ class SelectionAccessibilityService : AccessibilityService() {
         } catch (_: IllegalStateException) {
             rejectSelection(SelectionDiagnostics.Result.STALE)
         } catch (_: SecurityException) {
+            SelectionDiagnostics.trace(SelectionDiagnostics.Trace.SOURCE_ACCESS_DENIED)
             rejectSelection(SelectionDiagnostics.Result.FILTERED)
         } finally {
             if (!keepSource) recycleNode(source)
@@ -450,15 +454,47 @@ class SelectionAccessibilityService : AccessibilityService() {
         } catch (_: IllegalStateException) {
             rejectSelection(SelectionDiagnostics.Result.STALE)
         } catch (_: SecurityException) {
+            SelectionDiagnostics.trace(SelectionDiagnostics.Trace.SOURCE_ACCESS_DENIED)
             rejectSelection(SelectionDiagnostics.Result.FILTERED)
         } finally {
             if (!keepSource) recycleNode(source)
         }
     }
 
-    private fun safeSource(source: AccessibilityNodeInfo): Boolean =
-        source.packageName?.toString() != packageName && !source.isPassword && source.isVisibleToUser &&
-            (Build.VERSION.SDK_INT < 34 || !source.isAccessibilityDataSensitive)
+    private fun safeSource(source: AccessibilityNodeInfo): Boolean {
+        val reason = when {
+            source.packageName?.toString() == packageName -> SelectionDiagnostics.Trace.SOURCE_OWN_APP
+            source.isPassword -> SelectionDiagnostics.Trace.SOURCE_PASSWORD
+            !source.isVisibleToUser -> SelectionDiagnostics.Trace.SOURCE_HIDDEN
+            Build.VERSION.SDK_INT >= 34 && source.isAccessibilityDataSensitive -> SelectionDiagnostics.Trace.SOURCE_SENSITIVE
+            else -> null
+        }
+        reason?.let(SelectionDiagnostics::trace)
+        return reason == null
+    }
+
+    private fun isUnchangedPendingTextNotification(event: AccessibilityEvent): Boolean {
+        if (event.isPassword) return false
+        val candidate = pending ?: return false
+        // Keep the accepted node's snapshot intact. Chromium can publish a full
+        // value notification when focusing an unchanged field after selecting it.
+        val previousText = candidate.source.text?.toString() ?: return false
+        val source = event.source ?: return false
+        return try {
+            if (source != candidate.source || !source.refresh() || !safeSource(source) ||
+                source.windowId != candidate.key.windowId ||
+                source.packageName?.toString() != candidate.key.packageName) return false
+            val text = source.text ?: return false
+            previousText.contentEquals(text) &&
+                SelectionPolicy.range(text.length, source.textSelectionStart, source.textSelectionEnd) == candidate.key.range
+        } catch (_: IllegalStateException) {
+            false
+        } catch (_: SecurityException) {
+            false
+        } finally {
+            recycleNode(source)
+        }
+    }
 
     private fun sourceRange(
         source: AccessibilityNodeInfo,
@@ -680,7 +716,7 @@ class SelectionAccessibilityService : AccessibilityService() {
     }
 
     private fun selectionAreas(source: AccessibilityNodeInfo, range: SelectionPolicy.Range): List<Rect> =
-        HaloSafeArea.selectionHandleBounds(this, source, range) +
+        HaloSafeArea.selectionProtectionBounds(this, source, range) +
             HaloSafeArea.selectionControlBounds(this, source.windowId, selectionToolbarWindowId)
 
     private fun availableScreenBounds(): Rect {
@@ -773,6 +809,7 @@ class SelectionAccessibilityService : AccessibilityService() {
         if ((!automaticModeEnabled() && !copyMenuEnabled()) || !screenAvailable()) return false
         clearSelection()
         SelectionDiagnostics.reset()
+        TelegramCopyDiagnostics.reset()
         val context = HaloUi.localizedContext(this)
         val actions = ActionStore(context).actions()
         if (actions.isEmpty()) {

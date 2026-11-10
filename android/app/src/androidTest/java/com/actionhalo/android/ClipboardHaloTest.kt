@@ -3,6 +3,7 @@ package com.actionhalo.android
 import android.app.Activity
 import android.app.Application
 import android.app.Dialog
+import android.app.UiAutomation
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -10,13 +11,16 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Parcel
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
 import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.After
@@ -103,6 +107,108 @@ class ClipboardHaloTest {
         } finally {
             finish(halo)
         }
+    }
+
+    @Test fun completedClipboardReadsSurviveRecreationOnlyInMemoryWithoutReadingNewText() = withClipboardHost { main ->
+        fixturePreference("actionhalo_settings", TelegramCopyPolicy.SETTING, true)
+        val text = "Retained clipboard A 私密 🪁"
+        val replacement = "New clipboard B must remain unread 🌍"
+        for (action in listOf(null, ClipboardHaloActivity.ACTION_TELEGRAM_COPY, ClipboardHaloActivity.ACTION_TELEGRAM_COPY_ASSISTED)) {
+            awaitWindowFocus(main)
+            val intent = when (action) {
+                ClipboardHaloActivity.ACTION_TELEGRAM_COPY -> automaticIntent(main, text, clipPredatesMenu = false)
+                ClipboardHaloActivity.ACTION_TELEGRAM_COPY_ASSISTED -> assistedIntent(main, text, writeDuringAction = true)
+                else -> {
+                    writeClip(main, ClipData.newPlainText("Retained fixture", text))
+                    ClipboardHaloActivity.requestIntent(context)
+                }
+            }
+            var halo = launchHalo(intent)
+            try {
+                awaitWindowFocus(halo)
+                instrumentation.runOnMainSync { assertEquals(text, haloMenu(halo).selectedText) }
+                writeClip(halo, ClipData.newPlainText("Replacement fixture", replacement))
+                instrumentation.runOnMainSync {
+                    // The accepted copy event is now old; its validated snapshot remains usable.
+                    halo.intent.putExtra(ClipboardHaloActivity.EXTRA_EVENT_UPTIME,
+                        SystemClock.uptimeMillis() - TelegramCopyPolicy.MAX_EVENT_AGE_MS - 1)
+                }
+                halo = recreateHalo(halo, savedState = { state ->
+                    assertTrue(state.getBoolean("clipboard_read_attempted"))
+                    val parcel = Parcel.obtain()
+                    val bytes = try { parcel.writeBundle(state); parcel.marshall() } finally { parcel.recycle() }
+                    for (charset in listOf(Charsets.UTF_8, Charsets.UTF_16LE)) {
+                        assertFalse("Clipboard text must never enter saved instance state", String(bytes, charset).contains(text))
+                        assertFalse(String(bytes, charset).contains(replacement))
+                    }
+                })
+                awaitWindowFocus(halo)
+                instrumentation.runOnMainSync {
+                    assertFalse(halo.isFinishing)
+                    assertEquals(text, haloMenu(halo).selectedText)
+                    assertEquals(replacement, halo.getSystemService(ClipboardManager::class.java)
+                        .primaryClip?.getItemAt(0)?.text?.toString())
+                }
+            } finally { finish(halo) }
+        }
+    }
+
+    @Test fun restoredAutomaticClipboardRechecksConsentAndSourceRules() = withClipboardHost { main ->
+        val rules = AppRulesStore(context)
+        for (assisted in listOf(false, true)) for (revokeConsent in listOf(false, true)) {
+            fixturePreference("actionhalo_settings", TelegramCopyPolicy.SETTING, true)
+            rules.setProfile(sourcePackage, AppRulesStore.Profile())
+            awaitWindowFocus(main)
+            val text = "Validated automatic clipboard 🪁"
+            val intent = if (assisted) assistedIntent(main, text, writeDuringAction = true)
+                else automaticIntent(main, text, clipPredatesMenu = false)
+            var halo = launchHalo(intent)
+            try {
+                awaitWindowFocus(halo)
+                instrumentation.runOnMainSync { assertEquals(text, haloMenu(halo).selectedText) }
+                halo = recreateHalo(halo, afterOldDestroyed = {
+                    if (revokeConsent) fixturePreference("actionhalo_settings", TelegramCopyPolicy.SETTING, false)
+                    else rules.setProfile(sourcePackage, AppRulesStore.Profile(AppRulesStore.TriggerMode.OFF))
+                })
+                awaitCondition("Recreation must reject consent or source rules changed after the original read") {
+                    halo.isFinishing || halo.isDestroyed
+                }
+                instrumentation.runOnMainSync {
+                    assertTrue(descendants(halo.window.decorView).none { it is RadialMenuView })
+                }
+            } finally { finish(halo) }
+        }
+    }
+
+    @Test fun attemptedReadWithoutAnInMemorySnapshotCannotConsumeANewerClipAfterRecreation() = withClipboardHost { main ->
+        assumeTrue(Build.VERSION.SDK_INT >= 28)
+        instrumentation.runOnMainSync { main.getSystemService(ClipboardManager::class.java).clearPrimaryClip() }
+        var halo = launchHalo()
+        try {
+            awaitWindowFocus(halo)
+            instrumentation.runOnMainSync { assertFalse(haloMenu(halo).selectionTextKnown) }
+            writeClip(halo, ClipData.newPlainText("Unrequested replacement", "Must not be read after recreation"))
+            halo = recreateHalo(halo)
+            awaitCondition("A previous failed read must still close after recreation") { halo.isFinishing || halo.isDestroyed }
+            instrumentation.runOnMainSync { assertTrue(descendants(halo.window.decorView).none { it is RadialMenuView }) }
+        } finally { finish(halo) }
+    }
+
+    @Test fun copyHeldClipboardSessionStillClosesOnRecreation() = withClipboardHost { main ->
+        fixturePreference("actionhalo_settings", HaloAppearance.KEEP_AFTER_COPY_KEY, true)
+        writeClip(main, ClipData.newPlainText("Copy fixture", "Copy held session must not restart"))
+        val halo = launchHalo()
+        try {
+            awaitWindowFocus(halo)
+            instrumentation.runOnMainSync {
+                val copy = ActionStore(halo).allActions().single { it.id == "copy" }
+                haloMenu(halo).onActionSelected?.invoke(copy)
+                assertFalse(halo.isFinishing)
+                halo.recreate()
+            }
+            awaitCondition("The existing keep-after-copy stop behavior must still close the session") { halo.isDestroyed }
+            awaitWindowFocus(main)
+        } finally { finish(halo) }
     }
 
     @Test fun automaticCopyRequiresConsentAndAClipNewerThanTheMenu() = withClipboardHost { main ->
@@ -440,6 +546,61 @@ class ClipboardHaloTest {
         }
     }
 
+    @Test @SdkSuppress(minSdkVersion = 28)
+    fun deniedDiagnosticCopyReportsFailureAndOnlyAnExplicitRetryWritesTheReport() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("focused_clipboard_overlay") == "true")
+        assertDisposableEmulator()
+        val automation = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+        fun shell(command: String) = automation.executeShellCommand(command).use {
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(it).bufferedReader().use { reader -> reader.readText() }
+        }
+        val originalMode = Regex("(?:WRITE_CLIPBOARD: |Default mode: )(\\w+)")
+            .find(shell("cmd appops get ${context.packageName} WRITE_CLIPBOARD"))?.groupValues?.get(1)
+            ?: error("The original clipboard write mode must be known before changing it")
+        val sentinel = "Synthetic diagnostic copy fixture 🪁 49201"
+        try {
+            shell("cmd appops set ${context.packageName} WRITE_CLIPBOARD allow")
+            // This opt-in fixture never reads, saves, or restores the user's previous clipboard.
+            ActivityScenario.launch<MainActivity>(MainActivity.pageIntent(context, MainActivity.Page.DIAGNOSTICS)).use { scenario ->
+                val host = AtomicReference<MainActivity>()
+                scenario.onActivity { host.set(it) }
+                awaitWindowFocus(host.get())
+                writeClip(host.get(), ClipData.newPlainText("Synthetic fixture", sentinel))
+                for (mode in listOf("ignore", "deny", "allow")) {
+                    shell("cmd appops set ${context.packageName} WRITE_CLIPBOARD $mode")
+                    val event = automation.executeAndWaitForEvent({
+                        scenario.onActivity { activity ->
+                            assertTrue(descendants(activity.window.decorView).filterIsInstance<Button>().single {
+                                it.text.toString() == activity.getString(R.string.health_copy_button)
+                            }.performClick())
+                        }
+                    }, { event ->
+                        event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED &&
+                            event.className?.toString() == "android.widget.Toast" &&
+                            event.packageName?.toString() == context.packageName
+                    }, 5_000)
+                    try {
+                        scenario.onActivity { activity ->
+                            assertFalse("A rejected copy must keep diagnostics available", activity.isFinishing)
+                            val clip = activity.getSystemService(ClipboardManager::class.java).primaryClip
+                            val copied = clip?.getItemAt(0)?.text?.toString().orEmpty()
+                            if (mode == "allow") {
+                                assertTrue(copied.contains("telegram_copy_stage="))
+                                assertFalse(copied.contains(sentinel))
+                                assertEquals("ActionHalo diagnostics", clip?.description?.label?.toString())
+                            } else {
+                                assertTrue("A rejected write must preserve the synthetic fixture", copied == sentinel)
+                            }
+                            val message = activity.getString(if (mode == "allow") R.string.health_copy_done else R.string.action_not_allowed)
+                            assertEquals("Copy feedback must match the system write result ($mode)", listOf(message),
+                                event.text.map(CharSequence::toString))
+                        }
+                    } finally { event.recycle() }
+                }
+            }
+        } finally { shell("cmd appops set ${context.packageName} WRITE_CLIPBOARD $originalMode") }
+    }
+
     private fun automaticIntent(main: MainActivity, text: String, clipPredatesMenu: Boolean): Intent {
         val result = AtomicReference<Intent>()
         instrumentation.runOnMainSync {
@@ -510,6 +671,35 @@ class ClipboardHaloTest {
 
     private fun launchHalo(intent: Intent = ClipboardHaloActivity.requestIntent(context)) =
         instrumentation.startActivitySync(intent) as ClipboardHaloActivity
+
+    private fun recreateHalo(
+        old: ClipboardHaloActivity,
+        afterOldDestroyed: () -> Unit = {},
+        savedState: (Bundle) -> Unit = {},
+    ): ClipboardHaloActivity {
+        val replacement = AtomicReference<ClipboardHaloActivity>()
+        val callbacks = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, state: Bundle?) {
+                if (activity is ClipboardHaloActivity && activity !== old) replacement.set(activity)
+            }
+            override fun onActivityDestroyed(activity: Activity) {
+                if (activity === old) afterOldDestroyed()
+            }
+            override fun onActivitySaveInstanceState(activity: Activity, state: Bundle) {
+                if (activity === old) savedState(state)
+            }
+            override fun onActivityStarted(activity: Activity) = Unit
+            override fun onActivityResumed(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
+        }
+        old.application.registerActivityLifecycleCallbacks(callbacks)
+        try {
+            instrumentation.runOnMainSync { old.recreate() }
+            awaitCondition("Configuration recreation must create a replacement activity") { replacement.get() != null }
+            return replacement.get()
+        } finally { old.application.unregisterActivityLifecycleCallbacks(callbacks) }
+    }
 
     private fun withBackgroundHalo(main: MainActivity, block: (ClipboardHaloActivity, MainActivity) -> Unit) {
         val previous = launchHalo(assistedIntent(main, "Earlier halo must never be reused 🌍", writeDuringAction = true))

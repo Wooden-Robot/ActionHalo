@@ -337,6 +337,15 @@ final class PluginEditorWindowTests: XCTestCase {
         XCTAssertEqual(message, "Identifier is reserved for a built-in plugin.".localized)
     }
 
+    func testEditorRejectsWebTemplatesWithoutAHost() {
+        for template in ["https://", "https:///search?q={text}", "http:search?q={text}"] {
+            XCTAssertNotNil(PluginEditorWindow.validationMessage(
+                name: "Web", identifier: "com.test.web", typeIndex: 0, content: template,
+                isEditingExistingPlugin: false, existingPluginIDs: []
+            ), template)
+        }
+    }
+
     func testValidationRejectsExistingCorePluginEdits() {
         let message = PluginEditorWindow.validationMessage(
             name: "Copy",
@@ -1093,6 +1102,52 @@ final class PluginEditorPersistenceTests: GlobalStateTestCase {
             XCTAssertEqual(PluginLoader.load(from: plugin.directoryURL)?.config.name, "Renamed")
             XCTAssertEqual(try String(contentsOf: plugin.directoryURL.appendingPathComponent("script.txt"), encoding: .utf8), script)
         }
+    }
+
+    @MainActor
+    func testSaveWithReadOnlyDuplicateReportsFailureAndKeepsDraftAndBothPackages() async throws {
+        let (editor, plugin, saveButton, deleteButton) = try makeEditor()
+        defer { editor.close() }
+        let duplicate = rootURL.appendingPathComponent("Older.actionhaloext")
+        try FileManager.default.copyItem(at: plugin.directoryURL, to: duplicate)
+        let originalConfig = try Data(contentsOf: duplicate.appendingPathComponent("Config.json"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: duplicate.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: duplicate.path) }
+        let nameField = try XCTUnwrap(try XCTUnwrap(editor.contentView).subviews.compactMap { $0 as? NSTextField }
+            .first { $0.isEditable && $0.stringValue == "Persistence" })
+        nameField.stringValue = "Saved edit"
+        editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        let reloaded = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: PluginManager.shared)
+        let errorShown = expectation(description: "The editor explains the partial save")
+        let expectedMessage = "The plugin was written, but older copies could not be removed. Check permissions and try again.\n%@"
+            .localized.components(separatedBy: "\n")[0]
+        let timer = Timer(timeInterval: 0.01, repeats: true) { timer in
+            MainActor.assumeIsolated {
+                guard let alertWindow = NSApp.modalWindow, let content = alertWindow.contentView else { return }
+                func labels(_ view: NSView) -> [String] {
+                    ((view as? NSTextField).map { [$0.stringValue] } ?? []) + view.subviews.flatMap(labels)
+                }
+                XCTAssertTrue(labels(content).contains { $0.contains(expectedMessage) })
+                NSApp.abortModal()
+                alertWindow.orderOut(nil)
+                timer.invalidate()
+                errorShown.fulfill()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        RunLoop.main.add(timer, forMode: .modalPanel)
+        defer { timer.invalidate() }
+
+        XCTAssertTrue(saveButton.sendAction(saveButton.action, to: saveButton.target))
+        await fulfillment(of: [reloaded, errorShown], timeout: 5)
+
+        XCTAssertFalse(editor.isPersisting)
+        XCTAssertTrue(editor.hasUnsavedChanges)
+        XCTAssertTrue(saveButton.isEnabled)
+        XCTAssertTrue(deleteButton.isEnabled)
+        XCTAssertEqual(nameField.stringValue, "Saved edit")
+        XCTAssertEqual(PluginLoader.load(from: plugin.directoryURL)?.config.name, "Saved edit")
+        XCTAssertEqual(try Data(contentsOf: duplicate.appendingPathComponent("Config.json")), originalConfig)
     }
 
     @MainActor

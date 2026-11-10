@@ -2,14 +2,19 @@ package com.actionhalo.android
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
+import android.graphics.Rect
+import android.os.Bundle
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.Button
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -93,6 +98,61 @@ class BackupSettingsUiTest {
             awaitIdle(scenario)
             assertTrue(engine.hasPrevious())
         }
+    }
+
+    @Test fun compactBackupPageRecreationKeepsTheVisibleExplanation() {
+        val application = context.applicationContext as Application
+        val compactWindow = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, state: Bundle?) = Unit
+            override fun onActivityStarted(activity: Activity) = Unit
+            override fun onActivityResumed(activity: Activity) {
+                if (activity is BackupSettingsActivity) {
+                    activity.window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, HaloUi.dp(activity, 360))
+                }
+            }
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, state: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        }
+        application.registerActivityLifecycleCallbacks(compactWindow)
+        try {
+            var savedY = 0
+            ActivityScenario.launch(BackupSettingsActivity::class.java).use { scenario ->
+                await {
+                    var scrollable = false
+                    scenario.onActivity { activity ->
+                        scrollable = descendants(activity.window.decorView).filterIsInstance<ScrollView>().single()
+                            .canScrollVertically(1)
+                    }
+                    scrollable
+                }
+                scenario.onActivity { activity ->
+                    val scroll = descendants(activity.window.decorView).filterIsInstance<ScrollView>().single()
+                    scroll.scrollTo(0, scroll.getChildAt(0).height)
+                    savedY = scroll.scrollY
+                    assertTrue("The compact backup page must have a real scroll offset", savedY > 0)
+                    val explanation = descendants(scroll).filterIsInstance<TextView>().single {
+                        it.text.toString() == context.getString(R.string.backup_ux_local_copy)
+                    }
+                    val visible = Rect()
+                    assertTrue(explanation.getGlobalVisibleRect(visible))
+                    assertEquals(explanation.height, visible.height())
+                }
+                scenario.recreate()
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { activity ->
+                    val scroll = descendants(activity.window.decorView).filterIsInstance<ScrollView>().single()
+                    assertEquals("Rebuilding backup settings must keep the reading position", savedY, scroll.scrollY)
+                    val explanation = descendants(scroll).filterIsInstance<TextView>().single {
+                        it.text.toString() == context.getString(R.string.backup_ux_local_copy)
+                    }
+                    val visible = Rect()
+                    assertTrue("The local-copy explanation must remain visible", explanation.getGlobalVisibleRect(visible))
+                    assertEquals(explanation.height, visible.height())
+                }
+            }
+        } finally { application.unregisterActivityLifecycleCallbacks(compactWindow) }
     }
 
     private fun deliverFile(scenario: ActivityScenario<BackupSettingsActivity>) {

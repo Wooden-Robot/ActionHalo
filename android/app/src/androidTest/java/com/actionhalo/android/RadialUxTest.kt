@@ -79,13 +79,18 @@ class RadialUxTest {
             val many = (1..18).map { HaloAction("compact-$it", "Fixture $it", "", ActionType.COPY) }
             for (size in listOf(180, 220)) {
                 val menu = RadialMenuView(context).apply { setActions(many) }
+                SourceAppControls.bind(menu, "com.example.compact") { }
                 measure(menu, size)
                 val count = if (size < 208) 2 else 4
                 assertEquals(many.take(count).map { it.title }, actions(menu).map { it.contentDescription.toString() })
                 val pager = buttons(menu).single { it.contentDescription == context.getString(R.string.radial_next_page) }
+                val options = buttons(menu).single { it.contentDescription == context.getString(R.string.source_app_options) }
+                val optionsBounds = Rect(options.left, options.top, options.right, options.bottom)
+                assertTrue(Rect(0, 0, menu.width, menu.height).contains(optionsBounds))
                 assertTrue(pager.isEnabled)
                 actions(menu).forEach { button ->
                     assertTrue(button.left >= 0 && button.top >= 0 && button.right <= menu.width && button.bottom <= pager.top)
+                    assertFalse(Rect.intersects(optionsBounds, Rect(button.left, button.top, button.right, button.bottom)))
                     assertTrue("Small windows still need a usable icon target", button.height >= 40 * menu.resources.displayMetrics.density)
                 }
                 pager.performClick()
@@ -127,12 +132,34 @@ class RadialUxTest {
         assertEquals(12f to 9f, HaloSafeArea.fittedShift(screen, content, 12f, 9f, 4f))
     }
 
+    @Test fun characterProtectionKeepsRealGlyphsAndIgnoresOnlyExactNodePlaceholders() {
+        val source = Rect(63, 286, 1021, 1076)
+        val beforeLigature = RectF(359f, 299f, 399f, 380f)
+        val afterLigature = RectF(399f, 299f, 433f, 380f)
+        assertEquals("A missing ligature character must not protect the textarea's empty space",
+            Rect(359, 299, 433, 380), HaloSafeArea.characterLocationBounds(source,
+                listOf(beforeLigature, RectF(source), afterLigature)))
+        for (coarse in listOf(listOf(RectF(source)), listOf(RectF(source), RectF(source)))) {
+            assertEquals("Coarse-only character data must retain the conservative source bounds",
+                source, HaloSafeArea.characterLocationBounds(source, coarse))
+        }
+        assertEquals("A legitimate large glyph is not a full-node placeholder",
+            Rect(70, 299, 1000, 1000), HaloSafeArea.characterLocationBounds(source,
+                listOf(beforeLigature, RectF(70f, 300f, 1000f, 1000f))))
+        assertEquals("Overflow must be classified before clipping it to the source",
+            source, HaloSafeArea.characterLocationBounds(source,
+                listOf(beforeLigature, RectF(50f, 270f, 1040f, 1100f))))
+        assertEquals("Multiple real lines may legitimately union to the entire source bounds",
+            source, HaloSafeArea.characterLocationBounds(source,
+                listOf(RectF(63f, 286f, 200f, 380f), RectF(900f, 1000f, 1021f, 1076f))))
+    }
+
     @Test fun distinctDefaultSymbolsHaveTransparentCornersAndMatchingPickerNames() = instrumentation.runOnMainSync {
         val catalog = ActionStore(context).allActions()
         assertNotEquals(ActionIcons.resource(catalog.single { it.id == "google" }), ActionIcons.resource(catalog.single { it.id == "translate" }))
         assertNotEquals(ActionIcons.resource(catalog.single { it.id == "baidu" }), ActionIcons.resource(catalog.single { it.id == "douban" }))
         assertEquals(ActionIcons.options.size, context.resources.getStringArray(R.array.action_icon_names).size)
-        for (key in listOf("google", "translate", "baidu", "douban")) {
+        for (key in ActionIcons.options.keys) {
             val drawable = requireNotNull(context.getDrawable(ActionIcons.options.getValue(key)))
             val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
             try {

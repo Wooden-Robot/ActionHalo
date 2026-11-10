@@ -37,8 +37,10 @@ final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableVie
         let label = NSTextField(labelWithString: "The ActionHalo radial menu will not appear when selecting text in the following apps:".localized)
         label.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         label.textColor = .secondaryLabelColor
-        label.frame = NSRect(x: 20, y: 260, width: 320, height: 20)
+        label.frame = NSRect(x: 20, y: 240, width: 320, height: 40)
         label.autoresizingMask = [.width, .minYMargin]
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 2
         contentView.addSubview(label)
         
         // Add App Button (+)
@@ -56,7 +58,7 @@ final class BlacklistWindow: NSWindowController, NSTableViewDelegate, NSTableVie
         contentView.addSubview(addBtn)
         
         // ScrollView + TableView
-        let scrollView = NSScrollView(frame: NSRect(x: 20, y: 20, width: 360, height: 230))
+        let scrollView = NSScrollView(frame: NSRect(x: 20, y: 20, width: 360, height: 210))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
         scrollView.borderType = .bezelBorder

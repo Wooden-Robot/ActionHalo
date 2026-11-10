@@ -353,4 +353,18 @@
 "Use arrow keys or Tab to choose an action, Enter to run it, and Escape to close." = "使用方向键或 Tab 选择动作，按回车执行，按 Esc 关闭。";
 "Another plugin operation is in progress. Please try again shortly." = "另一个插件操作正在进行，请稍后重试。";
 "Plugin Operation in Progress" = "插件操作正在进行";
-"Wait for the current plugin save, installation, or deletion to finish before quitting or restarting ActionHalo." = "请等待当前插件保存、安装或删除操作完成后，再退出或重启 ActionHalo。";
+"A Telegram search is still running. Wait for it to finish, then try quitting or restarting again." = "Telegram 搜索仍在进行。请等待完成后，再尝试退出或重启。";
+"Wait for running plugin actions and any plugin save, installation, or deletion to finish before quitting or restarting ActionHalo." = "请等待运行中的插件动作以及插件保存、安装或删除操作完成后，再退出或重启 ActionHalo。";
+
+/* Telegram search feedback */
+"Telegram Search Failed" = "Telegram 搜索失败";
+"This selection cannot be searched in Telegram. Select shorter, non-empty text and try again." = "这段选文无法用于 Telegram 搜索。请选取较短的非空文字后重试。";
+"The Telegram app could not be opened. Install Telegram for macOS and try again." = "无法打开 Telegram 应用。请安装 macOS 版 Telegram 后重试。";
+"Allow ActionHalo in System Settings > Privacy & Security > Accessibility, then try again." = "请在“系统设置 → 隐私与安全 → 辅助功能”中允许 ActionHalo，然后重试。";
+"Telegram did not become ready in time. Open Telegram and try again." = "等待 Telegram 就绪超时。请打开 Telegram 后重试。";
+"The active app or Telegram search field changed. Search again when you are ready." = "当前应用或 Telegram 搜索框发生了变化。准备好后可重新搜索。";
+"Telegram's search field is unavailable. Open Telegram's Global Search and try again." = "无法使用 Telegram 搜索框。请打开 Telegram 的“全局搜索”后重试。";
+"The clipboard could not be used safely. Wait until other clipboard operations finish before trying again." = "无法安全使用剪贴板。请等待其他剪贴板操作完成后再试。";
+"ActionHalo could not confirm the search text in Telegram." = "ActionHalo 未能确认 Telegram 中的搜索内容。";
+"The query may already have been entered. Check Telegram before trying again." = "搜索词可能已经输入，请先检查 Telegram 再决定是否重试。";
+"The plugin was written, but older copies could not be removed. Check permissions and try again.\n%@" = "插件已写入，但无法移除旧副本。请检查权限后重试。\n%@";

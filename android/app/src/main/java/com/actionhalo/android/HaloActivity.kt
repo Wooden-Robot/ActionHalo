@@ -60,7 +60,17 @@ open class HaloActivity : Activity() {
             setActions(actions)
             onDismiss = { finish() }
             onActionSelected = { action ->
-                if (ActionExecutor.execute(this@HaloActivity, action, text, ::showActionError, sourcePackage)) {
+                val currentActions = AppRulesStore(this@HaloActivity).actionsFor(sourcePackage,
+                    ActionStore(this@HaloActivity).allActions())
+                if (action !in currentActions) {
+                    if (currentActions.isEmpty()) {
+                        Toast.makeText(this@HaloActivity, R.string.no_actions, Toast.LENGTH_SHORT).show()
+                        finish()
+                    } else {
+                        setActions(currentActions)
+                        showActionError(R.string.actions_changed)
+                    }
+                } else if (ActionExecutor.execute(this@HaloActivity, action, text, ::showActionError, sourcePackage)) {
                     if (HaloAppearance.keepAfterCopy(this@HaloActivity, action)) {
                         if (!copyHeld) window.decorView.postDelayed(expireCopy, HaloAppearance.COPY_SESSION_MS)
                         copyHeld = true

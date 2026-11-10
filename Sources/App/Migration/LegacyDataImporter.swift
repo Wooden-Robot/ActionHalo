@@ -392,13 +392,22 @@ struct LegacyDataImporter {
     ) {
         var destinationDomain = initialDestinationDomain
         var pendingImportedKeys: [String] = []
+        // Clearing retains only the configured flag; preserve each existing group, including absent fields.
+        let hotkeyGroups = [
+            ["hotkeyConfigured", "hotkeyKeyCode", "hotkeyModifiers"],
+            ["toggleHotkeyConfigured", "toggleHotkeyKeyCode", "toggleHotkeyModifiers"],
+        ]
+        let preservedHotkeyKeys = Set(hotkeyGroups.filter { keys in
+            keys.contains { initialDestinationDomain[$0] != nil }
+        }.flatMap { $0 })
 
         for spec in Self.preferenceSpecs {
             guard let sourceValue = spec.sourceKeys.lazy.compactMap({ sourceDomain[$0] }).first else {
                 continue
             }
 
-            guard destinationDomain[spec.targetKey] == nil else {
+            guard destinationDomain[spec.targetKey] == nil,
+                  !preservedHotkeyKeys.contains(spec.targetKey) else {
                 result.preservedPreferenceKeys.append(spec.targetKey)
                 continue
             }

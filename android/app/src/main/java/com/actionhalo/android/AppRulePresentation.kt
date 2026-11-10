@@ -30,12 +30,13 @@ internal class AppRulePresentation(private val context: Context) {
     fun describe(packageName: String, profile: AppRulesStore.Profile = AppRulesStore(context).profile(packageName)): Result {
         val actions = ActionStore(context)
         val catalog = actions.allActions()
+        val scopes = actions.appScopes(catalog.map { it.id })
         val selected = profile.actions ?: actions.actions().map { it.id }
         val available = selected.mapNotNull { id -> catalog.find { it.id == id } }
-            .filter { actions.isAllowedInApp(it.id, packageName) }
+            .filter { scopes.getValue(it.id).allows(packageName) }
         val hidden = catalog.filterNot { candidate -> available.any { it.id == candidate.id } }.map { action ->
             Hidden(action, when {
-                !actions.isAllowedInApp(action.id, packageName) -> R.string.app_rules_hidden_scope
+                !scopes.getValue(action.id).allows(packageName) -> R.string.app_rules_hidden_scope
                 profile.actions != null -> R.string.app_rules_hidden_custom
                 else -> R.string.app_rules_hidden_global
             })

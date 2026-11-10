@@ -34,6 +34,7 @@
         <item>复制</item><item>经纬地球</item><item>链接</item><item>分享</item><item>搜索</item>
         <item>书本</item><item>胶片</item><item>竖排书籍</item><item>大陆地球</item><item>纸飞机</item>
         <item>Google</item><item>翻译</item><item>百度</item><item>豆瓣</item>
+        <item>打开链接</item><item>目录</item><item>代码</item><item>编辑</item>
     </string-array>
     <string name="add_action">＋ 添加网站操作</string>
     <string name="custom_title">新的网站操作</string>

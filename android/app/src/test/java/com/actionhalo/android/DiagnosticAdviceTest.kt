@@ -21,16 +21,16 @@ class DiagnosticAdviceTest {
         assertEquals(DiagnosticAdvice.Action.RULES, advice(result = SelectionDiagnostics.Result.APP_DISABLED).action)
         assertEquals(DiagnosticAdvice.Action.RULES, advice(result = SelectionDiagnostics.Result.APP_PAUSED).action)
         assertEquals(R.string.advice_filtered_title, advice(result = SelectionDiagnostics.Result.FILTERED).title)
-        assertEquals(R.string.advice_initial_title, advice(result = SelectionDiagnostics.Result.INITIAL_SELECTION).title)
+        assertEquals(R.string.advice_long_press_title, advice(result = SelectionDiagnostics.Result.LONG_PRESS_ONLY).title)
         assertEquals(DiagnosticAdvice.Action.ACTIONS, advice(hasActions = false).action)
         assertEquals("A source-specific empty list must lead to app rules", DiagnosticAdvice.Action.RULES,
             advice(result = SelectionDiagnostics.Result.NO_ACTIONS, hasActions = true).action)
     }
 
     @Test fun staleCopyFailureDoesNotOverrideANewerNativeSelection() {
-        assertEquals(R.string.advice_initial_title, advice(result = SelectionDiagnostics.Result.INITIAL_SELECTION,
+        assertEquals(R.string.advice_long_press_title, advice(result = SelectionDiagnostics.Result.LONG_PRESS_ONLY,
             stage = TelegramCopyDiagnostics.Stage.REQUEST_EXPIRED, latest = false).title)
-        assertEquals(R.string.advice_reselect_title, advice(result = SelectionDiagnostics.Result.INITIAL_SELECTION,
+        assertEquals(R.string.advice_reselect_title, advice(result = SelectionDiagnostics.Result.LONG_PRESS_ONLY,
             stage = TelegramCopyDiagnostics.Stage.REQUEST_EXPIRED, latest = true).title)
         assertEquals(R.string.advice_focus_title, advice(stage = TelegramCopyDiagnostics.Stage.CLIP_UNAVAILABLE, latest = true).title)
     }

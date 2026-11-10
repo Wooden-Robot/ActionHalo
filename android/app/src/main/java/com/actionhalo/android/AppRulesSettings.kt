@@ -95,7 +95,7 @@ internal class AppRulesSettings(private val activity: Activity) {
         @Suppress("DEPRECATION")
         val installed = activity.packageManager.queryIntentActivities(intent, 0).map { it.activityInfo.packageName }
         var configured = (store.packages() + store.pausedPackages()).toSet()
-        val scopePackages = actions.allActions().flatMap { actions.appScope(it.id).packages }
+        val scopePackages = actions.appScopes(actions.allActions().map { it.id }).values.flatMap { it.packages }
         val names = (installed + configured + scopePackages).distinct().filter { it != activity.packageName }
             .associateWith(::label)
         val packages = names.keys.sortedWith(compareBy<String> { it !in configured }
@@ -236,17 +236,33 @@ internal class AppRulesSettings(private val activity: Activity) {
         actionButton.setOnClickListener { openActions() }
         column.addView(actionButton)
         column.addView(HaloUi.label(activity, text(R.string.app_rules_consent_hint), 13f, HaloUi.secondary))
+        val status = HaloUi.label(activity, "", 13f, HaloUi.accent).apply {
+            tag = "app_rules_save_error"
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        column.addView(status)
         column.addView(preview)
         mode.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) = updateLabel()
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
         }
         val dialog = AlertDialog.Builder(activity).setTitle(label(pkg)).setView(ScrollView(activity).apply { addView(column) })
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                store.setProfile(pkg, AppRulesStore.Profile(AppRulesStore.TriggerMode.entries[mode.selectedItemPosition], selected))
+            .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton(R.string.app_rules_remove) { _, _ -> store.remove(pkg) }
+            .setNegativeButton(android.R.string.cancel, null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                try {
+                    store.setProfile(pkg, AppRulesStore.Profile(AppRulesStore.TriggerMode.entries[mode.selectedItemPosition], selected))
+                } catch (_: IllegalArgumentException) {
+                    status.setText(R.string.disabled_apps_invalid)
+                    return@setOnClickListener
+                }
                 Toast.makeText(activity, R.string.app_rules_saved, Toast.LENGTH_SHORT).show()
-            }.setNeutralButton(R.string.app_rules_remove) { _, _ -> store.remove(pkg) }
-            .setNegativeButton(android.R.string.cancel, null).show()
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
         AppSettingsDrafts.track(activity, dialog, "profile", onDismiss = { childDialog?.dismiss() }) { Bundle().apply {
             putString("package", pkg)
             putInt("mode", mode.selectedItemPosition)

@@ -32,7 +32,7 @@ internal object DiagnosticAdvice {
         return when (selection) {
             SelectionDiagnostics.Result.APP_DISABLED -> Advice(R.string.advice_app_disabled_title, R.string.advice_app_disabled_body, Action.RULES)
             SelectionDiagnostics.Result.APP_PAUSED -> Advice(R.string.advice_app_paused_title, R.string.advice_app_paused_body, Action.RULES)
-            SelectionDiagnostics.Result.INITIAL_SELECTION -> Advice(R.string.advice_initial_title, R.string.advice_initial_body, Action.TEST)
+            SelectionDiagnostics.Result.LONG_PRESS_ONLY -> Advice(R.string.advice_long_press_title, R.string.advice_long_press_body, Action.TEST)
             SelectionDiagnostics.Result.FILTERED -> Advice(R.string.advice_filtered_title, R.string.advice_filtered_body, Action.TRIGGERS)
             SelectionDiagnostics.Result.NO_SOURCE, SelectionDiagnostics.Result.NO_TEXT, SelectionDiagnostics.Result.NO_RANGE ->
                 Advice(R.string.advice_source_title, R.string.advice_source_body, Action.TRIGGERS)

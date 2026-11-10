@@ -39,6 +39,37 @@ private final class BlockingPluginSaveFileManager: FileManager, @unchecked Senda
     }
 }
 
+@MainActor
+private final class SuspendedClipboardSearchPort: TelegramSearchDesktopPort {
+    let pasteboard = NSPasteboard(name: .init(UUID().uuidString))
+    var resume: CheckedContinuation<Void, Never>?
+    private(set) var openCallCount = 0
+    private var query = ""
+
+    func openGlobalSearch() async -> TelegramSearchOpenResult {
+        openCallCount += 1
+        return Task.isCancelled ? .failed(.targetChanged) : .ready
+    }
+
+    func replaceQuery(_ query: String, using method: TelegramSearchInputMethod) async -> TelegramSearchDeliveryResult {
+        guard method == .clipboard else { return .unavailable }
+        self.query = query
+        let original = pasteboard.string(forType: .string) ?? ""
+        pasteboard.clearContents()
+        pasteboard.setString(query, forType: .string)
+        defer {
+            pasteboard.clearContents()
+            pasteboard.setString(original, forType: .string)
+        }
+        await withCheckedContinuation { resume = $0 }
+        return Task.isCancelled ? .failed(.targetChanged) : .delivered
+    }
+
+    func readQuery() async -> TelegramSearchReadback? {
+        .init(text: query, verification: .clipboardReadback)
+    }
+}
+
 final class PluginManagerTests: GlobalStateTestCase {
     private var temporaryDirectories: [URL] = []
     private let defaultsKeys = [
@@ -1181,6 +1212,271 @@ final class PluginManagerTests: GlobalStateTestCase {
         }
     }
 
+    @MainActor
+    func testDuplicateNativeSearchFeedbackKeepsOriginalSearchAndClipboardUndisturbed() async {
+        let manager = PluginManager.shared
+        let port = SuspendedClipboardSearchPort()
+        port.pasteboard.setString("original clipboard", forType: .string)
+        defer { port.pasteboard.releaseGlobally() }
+        let search = TelegramSearch(port: port)
+        let first = manager.executeTelegramSearch("first selection", search: search) { _ in
+            XCTFail("The original search should finish successfully")
+        }
+        let suspended = await waitForExecutionCondition { port.resume != nil }
+        XCTAssertTrue(suspended)
+        var busyFeedbackCount = 0
+
+        let duplicate = manager.executeTelegramSearch("second selection", search: search) { failure in
+            busyFeedbackCount += 1
+            XCTAssertEqual(failure.reason, .busy)
+            TelegramSearch.presentFailure(failure) { _ in
+                XCTFail("Duplicate search feedback must not activate a modal alert")
+            }
+        }
+        await duplicate.value
+
+        XCTAssertEqual(busyFeedbackCount, 1)
+        XCTAssertEqual(port.openCallCount, 1)
+        XCTAssertTrue(manager.hasRunningNativePluginExecutions)
+        XCTAssertNotNil(port.resume)
+        XCTAssertEqual(port.pasteboard.string(forType: .string), "first selection")
+        port.resume?.resume()
+        port.resume = nil
+        await first.value
+
+        XCTAssertFalse(manager.hasRunningPluginExecutions)
+        XCTAssertEqual(port.pasteboard.string(forType: .string), "original clipboard")
+    }
+
+    @MainActor
+    func testNativeSearchBlocksQuitThroughClipboardCleanupAndReleasesBeforeFailureFeedback() async {
+        let manager = PluginManager.shared
+        for cancelled in [false, true] {
+            let port = SuspendedClipboardSearchPort()
+            port.pasteboard.setString("original clipboard", forType: .string)
+            defer { port.pasteboard.releaseGlobally() }
+            var feedbackCount = 0
+            let task = manager.executeTelegramSearch("private selection", search: TelegramSearch(port: port)) { _ in
+                feedbackCount += 1
+                XCTAssertFalse(manager.hasRunningPluginExecutions)
+                XCTAssertEqual(port.pasteboard.string(forType: .string), "original clipboard")
+            }
+            XCTAssertTrue(manager.hasRunningPluginExecutions, "Guard must be registered before creating the Task")
+            XCTAssertTrue(manager.hasRunningNativePluginExecutions)
+            let suspended = await waitForExecutionCondition { port.resume != nil }
+            XCTAssertTrue(suspended)
+            XCTAssertEqual(port.pasteboard.string(forType: .string), "private selection")
+            XCTAssertEqual(AppDelegate().applicationShouldTerminate(NSApplication.shared) { _ in
+                XCTFail("Quit feedback must not open a modal alert while native input owns the clipboard")
+                return .alertFirstButtonReturn
+            }, .terminateCancel)
+            if cancelled { task.cancel() }
+            port.resume?.resume()
+            port.resume = nil
+            await task.value
+
+            XCTAssertFalse(manager.hasRunningPluginExecutions)
+            XCTAssertFalse(manager.hasRunningNativePluginExecutions)
+            XCTAssertEqual(port.pasteboard.string(forType: .string), "original clipboard")
+            XCTAssertEqual(feedbackCount, cancelled ? 1 : 0)
+            XCTAssertEqual(AppDelegate().applicationShouldTerminate(NSApplication.shared) { _ in
+                XCTFail("Native search cleanup must restore normal quit behavior")
+                return .alertFirstButtonReturn
+            }, .terminateNow)
+        }
+    }
+
+    @MainActor
+    func testQuitRechecksPluginActionsStartedDuringDiscardPromptWithoutDiscardingEdits() async {
+        _ = NSApplication.shared
+        let manager = PluginManager.shared
+        let editor = PluginEditorWindow()
+        editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        editor.orderFront(nil)
+        defer {
+            editor.discardUnsavedChanges()
+            editor.close()
+        }
+        let port = SuspendedClipboardSearchPort()
+        defer { port.pasteboard.releaseGlobally() }
+        var task: Task<Void, Never>?
+        var promptCount = 0
+        let reply = AppDelegate().applicationShouldTerminate(NSApplication.shared) { alert in
+            promptCount += 1
+            if promptCount == 1 {
+                XCTAssertEqual(alert.messageText, "Unsaved Plugin Changes".localized)
+                task = manager.executeTelegramSearch("needle", search: TelegramSearch(port: port), presentFailure: { _ in })
+                return .alertSecondButtonReturn
+            }
+            XCTFail("The new native action must cancel quit without another modal prompt")
+            return .alertFirstButtonReturn
+        }
+        XCTAssertEqual(reply, .terminateCancel)
+        XCTAssertEqual(promptCount, 1)
+        XCTAssertTrue(editor.hasUnsavedChanges)
+        task?.cancel()
+        await task?.value
+        XCTAssertFalse(manager.hasRunningPluginExecutions)
+    }
+
+    @MainActor
+    func testConcurrentScriptsPreventQuitUntilBothFinishAndCleanUp() async throws {
+        let manager = PluginManager.shared
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        temporaryDirectories.append(root)
+        let probes = [root.appendingPathComponent("first"), root.appendingPathComponent("second")]
+        let source = #"""
+        printf '%s\n%s\n' "$PWD" "$ACTIONHALO_TEXT_FILE" > "$ACTIONHALO_TEXT/started"
+        for ((i = 0; i < 250; i++)); do
+            if test -f "$ACTIONHALO_TEXT/release"; then exit EXIT_STATUS; fi
+            /bin/sleep 0.02
+        done
+        exit 9
+        """#
+        for (index, probe) in probes.enumerated() {
+            try FileManager.default.createDirectory(at: probe, withIntermediateDirectories: true)
+            let package = try makeScriptPluginBundle(
+                identifier: "com.test.quit-lifetime.\(index)",
+                scriptContent: source.replacingOccurrences(of: "EXIT_STATUS", with: index == 0 ? "0" : "7")
+            )
+            let plugin = try XCTUnwrap(PluginLoader.load(from: package))
+            manager.setExecutionTrusted(true, for: plugin)
+            manager.executePlugin(plugin, with: probe.path, targetProcessIdentifier: nil, targetFocusedElement: nil)
+            XCTAssertTrue(manager.hasRunningPluginExecutions, "Registration must happen before background dispatch")
+        }
+        defer {
+            for probe in probes { try? Data().write(to: probe.appendingPathComponent("release")) }
+        }
+
+        let started = await waitForExecutionCondition {
+            probes.allSatisfy { FileManager.default.fileExists(atPath: $0.appendingPathComponent("started").path) }
+        }
+        XCTAssertTrue(started)
+        let resources = try probes.map { probe -> (snapshot: URL, input: URL) in
+            let paths = try String(contentsOf: probe.appendingPathComponent("started"), encoding: .utf8)
+                .split(separator: "\n").map(String.init)
+            return (
+                URL(fileURLWithPath: try XCTUnwrap(paths.first)).deletingLastPathComponent(),
+                URL(fileURLWithPath: try XCTUnwrap(paths.dropFirst().first))
+            )
+        }
+        let delegate = AppDelegate()
+        let nativePort = SuspendedClipboardSearchPort()
+        defer { nativePort.pasteboard.releaseGlobally() }
+        let nativeTask = manager.executeTelegramSearch(
+            "needle", search: TelegramSearch(port: nativePort), presentFailure: { _ in }
+        )
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared) { _ in
+            XCTFail("Native input must take precedence over the script's modal quit warning")
+            return .alertFirstButtonReturn
+        }, .terminateCancel)
+        nativeTask.cancel()
+        await nativeTask.value
+        XCTAssertFalse(manager.hasRunningNativePluginExecutions)
+        XCTAssertTrue(manager.hasRunningPluginExecutions)
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared) { alert in
+            XCTAssertEqual(alert.messageText, "Plugin Operation in Progress".localized)
+            return .alertFirstButtonReturn
+        }, .terminateCancel)
+
+        try Data().write(to: probes[0].appendingPathComponent("release"))
+        let firstCleaned = await waitForExecutionCondition {
+            !FileManager.default.fileExists(atPath: resources[0].snapshot.path)
+        }
+        XCTAssertTrue(firstCleaned)
+        XCTAssertTrue(manager.hasRunningPluginExecutions, "Completing one script must not release the other's guard")
+        try Data().write(to: probes[1].appendingPathComponent("release"))
+        let finished = await waitForExecutionCondition { !manager.hasRunningPluginExecutions }
+        XCTAssertTrue(finished)
+        for resource in resources {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: resource.snapshot.path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: resource.input.path))
+        }
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared) { _ in
+            XCTFail("No warning should remain after every script and its cleanup finish")
+            return .alertFirstButtonReturn
+        }, .terminateNow)
+    }
+
+    @MainActor
+    func testCancelledTrustReleasesScriptQuitGuardAndSnapshotButKeyComboDoesNotBlockQuit() async throws {
+        let manager = PluginManager.shared
+        for type in [PluginActionType.shellScript, .applescript, .keyCombo] {
+            let package = try makeScriptPluginBundle(
+                identifier: "com.test.cancelled-trust.\(type.rawValue)",
+                scriptContent: "exit 0",
+                actionType: type
+            )
+            if type == .keyCombo {
+                try #"{"name":"Shortcut","identifier":"com.test.cancelled-trust.key-combo","action":{"type":"key-combo","key":"c","modifiers":["command"]}}"#
+                    .write(to: package.appendingPathComponent("Config.json"), atomically: true, encoding: .utf8)
+            }
+            let plugin = try XCTUnwrap(PluginLoader.load(from: package))
+            let presented = expectation(description: "Trust prompt reached")
+            let resume = DispatchSemaphore(value: 0)
+            let captured = LockedState(initialState: (snapshot: URL?.none, guarded: false))
+            manager.executeProtectedPlugin(
+                plugin, with: "private selection", targetProcessIdentifier: nil, keyComboTargetID: nil
+            ) { snapshot in
+                captured.withLock { $0 = (snapshot.containerURL, manager.hasRunningPluginExecutions) }
+                presented.fulfill()
+                _ = resume.wait(timeout: .now() + 5)
+                return false
+            }
+            await fulfillment(of: [presented], timeout: 3)
+            let observation = captured.withLock { $0 }
+            XCTAssertEqual(observation.guarded, type != .keyCombo)
+            XCTAssertEqual(manager.hasRunningPluginExecutions, type != .keyCombo)
+            resume.signal()
+            let cleaned = await waitForExecutionCondition {
+                !manager.hasRunningPluginExecutions && observation.snapshot.map {
+                    !FileManager.default.fileExists(atPath: $0.path)
+                } == true
+            }
+            XCTAssertTrue(cleaned, "Cancelling trust must remove its snapshot and release any script guard")
+        }
+    }
+
+    @MainActor
+    func testScriptSnapshotAndAppleScriptFailuresReleaseQuitGuard() async throws {
+        let manager = PluginManager.shared
+        let missingPackage = try makeScriptPluginBundle(identifier: "com.test.missing-before-execution", scriptContent: "exit 0")
+        let missingPlugin = try XCTUnwrap(PluginLoader.load(from: missingPackage))
+        try FileManager.default.removeItem(at: missingPackage)
+        manager.executePlugin(missingPlugin, with: "", targetProcessIdentifier: nil, targetFocusedElement: nil)
+        let missingFinished = await waitForExecutionCondition { !manager.hasRunningPluginExecutions }
+        XCTAssertTrue(missingFinished)
+
+        let package = try makeScriptPluginBundle(
+            identifier: "com.test.failing-applescript",
+            scriptContent: "error \"Expected fixture failure\" number 7",
+            actionType: .applescript
+        )
+        let plugin = try XCTUnwrap(PluginLoader.load(from: package))
+        manager.setExecutionTrusted(true, for: plugin)
+        let captured = LockedState(initialState: (snapshot: URL?.none, guarded: false))
+        manager.executeProtectedPlugin(
+            plugin, with: "private selection", targetProcessIdentifier: nil, keyComboTargetID: nil
+        ) { snapshot in
+            captured.withLock { $0 = (snapshot.containerURL, manager.hasRunningPluginExecutions) }
+            return true
+        }
+        let finished = await waitForExecutionCondition { !manager.hasRunningPluginExecutions }
+        XCTAssertTrue(finished)
+        let observation = captured.withLock { $0 }
+        XCTAssertTrue(observation.guarded)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(observation.snapshot).path))
+    }
+
+    @MainActor
+    private func waitForExecutionCondition(_ condition: () -> Bool) async -> Bool {
+        for _ in 0..<150 {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return condition()
+    }
+
     func testUserPluginURLFindsLegacyNamedOverrideByIdentifier() throws {
         let manager = PluginManager.shared
         let legacyURL = manager.userPluginsURL.appendingPathComponent("Legacy Name.actionhaloext")
@@ -1292,6 +1588,37 @@ final class PluginManagerTests: GlobalStateTestCase {
 
         XCTAssertFalse(manager.installPlugin(from: invalidURL))
         XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
+    }
+
+    @MainActor
+    func testInstallingWithReadOnlyDuplicateReportsFailureAndPreservesBothPackages() async throws {
+        let manager = PluginManager.shared
+        for sourceIsDestination in [false, true] {
+            let identifier = "com.test.install-cleanup.\(sourceIsDestination)"
+            let original = try makePluginBundle(identifier: identifier, name: "Older copy")
+            let source = try makePluginBundle(identifier: identifier, name: "New version")
+            try FileManager.default.createDirectory(at: manager.userPluginsURL, withIntermediateDirectories: true)
+            let duplicate = manager.userPluginsURL.appendingPathComponent("Older-\(sourceIsDestination).actionhaloext")
+            let destination = manager.userPluginsURL.appendingPathComponent(PluginManager.visibleUserPluginFileName(for: identifier))
+            try FileManager.default.copyItem(at: original, to: duplicate)
+            if sourceIsDestination { try FileManager.default.copyItem(at: source, to: destination) }
+            let originalConfig = try Data(contentsOf: duplicate.appendingPathComponent("Config.json"))
+            let newConfig = try Data(contentsOf: source.appendingPathComponent("Config.json"))
+            try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: duplicate.path)
+            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: duplicate.path) }
+            let reloaded = expectation(forNotification: PluginManager.pluginsReloadedNotification, object: manager)
+
+            let result = manager.installPluginDetailed(from: sourceIsDestination ? destination : source)
+            XCTAssertFalse(result.isSuccess, "An undeletable older copy must not be reported as a successful install")
+            if case .failed(.duplicateCleanupFailed) = result {} else {
+                XCTFail("The error must distinguish written packages from a copy failure")
+            }
+            await fulfillment(of: [reloaded], timeout: 3)
+
+            XCTAssertEqual(try Data(contentsOf: duplicate.appendingPathComponent("Config.json")), originalConfig)
+            XCTAssertEqual(try Data(contentsOf: destination.appendingPathComponent("Config.json")), newConfig)
+            XCTAssertTrue(manager.plugins.contains { $0.id == identifier })
+        }
     }
 
     func testInstallPluginDetailedReturnsInvalidPackageFailure() throws {
@@ -2054,6 +2381,25 @@ final class PluginManagerTests: GlobalStateTestCase {
         )
     }
 
+    func testWebTemplatesRequireHostsDuringValidationAndLoading() throws {
+        let package = try makePluginBundle(identifier: "com.test.url-host", name: "URL host")
+        let cases: [(String, Bool)] = [
+            ("https://", false), ("https:///search?q={text}", false), ("http:search?q={text}", false),
+            ("https://example.com/search?q={text}", true), ("HTTP://example.com:8080/{text}", true),
+            ("http://localhost:3000/?q={text}", true), ("{text}", true),
+            ("mailto:person@example.com?subject={text}", true), ("dict://{text}", true),
+        ]
+        for (template, allowed) in cases {
+            XCTAssertEqual(PluginManager.isAllowedPluginURLTemplate(template), allowed, template)
+            let config = try JSONSerialization.data(withJSONObject: [
+                "name": "URL host", "identifier": "com.test.url-host",
+                "action": ["type": "url", "url": template],
+            ])
+            try config.write(to: package.appendingPathComponent("Config.json"))
+            XCTAssertEqual(PluginLoader.load(from: package) != nil, allowed, template)
+        }
+    }
+
     func testPluginProcessEnvironmentOmitsUnsafeOrOversizedText() {
         let nulEnvironment = PluginManager.pluginProcessEnvironment(
             text: "safe\0unsafe",
@@ -2379,7 +2725,11 @@ final class PluginManagerTests: GlobalStateTestCase {
         """
     }
 
-    private func makeScriptPluginBundle(identifier: String, scriptContent: String) throws -> URL {
+    private func makeScriptPluginBundle(
+        identifier: String,
+        scriptContent: String,
+        actionType: PluginActionType = .shellScript
+    ) throws -> URL {
         let bundleURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".actionhaloext")
         temporaryDirectories.append(bundleURL)
         try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
@@ -2388,7 +2738,7 @@ final class PluginManagerTests: GlobalStateTestCase {
         {
             "name": "Script Plugin",
             "identifier": "\(identifier)",
-            "action": { "type": "shell-script", "script": "script.sh" }
+            "action": { "type": "\(actionType.rawValue)", "script": "script.sh" }
         }
         """
 

@@ -10,11 +10,13 @@ import android.os.Looper
 import android.widget.LinearLayout
 import android.widget.Button
 import org.json.JSONArray
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import java.time.LocalDate
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 internal data class AndroidRelease(val version: String, val notes: String, val downloadUrl: String)
 
@@ -41,17 +43,20 @@ internal object AndroidReleaseCatalog {
                 val version = filename.matchEntire(name)?.groupValues?.get(1) ?: continue
                 if (version != releaseVersion || asset.optString("state") != "uploaded" || asset.optLong("size") <= 0) continue
                 val url = asset.optString("browser_download_url")
-                val uri = try { URI(url) } catch (_: Exception) { continue }
-                val path = uri.path ?: continue
-                val downloadPath = path.removePrefix("/Wooden-Robot/ActionHalo/releases/download/").split('/')
-                if (uri.scheme != "https" || uri.host != "github.com" || uri.userInfo != null || uri.port != -1 ||
-                    uri.query != null || uri.fragment != null ||
-                    !path.startsWith("/Wooden-Robot/ActionHalo/releases/download/") ||
-                    uri.normalize().path != path || downloadPath.size != 2 || downloadPath[0] != tag || downloadPath[1] != name) continue
+                if (!isValidDownload(version, url, debug)) continue
                 candidates += AndroidRelease(version, release.optString("body").take(8_000), url)
             }
         }
         return candidates.maxByOrNull { AndroidVersion.parse(it.version)!! }
+    }
+
+    fun isValidDownload(version: String, url: String, debug: Boolean): Boolean {
+        if (AndroidVersion.parse(version) == null) return false
+        val uri = try { URI(url) } catch (_: Exception) { return false }
+        val channel = if (debug) "debug" else "release"
+        val expectedPath = "/Wooden-Robot/ActionHalo/releases/download/android-v$version/ActionHalo-$version-$channel.apk"
+        return uri.scheme == "https" && uri.host == "github.com" && uri.userInfo == null && uri.port == -1 &&
+            uri.query == null && uri.fragment == null && uri.path == expectedPath
     }
 }
 
@@ -65,6 +70,10 @@ internal class AndroidUpdateChecker(
     companion object {
         const val PREFERENCES_NAME = "android_updates"
         const val LAST_AUTOMATIC_CHECK_DAY = "last_automatic_check_day"
+        const val CACHED_RELEASE = "cached_release"
+        private val requestSequence = AtomicLong()
+        // Successful cache writes run on the main thread across all settings Activities.
+        private var latestSuccessfulRequest = 0L
     }
 
     private val worker = Executors.newSingleThreadExecutor()
@@ -77,20 +86,38 @@ internal class AndroidUpdateChecker(
     fun addStartupNotice(card: LinearLayout) {
         startupNotice = HaloUi.button(activity, "", true).apply { visibility = android.view.View.GONE }
             .also { card.addView(it, LinearLayout.LayoutParams(-1, -2)) }
+        refreshStartupNotice()
+    }
+
+    private fun refreshStartupNotice() {
+        val cached = runCatching {
+            val value = JSONObject(preferences.getString(CACHED_RELEASE, null) ?: return@runCatching null)
+            val version = value.getString("version")
+            val url = value.getString("downloadUrl")
+            if (AndroidReleaseCatalog.isValidDownload(version, url, BuildConfig.DEBUG)) AndroidRelease(version, "", url) else null
+        }.getOrNull()
+        showStartupNotice(cached)
+    }
+
+    private fun showStartupNotice(release: AndroidRelease?) {
+        val available = release?.takeIf(::isNewer)
+        startupNotice?.apply {
+            visibility = if (available != null) android.view.View.VISIBLE else android.view.View.GONE
+            if (available != null) {
+                text = activity.getString(R.string.update_available, available.version)
+                setOnClickListener { open(available.downloadUrl, this) }
+            } else setOnClickListener(null)
+        }
     }
 
     fun checkOnLaunch(day: LocalDate = LocalDate.now()): Boolean {
-        if (closed || preferences.getString(LAST_AUTOMATIC_CHECK_DAY, null) == day.toString()) return false
+        if (closed) return false
+        refreshStartupNotice()
+        if (preferences.getString(LAST_AUTOMATIC_CHECK_DAY, null) == day.toString()) return false
         // Count attempts so offline launches and activity recreation cannot keep retrying.
         preferences.edit().putString(LAST_AUTOMATIC_CHECK_DAY, day.toString()).apply()
         checkForUpdates { outcome ->
-            val release = outcome.getOrNull() ?: return@checkForUpdates
-            if (!isNewer(release)) return@checkForUpdates
-            startupNotice?.apply {
-                text = activity.getString(R.string.update_available, release.version)
-                visibility = android.view.View.VISIBLE
-                setOnClickListener { open(release.downloadUrl, this) }
-            }
+            outcome.onSuccess { refreshStartupNotice() }
         }
         return true
     }
@@ -132,10 +159,22 @@ internal class AndroidUpdateChecker(
 
     private fun checkForUpdates(completion: (Result<AndroidRelease?>) -> Unit) {
         if (closed) return
+        val requestId = requestSequence.incrementAndGet()
         worker.execute {
             val outcome = runCatching { AndroidReleaseCatalog.latest(fetch(), BuildConfig.DEBUG) }
             main.post {
-                if (!closed && !activity.isDestroyed && !activity.isFinishing) completion(outcome)
+                if (!closed && !activity.isDestroyed && !activity.isFinishing) {
+                    outcome.onSuccess { release ->
+                        if (requestId > latestSuccessfulRequest) {
+                            val cached = release?.takeIf(::isNewer)?.let {
+                                JSONObject().put("version", it.version).put("downloadUrl", it.downloadUrl).toString()
+                            }
+                            preferences.edit().putString(CACHED_RELEASE, cached).apply()
+                            latestSuccessfulRequest = requestId
+                        }
+                    }
+                    completion(outcome)
+                }
             }
         }
     }

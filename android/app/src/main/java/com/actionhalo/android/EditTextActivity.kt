@@ -16,12 +16,12 @@ class EditTextActivity : HaloActivity() {
     private var editor: EditText? = null
     private var editedText: String? = null
     private var choosing = false
-    private data class State(val text: String, val choosing: Boolean)
+    private data class State(val text: String, val choosing: Boolean, val selectionStart: Int, val selectionEnd: Int)
 
     override fun receiveText() {
         val restored = lastNonConfigurationInstance as? State
         val text = restored?.text ?: intent.getStringExtra(EXTRA_DEMO_TEXT).orEmpty()
-        if (!IncomingText.isUsable(text)) { finish(); return }
+        if (restored == null && !IncomingText.isUsable(text)) { finish(); return }
         if (restored?.choosing == true) { choose(text); return }
         val root = ScrollView(this).apply { setBackgroundColor(HaloUi.background); isFillViewport = true }
         val column = HaloUi.column(this, 24)
@@ -36,6 +36,7 @@ class EditTextActivity : HaloActivity() {
             minLines = 4
             maxLines = 12
             contentDescription = getString(R.string.action_edit_text)
+            restored?.let { setSelection(it.selectionStart.coerceIn(0, length()), it.selectionEnd.coerceIn(0, length())) }
         }
         editor = input
         column.addView(input, LinearLayout.LayoutParams(-1, -2))
@@ -66,7 +67,9 @@ class EditTextActivity : HaloActivity() {
         showHalo(text)
     }
 
-    override fun onRetainNonConfigurationInstance(): Any = State(editor?.text?.toString() ?: editedText.orEmpty(), choosing)
+    override fun onRetainNonConfigurationInstance(): Any = State(
+        editor?.text?.toString() ?: editedText.orEmpty(), choosing,
+        editor?.selectionStart ?: 0, editor?.selectionEnd ?: 0)
 
     override fun onDestroy() {
         editor?.text?.clear()

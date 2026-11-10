@@ -31,4 +31,6 @@
         <item>Large</item>
         <item>Extra large</item>
     </string-array>
+    <string name="destination_limit_reached">Up to %1$d actions can have a preferred opening app. Set another action to Default, then try again.</string>
+    <string name="destination_save_failed">Could not save the opening preference. Close this dialog and try again.</string>
 </resources>

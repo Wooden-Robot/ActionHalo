@@ -16,6 +16,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayInputStream
+import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class ConfigurationBackupTest {
@@ -113,6 +114,41 @@ class ConfigurationBackupTest {
             rejects { backup.restore(invalid) }
             assertEquals(original, savedState())
         }
+    }
+
+    @Test fun fullCatalogAppRuleSupportsExportPreviewImportAndUndoAtTheCustomActionLimit() {
+        val directory = File(target.cacheDir, "configuration-backup-full-catalog-test")
+        val backupContext = object : ContextWrapper(context) { override fun getFilesDir(): File = directory }
+        directory.deleteRecursively()
+        try {
+            val store = ActionStore(context)
+            val builtInCount = store.allActions().size
+            repeat(200) { store.addCustom("Search $it", "https://example.com/$it?q={text}") }
+            val orderedIds = store.allActions().map { it.id }.reversed()
+            assertEquals(builtInCount + 200, orderedIds.size)
+            val source = "org.example.reader"
+            val rules = AppRulesStore(context)
+            val fullProfile = AppRulesStore.Profile(AppRulesStore.TriggerMode.BUTTON, orderedIds)
+            rules.setProfile(source, fullProfile)
+            val backup = ConfigurationBackup(backupContext)
+            val original = backup.read(backup.export().byteInputStream(Charsets.UTF_8))
+            assertEquals(200, original.getJSONObject("actions").getJSONArray("custom").length())
+            val replacement = JSONObject(original.toString()).apply {
+                getJSONObject("appRules").getJSONObject(source).put("trigger", "AUTO")
+                    .put("actions", JSONArray().put("copy"))
+            }
+            val beforePreview = savedState()
+            assertTrue(backup.preview(replacement).contains(source))
+            assertEquals(beforePreview, savedState())
+
+            backup.restoreWithUndo(replacement)
+            assertEquals(AppRulesStore.Profile(AppRulesStore.TriggerMode.AUTO, listOf("copy")), rules.profile(source))
+            val previousActions = backup.previous().getJSONObject("appRules").getJSONObject(source).getJSONArray("actions")
+            assertEquals(orderedIds, List(previousActions.length()) { previousActions.getString(it) })
+            ConfigurationBackup(backupContext).restorePrevious()
+            assertEquals(fullProfile, rules.profile(source))
+            assertTrue(backup.changes(original).isEmpty)
+        } finally { directory.deleteRecursively() }
     }
 
     @Test fun oversizedTrailingInvalidUtf8AndEmptyFilesAreRejectedWithoutInitializingPreferences() {

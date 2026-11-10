@@ -5,7 +5,7 @@
     <string name="diagnostic_ranges">非空范围：事件 %1$d 次 · 控件 %2$d 次\n最近非空范围：事件 %3$s · 控件 %4$s</string>
     <string name="diagnostic_range_unavailable">未提供</string>
     <string name="diagnostic_test">检查自动弹出</string>
-    <string name="diagnostic_test_hint">检查会清零计数并显示示例圆环。关闭圆环后，到浏览器选中文字，等一秒再返回这里查看结果。仅保留次数和范围数字，不记录选中文字或浏览历史。</string>
+    <string name="diagnostic_test_hint">检查会清零选文及菜单诊断，并显示示例圆环。关闭圆环后，到目标应用复现问题，再返回这里复制故障诊断。仅保留次数、范围数字和最近 24 条固定原因及相对时间，不记录选中文字或应用历史。</string>
     <string name="diagnostic_test_unavailable">请先开启自动弹出，并在系统设置中连接无障碍服务。</string>
     <string name="diagnostic_waiting">尚未收到选文事件</string>
     <string name="diagnostic_received">已收到选文事件，等待选区稳定</string>

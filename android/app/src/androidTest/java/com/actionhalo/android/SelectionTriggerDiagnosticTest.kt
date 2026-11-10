@@ -25,6 +25,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.platform.view.inspector.WindowInspectorCompat
 import com.actionhalo.android.fixture.SelectionFixtureActivity
 import java.util.Collections
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.After
 import org.junit.Assert.assertTrue
@@ -47,6 +48,7 @@ class SelectionTriggerDiagnosticTest {
     private var oldStandardMenu: Boolean? = null
     private val events = Collections.synchronizedList(mutableListOf<String>())
     private val selectionSamples = Collections.synchronizedList(mutableListOf<SelectionSample>())
+    private val fixtureTextChanges = AtomicInteger()
     private var started = false
     private var launchedBrowser = false
 
@@ -77,8 +79,11 @@ class SelectionTriggerDiagnosticTest {
                 AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
         }
         automation.setOnAccessibilityEventListener { event ->
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED &&
+                event.packageName?.toString() == FIXTURE_PACKAGE) fixtureTextChanges.incrementAndGet()
             if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED ||
                 event.eventType == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED ||
+                event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED ||
                 event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED ||
                 event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                 event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
@@ -93,6 +98,7 @@ class SelectionTriggerDiagnosticTest {
                 }
                 val metadata = "t=${event.eventType} observedAt=${SystemClock.uptimeMillis()} eventAt=${event.eventTime} pkg=${event.packageName} window=${event.windowId}" +
                     " eventRange=${event.fromIndex}:${event.toIndex} source=${source != null}" +
+                    " changeCounts=${event.addedCount}:${event.removedCount} scroll=${event.scrollX}:${event.scrollY}" +
                     " class=${source?.className} nodeRange=${source?.textSelectionStart}:${source?.textSelectionEnd}" +
                     " nodeId=${source?.hashCode()} result=${SelectionDiagnostics.result}" +
                     " refreshed=$refreshed" +
@@ -205,24 +211,26 @@ class SelectionTriggerDiagnosticTest {
     @Test fun readOnlyLongPressAutomaticallyOpensHalo() = diagnose("readonly")
     @Test fun webLongPressAutomaticallyOpensHalo() = diagnose("web", launchCommand =
         "am start -W -n $FIXTURE --es fixture_mode web --ez editable_web true")
+    @Test fun quickWebHandleReleaseRestoresTheVisibleHalo() = diagnose("web", quickHandle = true, launchCommand =
+        "am start -W -n $FIXTURE --es fixture_mode web --ez editable_web true")
 
-    @Test fun initialSelectionStaysQuietAndOnlyAnAdjustedRangeOpensTheHalo() {
+    @Test fun initialSelectionOpensTheHaloAndDuplicateEventsKeepItsWindow() {
         shell("am start -W -S -n $FIXTURE")
         awaitTextNode(FIXTURE_PACKAGE).let(::recycle)
         changeFixtureSelection(0, 9)
-        assertNoAutomaticEntryForSettlement()
+        await("The first nonempty selection must open its halo without a handle adjustment") { overlayShown() }
+        val original = currentNativeHalo()
         val received = SelectionDiagnostics.selectionEvents
         shell("am start -W --activity-single-top -n $FIXTURE --ez repeat_selection_event true")
         await("The duplicate real accessibility event must be delivered") { SelectionDiagnostics.selectionEvents > received }
-        assertNoAutomaticEntryForSettlement()
+        instrumentation.waitForIdleSync()
+        assertTrue("Duplicate selection events must retain the same wheel", currentNativeHalo() === original)
         changeFixtureSelection(0, 18)
         await("Refining the initial range must show its halo") { overlayShown() }
         changeFixtureSelection(1, 1)
         assertNoAutomaticEntryForSettlement()
         changeFixtureSelection(0, 9)
-        assertNoAutomaticEntryForSettlement()
-        changeFixtureSelection(0, 18)
-        await("A new selection session must also wait for adjustment") { overlayShown() }
+        await("The first range of a new selection session must also open its halo") { overlayShown() }
     }
 
     @Test fun refiningAnOpenNativeSelectionPreservesItsWindowAndUpdatesTheText() {
@@ -291,8 +299,6 @@ class SelectionTriggerDiagnosticTest {
             instrumentation.waitForIdleSync()
             changeFixtureSelection(1, 1)
             changeFixtureSelection(0, 9)
-            assertNoOverlayForSettlement()
-            changeFixtureSelection(0, 18)
             await("A per-app automatic rule must override the global trigger switch") { overlayShown() }
             rules.pauseFor(AppRulesStore.TEN_MINUTES)
             await("Pause must dismiss the current wheel") { !overlayShown() }
@@ -303,8 +309,6 @@ class SelectionTriggerDiagnosticTest {
             instrumentation.waitForIdleSync()
             changeFixtureSelection(1, 1)
             changeFixtureSelection(0, 9)
-            assertNoOverlayForSettlement()
-            changeFixtureSelection(0, 18)
             await("Resume must restore the rule without a service restart") { overlayShown() }
         } finally { rules.resume(); rules.setProfile(FIXTURE_PACKAGE, previous) }
     }
@@ -336,8 +340,6 @@ class SelectionTriggerDiagnosticTest {
             instrumentation.waitForIdleSync()
             changeFixtureSelection(1, 1)
             changeFixtureSelection(0, 9)
-            assertNoOverlayForSettlement()
-            changeFixtureSelection(0, 18)
             await("Removing the app must restore automatic triggering without a service restart") { overlayShown() }
         } finally {
             preferences.edit().apply {
@@ -389,8 +391,8 @@ class SelectionTriggerDiagnosticTest {
             val root = menu.parent as android.view.View
             val params = root.layoutParams as android.view.WindowManager.LayoutParams
             assertEquals(android.view.WindowManager.LayoutParams.MATCH_PARENT, params.width)
-            assertTrue(params.flags and android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND != 0)
-            if (menu.gtaModeEnabled) assertTrue(root.background != null)
+            assertEquals(0, params.flags and android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            assertTrue(root.background == null)
         }
         await("The first expanded frame must be ready to draw") { firstDraw.get() != null }
         val newOrigin = firstDraw.get()
@@ -400,22 +402,33 @@ class SelectionTriggerDiagnosticTest {
         await("The same first touch must execute Copy and close the halo") { !overlayShown() }
     }
 
-    @Test fun longPressingAnotherWordStartsANewQuietInitialSelection() {
+    @Test fun longPressingAnotherWordOpensItsHaloWithoutAdjustingEitherRange() {
         shell("am start -W -S -n $FIXTURE")
         val source = awaitTextNode(FIXTURE_PACKAGE)
-        val bounds = Rect().also(source::getBoundsInScreen)
         try {
-            longPress(bounds.left + 64f, bounds.top + 64f)
-            assertNoOverlayForSettlement()
-            assertTrue(source.refresh())
+            SystemClock.sleep(500)
+            fun selectWord(index: Int) {
+                val key = AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY
+                assertTrue(source.refreshWithExtraData(key, Bundle().apply {
+                    putInt(AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_START_INDEX, index)
+                    putInt(AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_LENGTH, 1)
+                }))
+                @Suppress("DEPRECATION")
+                val character = source.extras.getParcelableArray(key)?.single() as android.graphics.RectF
+                assertFalse(character.isEmpty)
+                longPress(character.centerX(), character.centerY())
+                await("Each real long press must open the selected word without adjustment") { overlayShown() }
+                assertTrue(source.refresh())
+                assertTrue("The real long press must select the word under its character",
+                    source.textSelectionStart <= index && source.textSelectionEnd > index)
+            }
+            selectWord(3)
             val firstStart = source.textSelectionStart
-            longPress(bounds.left + 120 * instrumentation.targetContext.resources.displayMetrics.density,
-                bounds.top + 64f)
-            assertNoOverlayForSettlement()
-            assertTrue(source.refresh())
+            selectWord(12)
             assertTrue("The second real long press must select another word", source.textSelectionStart != firstStart)
-            changeFixtureSelection(0, 18)
-            await("Adjusting that new long-press selection must still trigger") { overlayShown() }
+            val menu = currentNativeHalo() as RadialMenuView
+            val selected = source.text.toString().substring(source.textSelectionStart, source.textSelectionEnd)
+            instrumentation.runOnMainSync { assertEquals(selected, menu.selectedText) }
         } finally { recycle(source) }
     }
 
@@ -441,6 +454,13 @@ class SelectionTriggerDiagnosticTest {
                 .putBoolean(TelegramCopyPolicy.STANDARD_MENU_SETTING, true).commit())
             diagnose("web", standardMenu = true, buttonMode = false)
         } finally { rules.setProfile(FIXTURE_PACKAGE, previous) }
+    }
+
+    @Test fun quickMenuWebHandleReleaseRestoresTheVisibleHalo() {
+        assertTrue(instrumentation.targetContext.getSharedPreferences("actionhalo_settings", Context.MODE_PRIVATE)
+            .edit().putBoolean("auto_popup_enabled", false).putBoolean("accessibility_consent", false)
+            .putBoolean(TelegramCopyPolicy.STANDARD_MENU_SETTING, true).commit())
+        diagnose("web", standardMenu = true, buttonMode = false, quickHandle = true)
     }
 
     @Test fun disabledAppsChecklistAlsoSuppressesStandardMenuHelpers() {
@@ -555,8 +575,6 @@ class SelectionTriggerDiagnosticTest {
         assertNoOverlayForSettlement()
         changeFixtureSelection(1, 1)
         changeFixtureSelection(0, 9)
-        assertNoOverlayForSettlement()
-        changeFixtureSelection(0, SelectionFixtureActivity.SAMPLE_TEXT.length)
         await("A fresh selection after wake must display a new halo") { overlayShown() }
     }
 
@@ -576,8 +594,6 @@ class SelectionTriggerDiagnosticTest {
         await("The real service must reconnect") { SelectionAccessibilityService.isConnected() }
         changeFixtureSelection(1, 1)
         changeFixtureSelection(0, 9)
-        assertNoOverlayForSettlement()
-        changeFixtureSelection(0, SelectionFixtureActivity.SAMPLE_TEXT.length)
         await("A new selection after reconnection must display its halo") { overlayShown() }
     }
     @Test fun nativeSelectionOpensWebTranslationAndClosesTheHalo() {
@@ -617,36 +633,79 @@ class SelectionTriggerDiagnosticTest {
         launchRangeRace("stale_collapsed")
         awaitRangeMismatch(1, 1, 0, 9)
         assertFreshNodeRange(0, 9)
-        assertNoOverlayForSettlement()
-        changeFixtureSelection(0, 18)
         val deadline = SystemClock.uptimeMillis() + 2_000
         while (SystemClock.uptimeMillis() < deadline && !overlayShown()) SystemClock.sleep(40)
         assertTrue("A fresh nonempty 0:9 source must survive a delayed 1:1 event. ${eventSummary()}", overlayShown())
     }
 
+    @Test fun pendingSelectionIgnoresOnlyUnchangedTextNotificationsFromTheSameNode() {
+        val serviceField = SelectionAccessibilityService::class.java.getDeclaredField("connectedService").apply { isAccessible = true }
+        val service = (serviceField.get(null) as java.lang.ref.WeakReference<*>).get()!!
+        val pendingField = SelectionAccessibilityService::class.java.getDeclaredField("pending").apply { isAccessible = true }
+        val handlerField = SelectionAccessibilityService::class.java.getDeclaredField("handler").apply { isAccessible = true }
+        val runnableField = SelectionAccessibilityService::class.java.getDeclaredField("showPending").apply { isAccessible = true }
+        for (kind in listOf("duplicate", "same_length_change", "length_change", "other_node", "password_metadata")) {
+            shell("am start -W -S -n $FIXTURE --ez mute_selection_events true")
+            SystemClock.sleep(800)
+            val node = awaitTextNode(FIXTURE_PACKAGE)
+            val captured = AtomicReference<Any>()
+            val original = AtomicReference<Runnable>()
+            val capture = Runnable { captured.set(pendingField.get(service)) }
+            instrumentation.runOnMainSync {
+                original.set(runnableField.get(service) as Runnable)
+                runnableField.set(service, capture)
+            }
+            try {
+                changeFixtureSelection(0, 9)
+                shell("am start -W --activity-single-top -n $FIXTURE --ez repeat_selection_event true")
+                await("$kind must start with a real pending selection") { captured.get() != null }
+                val before = node.text.toString()
+                val textEvents = fixtureTextChanges.get()
+                shell("am start -W --activity-single-top -n $FIXTURE --es native_text_event $kind")
+                await("$kind must deliver its actual text-change notification") {
+                    fixtureTextChanges.get() > textEvents
+                }
+                automation.waitForIdle(250, 6_000)
+                assertTrue(node.refresh())
+                assertEquals("$kind must retain the actual range so collapse cannot explain cancellation", 0, node.textSelectionStart)
+                assertEquals(9, node.textSelectionEnd)
+                val after = node.text.toString()
+                if (kind == "same_length_change") {
+                    assertEquals(before.length, after.length)
+                    assertFalse(before == after)
+                } else if (kind == "length_change") {
+                    assertTrue(after.length > before.length)
+                } else assertEquals(before, after)
+
+                instrumentation.runOnMainSync {
+                    runnableField.set(service, original.get())
+                    if (kind == "duplicate") {
+                        assertTrue("Duplicate text metadata must retain the same pending request", captured.get() === pendingField.get(service))
+                        original.get().run()
+                    } else {
+                        assertEquals("$kind must cancel pending execution", null, pendingField.get(service))
+                    }
+                }
+                if (kind == "duplicate") {
+                    await("An unchanged field must still display its pending selection") { overlayShown() }
+                    val menu = currentNativeHalo() as RadialMenuView
+                    instrumentation.runOnMainSync { assertEquals("Selection", menu.selectedText) }
+                } else assertNoAutomaticEntryForSettlement()
+            } finally {
+                recycle(node)
+                instrumentation.runOnMainSync {
+                    (handlerField.get(service) as android.os.Handler).removeCallbacks(capture)
+                    runnableField.set(service, original.get())
+                }
+            }
+        }
+    }
+
     @Test fun pendingRefinementSurvivesANewerNodeRangeBeforeItsEvent() {
         shell("am start -W -S -n $FIXTURE")
         awaitTextNode(FIXTURE_PACKAGE).let(::recycle)
-        changeFixtureSelection(0, 9)
-        assertNoAutomaticEntryForSettlement()
         val serviceField = SelectionAccessibilityService::class.java.getDeclaredField("connectedService").apply { isAccessible = true }
         val service = (serviceField.get(null) as java.lang.ref.WeakReference<*>).get()!!
-        val initialSource = awaitTextNode(FIXTURE_PACKAGE)
-        try {
-            await("The service must observe the initial range before the controlled refinement") {
-                if (!initialSource.refresh() || !initialSource.isVisibleToUser ||
-                    initialSource.textSelectionStart != 0 || initialSource.textSelectionEnd != 9) return@await false
-                var primed = false
-                instrumentation.runOnMainSync {
-                    val key = SelectionAccessibilityService::class.java.getDeclaredField("lastSelection")
-                        .apply { isAccessible = true }.get(service) ?: return@runOnMainSync
-                    fun field(name: String): Any? = key.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(key)
-                    primed = field("packageName") == FIXTURE_PACKAGE && field("windowId") == initialSource.windowId &&
-                        field("nodeId") == initialSource.hashCode() && field("range") == SelectionPolicy.Range(0, 9)
-                }
-                primed
-            }
-        } finally { recycle(initialSource) }
         val pendingField = SelectionAccessibilityService::class.java.getDeclaredField("pending").apply { isAccessible = true }
         val handlerField = SelectionAccessibilityService::class.java.getDeclaredField("handler").apply { isAccessible = true }
         val runnableField = SelectionAccessibilityService::class.java.getDeclaredField("showPending").apply { isAccessible = true }
@@ -738,8 +797,6 @@ class SelectionTriggerDiagnosticTest {
         awaitTextNode(FIXTURE_PACKAGE).let(::recycle)
         changeFixtureSelection(1, 1)
         instrumentation.settleInput()
-        changeFixtureSelection(0, 9)
-        assertNoOverlayForSettlement()
         changeFixtureSelection(0, SelectionFixtureActivity.SAMPLE_TEXT.length)
         try {
             await("The foreign fixture's real selection must show a halo") { overlayShown() }
@@ -810,7 +867,10 @@ class SelectionTriggerDiagnosticTest {
             if (condition()) return
             SystemClock.sleep(40)
         }
-        throw AssertionError(message)
+        var report = ""
+        instrumentation.runOnMainSync { report = TelegramCopyDiagnostics.report(instrumentation.targetContext) }
+        val recentEvents = synchronized(events) { events.takeLast(40).joinToString("\n") }
+        throw AssertionError("$message\n$report\nRecent event metadata:\n$recentEvents")
     }
 
     @Suppress("DEPRECATION")
@@ -918,7 +978,7 @@ class SelectionTriggerDiagnosticTest {
     )
 
     private fun diagnose(mode: String, hostPackage: String = FIXTURE_PACKAGE, launchCommand: String? = null,
-        standardMenu: Boolean = false, buttonMode: Boolean = true) {
+        standardMenu: Boolean = false, buttonMode: Boolean = true, quickHandle: Boolean = false) {
         events.clear()
         shell("am force-stop $FIXTURE_PACKAGE")
         shell(launchCommand ?: "am start -W -n $FIXTURE_PACKAGE/com.actionhalo.android.fixture.SelectionFixtureActivity --es fixture_mode $mode --ez mute_selection_events $standardMenu")
@@ -943,10 +1003,30 @@ class SelectionTriggerDiagnosticTest {
         val y = if (browser) bounds.top + 20f * instrumentation.targetContext.resources.displayMetrics.density else bounds.top + 64f
         Log.i(TAG, "mode=$mode longPress bounds=$bounds point=$x,$y before=${windowMetadata()}")
         longPress(x, y)
-        if (!standardMenu || buttonMode) assertNoOverlayForSettlement()
+        if (standardMenu && buttonMode) assertNoOverlayForSettlement()
+        fun wheelVisible(): Boolean {
+            var visible = false
+            instrumentation.runOnMainSync {
+                val connected = SelectionAccessibilityService::class.java.getDeclaredField("connectedService").apply { isAccessible = true }
+                val service = (connected.get(null) as java.lang.ref.WeakReference<*>).get()
+                val menu = if (standardMenu) {
+                    val delegate = SelectionAccessibilityService::class.java.getDeclaredField("telegramCopyAssistant\$delegate")
+                        .apply { isAccessible = true }.get(service) as Lazy<*>
+                    TelegramCopyAssistant::class.java.getDeclaredField("radial").apply { isAccessible = true }.get(delegate.value)
+                } else SelectionAccessibilityService::class.java.getDeclaredField("overlay").apply { isAccessible = true }.get(service)
+                visible = (menu as? RadialMenuView)?.isShown == true
+            }
+            return visible
+        }
+        if (!standardMenu) await("The first native long press must visibly display the circle") { wheelVisible() }
         if (standardMenu && !buttonMode) {
-            await("A WebView menu without ranges must directly display the circle") { overlayShown() }
+            await("A WebView menu without ranges must visibly display the circle") { wheelVisible() }
+            assertTrue("The legacy-menu fixture must not publish selection-change events", selectionSamples.isEmpty())
             assertFalse(selectionHelperShown())
+            repeat(2) {
+                dragWebHandle(node.windowId, quickHandle)
+                await("Releasing WebView handle ${it + 1} must restore the visible menu circle") { wheelVisible() }
+            }
         } else if (standardMenu) {
             await("The initial unsupported selection must offer its manual helper") {
                 selectionHelperShown()
@@ -973,54 +1053,7 @@ class SelectionTriggerDiagnosticTest {
             } else {
                 // WebView's ACTION_SET_SELECTION dismisses its toolbar without restoring it.
                 // Drag the real handle so Chromium publishes both the range and menu lifecycle.
-                val density = instrumentation.targetContext.resources.displayMetrics.density
-                var handles = emptyList<Rect>()
-                var legacyFrames: List<Rect>? = null
-                // A newly created WebView handle can report its size before its screen position.
-                // This fixture selects the first word, whose right handle belongs inside the text bounds.
-                await("The first word's selection handle must reach the rendered text") {
-                    val maxSize = (64 * density).toInt()
-                    handles = if (Build.VERSION.SDK_INT == 26 && hostPackage == FIXTURE_PACKAGE) {
-                        val frames = legacyWebHandleFrames()
-                        if (frames != legacyFrames) Log.i(TAG, "mode=$mode nativePopupFrames=$frames")
-                        legacyFrames = frames
-                        frames.filter { it.width() in 1..maxSize && it.height() in 1..maxSize &&
-                            it.centerX() in bounds.left..bounds.right && it.top >= bounds.top }
-                    } else automation.windows.mapNotNull { window ->
-                        if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@mapNotNull null
-                        val parent = window.parent ?: return@mapNotNull null
-                        val sameHost = try { parent.id == node.windowId } finally {
-                            @Suppress("DEPRECATION")
-                            if (Build.VERSION.SDK_INT < 33) parent.recycle()
-                        }
-                        if (!sameHost) return@mapNotNull null
-                        val rect = Rect().also(window::getBoundsInScreen)
-                        if (rect.width() !in 1..maxSize || rect.height() !in 1..maxSize) return@mapNotNull null
-                        // WebView can move the real handle before its accessibility window bounds update.
-                        window.root?.let { root ->
-                            try { if (root.refresh()) root.getBoundsInScreen(rect) } finally { recycle(root) }
-                        }
-                        if (rect.width() in 1..maxSize && rect.height() in 1..maxSize &&
-                            rect.centerX() in bounds.left..bounds.right && rect.top >= bounds.top) rect else null
-                    }
-                    handles.isNotEmpty()
-                }
-                Log.i(TAG, "mode=$mode selectionHandleWindows=$handles")
-                val handle = checkNotNull(handles.maxByOrNull { it.centerX() })
-                val x = handle.exactCenterX()
-                // The floating toolbar may overlap the handle's lower portion.
-                val y = handle.top + minOf(handle.height() / 4f, 4 * density)
-                val shift = 96 * density
-                val down = SystemClock.uptimeMillis()
-                inject(down, down, MotionEvent.ACTION_DOWN, x, y)
-                try {
-                    for (step in 1..16) {
-                        SystemClock.sleep(40)
-                        inject(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE, x + shift * step / 16, y)
-                    }
-                } finally {
-                    inject(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x + shift, y)
-                }
+                dragWebHandle(node.windowId, quickHandle, initialWordBounds = bounds, hostPackage = hostPackage)
                 if (mode == "web") {
                     // Chromium can publish the final range after the handle receives ACTION_UP.
                     automation.waitForIdle(250, 6_000)
@@ -1042,7 +1075,7 @@ class SelectionTriggerDiagnosticTest {
         val deadline = SystemClock.uptimeMillis() + 4_000
         var overlay = false
         while (SystemClock.uptimeMillis() < deadline) {
-            overlay = overlayShown()
+            overlay = wheelVisible()
             if (overlay) break
             SystemClock.sleep(40)
         }
@@ -1056,7 +1089,7 @@ class SelectionTriggerDiagnosticTest {
         }
         assertTrue("$mode adjusted or explicitly requested selection must display its halo. " +
             "Attached local windows: $localWindows. Observed metadata: ${synchronized(events) { events.joinToString(" | ") }}", overlay)
-        if (standardMenu) {
+        if (standardMenu && buttonMode) {
             assertTrue("The legacy-menu fixture must not publish selection-change events", selectionSamples.isEmpty())
         }
         if (expectedSelection != null) {
@@ -1066,6 +1099,62 @@ class SelectionTriggerDiagnosticTest {
                 instrumentation.runOnMainSync { selected = menu.selectedText }
                 selected == expectedSelection
             }
+        }
+    }
+
+    private fun dragWebHandle(sourceWindowId: Int, quick: Boolean, initialWordBounds: Rect? = null, hostPackage: String = FIXTURE_PACKAGE) {
+        // Chromium exposes ranges in events; drag its actual right-hand popup handle.
+        val density = instrumentation.targetContext.resources.displayMetrics.density
+        var handles = emptyList<Rect>()
+        var legacyFrames: List<Rect>? = null
+        fun readPositionedHandles(): Boolean {
+            val maxSize = (64 * density).toInt()
+            handles = if (Build.VERSION.SDK_INT == 26 && hostPackage == FIXTURE_PACKAGE && initialWordBounds != null) {
+                val frames = legacyWebHandleFrames()
+                if (frames != legacyFrames) Log.i(TAG, "nativePopupFrames=$frames")
+                legacyFrames = frames
+                frames.filter { it.width() in 1..maxSize && it.height() in 1..maxSize &&
+                    it.centerX() in initialWordBounds.left..initialWordBounds.right && it.top >= initialWordBounds.top }
+            } else automation.windows.mapNotNull { window ->
+                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@mapNotNull null
+                val parent = window.parent ?: return@mapNotNull null
+                val sameHost = try { parent.id == sourceWindowId } finally {
+                    @Suppress("DEPRECATION")
+                    if (Build.VERSION.SDK_INT < 33) parent.recycle()
+                }
+                if (!sameHost) return@mapNotNull null
+                val rect = Rect().also(window::getBoundsInScreen)
+                if (rect.width() !in 1..maxSize || rect.height() !in 1..maxSize) return@mapNotNull null
+                // WebView can move the real handle before its accessibility window bounds update.
+                window.root?.let { root ->
+                    try { if (root.refresh()) root.getBoundsInScreen(rect) } finally { recycle(root) }
+                }
+                if (rect.width() in 1..maxSize && rect.height() in 1..maxSize &&
+                    (initialWordBounds == null || (rect.centerX() in initialWordBounds.left..initialWordBounds.right &&
+                        rect.top >= initialWordBounds.top))) rect else null
+            }
+            return handles.isNotEmpty()
+        }
+        // Only the initial first-word drag has this geometry contract; subsequent drags
+        // can legitimately move either handle outside the original line.
+        if (initialWordBounds != null) {
+            await("The first word's selection handle must reach the rendered text", ::readPositionedHandles)
+        } else readPositionedHandles()
+        Log.i(TAG, "selectionHandleWindows=$handles")
+        val handle = checkNotNull(handles.maxByOrNull { it.centerX() })
+        val x = handle.exactCenterX()
+        // The floating toolbar may overlap the handle's lower portion.
+        val y = handle.top + minOf(handle.height() / 4f, 4 * density)
+        val shift = 96 * density
+        val down = SystemClock.uptimeMillis()
+        inject(down, down, MotionEvent.ACTION_DOWN, x, y)
+        try {
+            for (step in 1..16) {
+                if (!quick) SystemClock.sleep(40)
+                inject(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE, x + shift * step / 16, y)
+            }
+        } finally {
+            inject(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x + shift, y)
         }
     }
 

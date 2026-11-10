@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.view.InputDevice
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -109,6 +110,89 @@ class DailyInteractionTest {
         assertEquals(AppRulesStore.TriggerMode.OFF, rules.triggerMode(pkg))
         assertEquals(profile.actions, rules.profile(pkg).actions)
         assertEquals(2, closed)
+    }
+
+    @Test fun sourceOptionsKeepKeyboardFocusInsideThePanelAndRestoreOnlyKeyboardFocus() {
+        val incoming = Intent(target, HaloActivity::class.java).setAction(Intent.ACTION_SEND).setType("text/plain")
+            .putExtra(Intent.EXTRA_TEXT, "Keyboard selection fixture")
+        var originalTouchMode = true
+        var executed = 0
+        lateinit var menu: RadialMenuView
+        lateinit var options: Button
+        lateinit var panel: ScrollView
+        val actions = listOf(HaloAction("keyboard-copy", "Keyboard copy", "", ActionType.COPY),
+            HaloAction("keyboard-link", "Keyboard link", "", ActionType.OPEN_URL))
+        fun tap(view: View) {
+            val point = IntArray(2)
+            instrumentation.runOnMainSync {
+                view.getLocationOnScreen(point)
+                point[0] += view.width / 2
+                point[1] += view.height / 2
+            }
+            val down = android.os.SystemClock.uptimeMillis()
+            for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                val event = MotionEvent.obtain(down, android.os.SystemClock.uptimeMillis(), action,
+                    point[0].toFloat(), point[1].toFloat(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+                try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+            }
+            instrumentation.waitForIdleSync()
+        }
+        try {
+            ActivityScenario.launch<HaloActivity>(incoming).use { scenario ->
+                scenario.onActivity { activity ->
+                    menu = descendants(activity.window.decorView).filterIsInstance<RadialMenuView>().single()
+                    originalTouchMode = menu.isInTouchMode
+                    menu.setActions(actions)
+                    menu.onActionSelected = { executed++ }
+                    SourceAppControls.bind(menu, pkg) { }
+                    options = descendants(menu).filterIsInstance<Button>().single {
+                        it.contentDescription == activity.getString(R.string.source_app_options)
+                    }
+                    assertTrue(options.requestFocusFromTouch())
+                    options.performClick()
+                    panel = descendants(menu).filterIsInstance<ScrollView>().single()
+                }
+                instrumentation.waitForIdleSync()
+                repeat(6) {
+                    instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_TAB)
+                    scenario.onActivity {
+                        assertTrue("Tab must stay inside the visible source options", menu.findFocus() in descendants(panel))
+                        assertFalse("Covered buttons must not remain keyboard targets",
+                            menu.getFocusables(View.FOCUS_FORWARD).any { it.parent === menu && it !== panel })
+                    }
+                }
+                scenario.onActivity {
+                    menu.setActions(actions)
+                    val behind = (0 until menu.childCount).map(menu::getChildAt).filterIsInstance<Button>()
+                    assertTrue("Rebuilding actions must keep their focus inside the panel", behind.none { it.isFocusable })
+                    assertTrue("Rebuilt actions must remain hidden from TalkBack", behind.all {
+                        it.importantForAccessibility == View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                    })
+                    behind.single { it.contentDescription == "Keyboard copy" }.performClick()
+                    assertEquals("A stale covered action must not execute", 0, executed)
+                    assertTrue(descendants(panel).single { it.tag == "source_back" }.requestFocus())
+                }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
+                scenario.onActivity {
+                    assertFalse(descendants(menu).any { it is ScrollView })
+                    assertSame("Keyboard dismissal must return to the options trigger", options, menu.findFocus())
+                    val link = descendants(menu).filterIsInstance<Button>().single { it.contentDescription == "Keyboard link" }
+                    assertFalse("Returning from the panel must not focus an unavailable action", link.isFocusable)
+                }
+                tap(options)
+                lateinit var back: View
+                scenario.onActivity {
+                    assertTrue("The window must enter touch mode before testing touch dismissal", menu.isInTouchMode)
+                    assertFalse(options.isFocusableInTouchMode)
+                    back = descendants(menu).single { it.tag == "source_back" }
+                }
+                tap(back)
+                scenario.onActivity {
+                    assertFalse(descendants(menu).any { it is ScrollView })
+                    assertFalse("Touch dismissal must not force keyboard focus onto the trigger", options.isFocused)
+                }
+            }
+        } finally { instrumentation.setInTouchMode(originalTouchMode) }
     }
 
     @Test fun copyingCanKeepTheManualWheelForAnotherActionAndClosingClearsTheSnapshot() {

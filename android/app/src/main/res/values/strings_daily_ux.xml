@@ -38,8 +38,8 @@
     <string name="advice_app_disabled_title">The last selection was blocked by app rules</string>
     <string name="advice_app_disabled_body">This is controlled by app rules. Restore automatic entry under Apps and rules; manual text-menu and share entries remain available.</string>
     <string name="advice_app_paused_body">A visit pause ends when you leave the app; a timed pause expires automatically. You can also resume on this app’s rules page.</string>
-    <string name="advice_initial_title">The initial selection is ready</string>
-    <string name="advice_initial_body">The initial selection stays quiet. Adjust the selection handles and release to open the wheel directly, or open ActionHalo from the Android text selection menu.</string>
+    <string name="advice_long_press_title">A long press was received</string>
+    <string name="advice_long_press_body">No valid selection event is available here yet. Use enabled menu compatibility, or open ActionHalo from the Android text selection menu.</string>
     <string name="advice_filtered_title">This selection cannot be read</string>
     <string name="advice_filtered_body">Password and protected areas are not processed. Try an ordinary text area.</string>
     <string name="advice_source_title">The source did not expose a readable selection</string>

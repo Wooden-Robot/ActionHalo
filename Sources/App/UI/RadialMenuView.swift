@@ -801,10 +801,8 @@ final class RadialMenuView: NSView {
             return
         }
         
-        // Micro-deadzone for dismissal (if user releases exactly where they clicked)
-        // Set to 10 points so a standard stationary click can still act as a cancel 
-        // without ruining the swiping feel.
-        if distanceSquared < deadzoneSquared {
+        // Match the hit-test boundary so a central release always cancels.
+        if distanceSquared <= deadzoneSquared {
             guard actionGate.consume() else { return }
             endInteractionSession()
             onDismissRequested?()
@@ -990,9 +988,9 @@ final class RadialMenuView: NSView {
         let dy = point.y - center.y
         let distanceSquared = dx * dx + dy * dy
         let deadzoneSquared = selectionDeadzoneRadius * selectionDeadzoneRadius
-        // 10-point deadzone! Prevents normal stationary clicks from instantly selecting a sector,
-        // while still feeling extremely responsive.
-        if distanceSquared <= deadzoneSquared {
+        let selectionRadius = outerRadius + outsideDismissPadding
+        // Stationary clicks near the center cancel instead of selecting a sector.
+        if distanceSquared <= deadzoneSquared || distanceSquared > selectionRadius * selectionRadius {
             return -1
         }
         

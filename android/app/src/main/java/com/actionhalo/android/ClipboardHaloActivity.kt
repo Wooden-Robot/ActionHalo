@@ -23,6 +23,8 @@ class ClipboardHaloActivity : HaloActivity() {
     private var focusGeneration = 0
     private var readGeneration = -1
     private var waitingMenu: RadialMenuView? = null
+    private data class Snapshot(val text: String)
+    private var snapshot: Snapshot? = null
     private val expiresAt = SystemClock.uptimeMillis() + 30_000
     private val automaticCopy: Boolean get() = intent.action == ACTION_TELEGRAM_COPY ||
         intent.action == ACTION_TELEGRAM_COPY_ASSISTED
@@ -43,17 +45,18 @@ class ClipboardHaloActivity : HaloActivity() {
         attemptedRead = savedInstanceState?.getBoolean(READ_ATTEMPTED) ?: false
         super.onCreate(savedInstanceState)
         if (automaticCopy) rulesPreferences.registerOnSharedPreferenceChangeListener(rulesListener)
-        if (attemptedRead || (automaticCopy && !TelegramCopyPolicy.isRecentEvent(
+        if ((!completedRead && attemptedRead) || (!completedRead && automaticCopy && !TelegramCopyPolicy.isRecentEvent(
                 intent.getLongExtra(EXTRA_EVENT_UPTIME, 0), SystemClock.uptimeMillis())) || !automaticRequestAllowed()) {
             if (automaticCopy) TelegramCopyDiagnostics.record(TelegramCopyDiagnostics.Stage.REQUEST_EXPIRED)
             closeRequest()
             return
         }
-        window.decorView.postDelayed(timeout, 30_000)
+        if (!completedRead) window.decorView.postDelayed(timeout, 30_000)
     }
 
     private fun automaticRequestAllowed(): Boolean {
         if (!automaticCopy) return true
+        if (!getSharedPreferences("actionhalo_settings", MODE_PRIVATE).getBoolean(TelegramCopyPolicy.SETTING, false)) return false
         val source = sourcePackage?.takeIf { AppRulesStore.isValidPackageName(it) } ?: return false
         return if (intent.action == ACTION_TELEGRAM_COPY_ASSISTED) appRules.allowsButton(source, true)
             else appRules.allowsAutomatic(source, true)
@@ -61,6 +64,15 @@ class ClipboardHaloActivity : HaloActivity() {
 
     override fun receiveText() {
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
+        val restored = lastNonConfigurationInstance as? Snapshot
+        if (restored != null) {
+            if (!automaticRequestAllowed()) { closeRequest(); return }
+            snapshot = restored
+            attemptedRead = true
+            completedRead = true
+            showHalo(restored.text)
+            return
+        }
         window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         window.setDimAmount(HaloAppearance.dimAmount(this))
         val root = FrameLayout(this)
@@ -114,8 +126,7 @@ class ClipboardHaloActivity : HaloActivity() {
             return
         }
         val assistedCopy = intent.action == ACTION_TELEGRAM_COPY_ASSISTED
-        if (SystemClock.uptimeMillis() > expiresAt || (automaticCopy &&
-                !getSharedPreferences("actionhalo_settings", MODE_PRIVATE).getBoolean(TelegramCopyPolicy.SETTING, false))) {
+        if (SystemClock.uptimeMillis() > expiresAt) {
             if (automaticCopy) TelegramCopyDiagnostics.record(TelegramCopyDiagnostics.Stage.REQUEST_EXPIRED)
             reject(R.string.copy_probe_expired)
             return
@@ -166,6 +177,7 @@ class ClipboardHaloActivity : HaloActivity() {
             return
         }
         completedRead = true
+        snapshot = Snapshot(text.toString())
         window.decorView.removeCallbacks(timeout)
         clearWaitingMenu()
         showHalo(text.toString())
@@ -180,10 +192,13 @@ class ClipboardHaloActivity : HaloActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    override fun onRetainNonConfigurationInstance(): Any? = snapshot.takeUnless { isFinishing }
+
     override fun onDestroy() {
         if (automaticCopy) rulesPreferences.unregisterOnSharedPreferenceChangeListener(rulesListener)
         window.decorView.removeCallbacks(timeout)
         clearWaitingMenu()
+        snapshot = null
         super.onDestroy()
     }
 

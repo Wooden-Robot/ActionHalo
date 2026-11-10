@@ -34,6 +34,7 @@
         <item>Copy</item><item>Globe</item><item>Link</item><item>Share</item><item>Search</item>
         <item>Book</item><item>Film</item><item>Books</item><item>Earth</item><item>Paper plane</item>
         <item>Google</item><item>Translate</item><item>Baidu</item><item>Douban</item>
+        <item>Open link</item><item>Catalog</item><item>Code</item><item>Edit</item>
     </string-array>
     <string name="add_action">＋ Add a website action</string>
     <string name="custom_title">New website action</string>

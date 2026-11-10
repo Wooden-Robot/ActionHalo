@@ -87,6 +87,50 @@ final class TelegramSearch {
         self.port = port
     }
 
+    static func presentFailure(
+        _ failure: TelegramSearchFailure,
+        presentAlert: @MainActor (NSAlert) -> Void = {
+            NSApp.activate(ignoringOtherApps: true)
+            _ = $0.runModal()
+        }
+    ) {
+        let message: String
+        switch failure.reason {
+        case .invalidQuery:
+            message = "This selection cannot be searched in Telegram. Select shorter, non-empty text and try again.".localized
+        case .busy:
+            // A duplicate request must not steal focus from the search that is
+            // still delivering input or restoring its clipboard snapshot.
+            NSSound.beep()
+            return
+        case .applicationUnavailable:
+            message = "The Telegram app could not be opened. Install Telegram for macOS and try again.".localized
+        case .permissionDenied:
+            message = "Allow ActionHalo in System Settings > Privacy & Security > Accessibility, then try again.".localized
+        case .activationTimedOut:
+            message = "Telegram did not become ready in time. Open Telegram and try again.".localized
+        case .targetChanged:
+            message = "The active app or Telegram search field changed. Search again when you are ready.".localized
+        case .inputUnavailable:
+            message = "Telegram's search field is unavailable. Open Telegram's Global Search and try again.".localized
+        case .clipboardUnavailable, .clipboardContended:
+            message = "The clipboard could not be used safely. Wait until other clipboard operations finish before trying again.".localized
+        case .textMismatch:
+            message = "ActionHalo could not confirm the search text in Telegram.".localized
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Telegram Search Failed".localized
+        alert.informativeText = message
+        if failure.effect == .queryMayHaveBeenApplied {
+            alert.informativeText += "\n\n" +
+                "The query may already have been entered. Check Telegram before trying again.".localized
+        }
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK".localized)
+        presentAlert(alert)
+    }
+
     func search(
         _ query: String
     ) async -> Result<TelegramSearchReceipt, TelegramSearchFailure> {

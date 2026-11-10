@@ -598,7 +598,13 @@ final class StatusBarController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func presentHotkeyRegistrationIssues(_ issues: [HotkeyManager.RegistrationIssue]) {
+    func presentHotkeyRegistrationIssues(
+        _ issues: [HotkeyManager.RegistrationIssue],
+        presentAlert: @MainActor (NSAlert) -> Void = {
+            NSApp.activate(ignoringOtherApps: true)
+            _ = $0.runModal()
+        }
+    ) {
         guard !issues.isEmpty else { return }
 
         let alert = NSAlert()
@@ -606,8 +612,7 @@ final class StatusBarController: NSObject {
         alert.informativeText = issues.map(\.message).joined(separator: "\n")
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK".localized)
-        NSApp.activate(ignoringOtherApps: true)
-        alert.runModal()
+        presentAlert(alert)
     }
 }
 

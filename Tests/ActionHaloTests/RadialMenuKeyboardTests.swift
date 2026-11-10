@@ -99,6 +99,32 @@ final class RadialMenuKeyboardTests: XCTestCase {
         XCTAssertEqual(focusedLabel(in: view), "Previous")
     }
 
+    func testDraggingOutsideCancellationRadiusClearsPreviewAndKeyboardAction() throws {
+        let view = makeView()
+        var selections: [String] = []
+        view.onItemSelected = { selections.append($0.title) }
+        view.prepareForKeyboardNavigation()
+
+        for (padding, expected): (CGFloat, String?) in [(60, "Last"), (61, nil), (60, "Last")] {
+            let pointer = try XCTUnwrap(NSEvent.mouseEvent(
+                with: .leftMouseDragged,
+                location: NSPoint(x: view.trackingCenter.x - view.outerRadius - padding,
+                                  y: view.trackingCenter.y),
+                modifierFlags: [], timestamp: 1, windowNumber: 0, context: nil,
+                eventNumber: 1, clickCount: 0, pressure: 1
+            ))
+            view.mouseDragged(with: pointer)
+            XCTAssertEqual(focusedLabel(in: view), expected)
+            if expected == nil {
+                view.keyDown(with: try event(36))
+                XCTAssertTrue(selections.isEmpty, "An out-of-bounds preview must not execute with Enter")
+            }
+        }
+
+        view.keyDown(with: try event(36))
+        XCTAssertEqual(selections, ["Last"])
+    }
+
     private func makeView() -> RadialMenuView {
         let view = RadialMenuView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
         view.visualCenter = NSPoint(x: 200, y: 200)

@@ -22,8 +22,9 @@ internal class AppRulesStore(private val context: Context) {
 
     /** Update the blacklist together, keeping each app's independent action order. */
     fun setDisabledPackages(packages: Set<String>) {
-        require(packages.size <= 200 && packages.all(::isValidPackageName))
+        require(packages.all(::isValidPackageName))
         val profiles = profiles()
+        val previousCount = profiles.length()
         profiles.keys().asSequence().toList().forEach { pkg ->
             val profile = profiles.optJSONObject(pkg) ?: return@forEach
             if (profile.optString("trigger") == TriggerMode.OFF.name && pkg !in packages) {
@@ -35,8 +36,7 @@ internal class AppRulesStore(private val context: Context) {
             val profile = profiles.optJSONObject(pkg) ?: JSONObject()
             profiles.put(pkg, profile.put("trigger", TriggerMode.OFF.name))
         }
-        require(profiles.length() <= 200)
-        preferences.edit().putString(PROFILES, profiles.toString()).apply()
+        saveProfiles(profiles, previousCount)
     }
 
     fun profile(packageName: String?): Profile {
@@ -51,20 +51,28 @@ internal class AppRulesStore(private val context: Context) {
     fun setProfile(packageName: String, profile: Profile) {
         require(isValidPackageName(packageName))
         val profiles = profiles()
+        val previousCount = profiles.length()
         if (profile == Profile()) profiles.remove(packageName)
         else profiles.put(packageName, JSONObject().apply {
             put("trigger", profile.trigger.name)
             profile.actions?.let { put("actions", JSONArray(it.distinct())) }
         })
-        preferences.edit().putString(PROFILES, profiles.toString()).apply()
+        saveProfiles(profiles, previousCount)
     }
     fun remove(packageName: String) { setProfile(packageName, Profile()) }
+
+    private fun saveProfiles(profiles: JSONObject, previousCount: Int) {
+        // Older versions allowed oversized configurations; keep them editable without growing them.
+        require(profiles.length() <= maxOf(MAX_PROFILES, previousCount))
+        preferences.edit().putString(PROFILES, profiles.toString()).apply()
+    }
 
     fun actionsFor(packageName: String?, allActions: List<HaloAction>): List<HaloAction> {
         val store = ActionStore(context)
         val ids = profile(packageName).actions ?: store.actions().map { it.id }
         val catalog = allActions.associateBy { it.id }
-        return ids.mapNotNull(catalog::get).filter { store.isAllowedInApp(it.id, packageName) }
+        val scopes = store.appScopes(ids)
+        return ids.mapNotNull(catalog::get).filter { scopes.getValue(it.id).allows(packageName) }
     }
     fun allowsAutomatic(packageName: String?, globalEnabled: Boolean): Boolean =
         !isPaused() && !isVisitPaused(packageName) && appPauseRemainingMillis(packageName) == 0L && when (triggerMode(packageName)) {
@@ -154,6 +162,7 @@ internal class AppRulesStore(private val context: Context) {
         fun clearVisitPauses() { visitPauses.clear() }
         const val PREFERENCES = "app_rules"
         const val PROFILES = "profiles"
+        const val MAX_PROFILES = 200
         const val TEN_MINUTES = 600_000L
         const val ONE_HOUR = 3_600_000L
         private const val MAX_PAUSE = ONE_HOUR
@@ -161,12 +170,12 @@ internal class AppRulesStore(private val context: Context) {
         private const val PAUSE_WALL = "pause_until_wall"
         private const val PAUSE_ELAPSED = "pause_until_elapsed"
         private const val PAUSE_STARTED = "pause_started_elapsed"
-        fun isValidPackageName(value: String): Boolean = value.length in 3..255 &&
-            value.matches(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+"))
+        private val PACKAGE_NAME = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
+        fun isValidPackageName(value: String): Boolean = value.length in 3..255 && value.matches(PACKAGE_NAME)
         fun normalizeProfiles(encoded: String, knownActionIds: Set<String>): String {
             try {
                 val source = JSONObject(encoded)
-                require(source.length() <= 200)
+                require(source.length() <= MAX_PROFILES)
                 val normalized = JSONObject()
                 source.keys().forEach { pkg ->
                     require(isValidPackageName(pkg))
@@ -177,7 +186,7 @@ internal class AppRulesStore(private val context: Context) {
                     val mode = TriggerMode.valueOf(rawMode)
                     val actions = if (!profile.has("actions") || profile.isNull("actions")) null else {
                         val items = profile.getJSONArray("actions")
-                        require(items.length() <= 200)
+                        require(items.length() <= knownActionIds.size)
                         List(items.length()) { index ->
                             val id = items.get(index)
                             require(id is String && id in knownActionIds)
