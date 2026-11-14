@@ -16,8 +16,8 @@ android {
         applicationId = "com.actionhalo.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = 56
-        versionName = "0.11.20"
+        versionCode = 57
+        versionName = "0.11.21"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     signingConfigs {

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v0.3.47
+
+- 修复普通模式与 GTA 模式中圆环下半部序号倒置的问题，保留沿圆环排列的样式。
+- 增加两种模式下 1–16 个动作的序号朝向与切线排列回归测试。
+
+- Kept lower-half slot numbers upright in both standard and GTA modes while preserving their alignment along the ring.
+- Added regression coverage for slot orientation and tangential alignment with 1–16 actions in both modes.
+
 ## v0.3.46
 
 - 关闭自动触发后仍可使用手动快捷键；取消过期取词和延迟显示任务，修复圆环移出范围及中心取消区的边界行为。

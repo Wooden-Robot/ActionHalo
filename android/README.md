@@ -1,12 +1,16 @@
 # ActionHalo for Android
 
-ActionHalo 的原生 Android 版（当前版本 0.11.20），支持 **Android 8.0 / API 26 及以上**。使用 Kotlin 和原生 Android View，保留圆环的「点击执行」与「按住、滑动、松开执行」交互。
+ActionHalo 的原生 Android 版（当前版本 0.11.21），支持 **Android 8.0 / API 26 及以上**。使用 Kotlin 和原生 Android View，保留圆环的「点击执行」与「按住、滑动、松开执行」交互。
 
 统一提供 **Android 8.0 及以上通用 APK**，包括 vivo X200s 在内的设备无需再区分安装包架构。0.8.1 已移除浮窗翻译、ML Kit 和架构相关原生库，按架构拆包不再节省体积，因此取消分架构产物。圆环按实际窗口尺寸和屏幕密度适配，新系统 API 按版本判断并保留旧系统路径。`targetSdk 36` 不代表最低需要 Android 16，最低安装版本由 `minSdk 26` 决定，见 [Android 版本兼容规则](https://developer.android.com/guide/topics/manifest/uses-sdk-element)。
 
 通用打包不等于所有品牌和所有应用的自动弹出均已验证。跨版本模拟器回归和跳过项见[兼容回归记录](diagnostics/compatibility-regression.md)；不同厂商的无障碍、后台管理和选文菜单差异需要真机验证。保留系统选文菜单、分享和剪贴板快捷磁贴入口，兼容边界见下文「自动模式与兼容范围」。
 
 **0.9.0** 完成十项使用体验优化：按应用设置触发方式和固定动作组合；键盘避让及左右手初始位置；首页恢复入口与圆环内失败重试；配置备份；固定在外观页面上方的实时预览；动作指定打开方式；临时暂停快捷磁贴；编辑选文；删除、批量关闭和重置的短时撤销。仍提供 Android 8+ 单一通用 APK。见 [0.9.0 实现与验证](diagnostics/experience-0.9.0.md)。
+
+### 0.11.21 圆环下方序号正向显示
+
+修正 GTA 圆环下半部的倒置序号，继续沿圆环切线排列，使使用者能够正常阅读。共享绘制逻辑覆盖各个入口，动作顺序、图标位置和点击区域沿用原有布局。新增测试覆盖 1–16 个动作的序号朝向与切线排列；实际字体间距仍需真机验证。
 
 ### 0.11.20 稳定选区与设置恢复
 
@@ -364,16 +368,16 @@ Android Studio 可直接打开本目录。调试包输出为 `app/build/outputs/
 make android-release
 ```
 
-此命令构建正式签名 APK，并运行现有 JVM 单元测试（`testDebugUnitTest`）与 release Lint；缺少签名配置时明确失败。产物为 `android/app/build/outputs/apk/release/app-release.apk`。准备 0.11.20 发布附件时，在仓库根目录执行：
+此命令构建正式签名 APK，并运行现有 JVM 单元测试（`testDebugUnitTest`）与 release Lint；缺少签名配置时明确失败。产物为 `android/app/build/outputs/apk/release/app-release.apk`。准备 0.11.21 发布附件时，在仓库根目录执行：
 
 ```bash
 mkdir -p .build
-cp android/app/build/outputs/apk/release/app-release.apk .build/ActionHalo-0.11.20-release.apk
-"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs .build/ActionHalo-0.11.20-release.apk
-(cd .build && shasum -a 256 ActionHalo-0.11.20-release.apk > ActionHalo-0.11.20-release.apk.sha256)
+cp android/app/build/outputs/apk/release/app-release.apk .build/ActionHalo-0.11.21-release.apk
+"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs .build/ActionHalo-0.11.21-release.apk
+(cd .build && shasum -a 256 ActionHalo-0.11.21-release.apk > ActionHalo-0.11.21-SHA256SUMS.txt)
 ```
 
-发布前提交实际构建的源码，创建对应的 `android-v0.11.20` 标签，并将 APK 和 SHA-256 文件作为 `Android 0.11.20` 的附件。发布时指定 `--latest=false`，详见上方「独立版本与发布」。后续版本同步更新版本号、`versionCode`、标签及附件文件名；应用只识别已发布、非预发布版本中的匹配 APK。
+发布前提交实际构建的源码，创建对应的 `android-v0.11.21` 标签，并将 APK 和 SHA-256 文件作为 `Android 0.11.21` 的附件。发布时指定 `--latest=false`，详见上方「独立版本与发布」。后续版本同步更新版本号、`versionCode`、标签及附件文件名；应用只识别已发布、非预发布版本中的匹配 APK。
 
 **从 debug 包切换到正式版：**先在应用中导出配置备份，再卸载 debug 版，安装正式版并导入备份。两个包的应用 ID 相同、签名不同，不能直接覆盖安装。卸载会清除应用本地数据；后续使用同一正式签名且版本号有效的更新可覆盖安装。
 
@@ -406,6 +410,8 @@ JVM 测试覆盖 URL 编码和协议限制、选文长度边界、普通/GTA 圆
 
 Android and macOS versions advance independently: Android uses `versionName` / `versionCode` in `app/build.gradle.kts` and `android-vX.Y.Z` release tags; macOS retains its `Info.plist` versions and `vX.Y.Z` tags. Android updates require matching tag, APK and download-path versions. Publish Android releases with `--latest=false` to keep the repository Latest entry available for the existing macOS download and Sparkle feed.
 
+Version **0.11.21** flips the lower-half GTA slot numbers upright while preserving their tangential placement. Tests cover number orientation for 1–16 actions across the shared wheel renderer; physical-device font spacing remains unverified.
+
 Version **0.9.1** adds per-action active app scopes: All apps, Only selected apps, or All except selected apps. Configure them from an action’s overflow menu. Scopes filter the source app, take precedence over per-app action lists, and are included in backups and undo. Only-selected actions are hidden when the source cannot be reliably identified. Existing settings default to All apps.
 
 Version **0.9.0** adds per-app trigger modes and ordered action profiles, keyboard-aware initial placement, recovery shortcuts and inline action errors, configuration backup, a pinned live appearance preview, preferred destinations, temporary pause controls and a Quick Settings tile, an optional text editor, and undo for destructive settings changes. The universal APK still supports Android 8+. See the [implementation and verification record](diagnostics/experience-0.9.0.md).
@@ -422,7 +428,7 @@ Version **0.8.1** removes the floating translator, language identification and M
 
 Version 0.8.0 introduced separate Home, Actions, Appearance, Triggers, Diagnostics and About pages, five halo sizes, 0–80% dimming, shared haptics and appearance reset. These remain available. About checks public GitHub Android APK releases manually, keeps debug/release channels separate and opens downloads in the browser.
 
-Native Android 8.0+ edition, version **0.11.20**. Select text in a supported app and choose **ActionHalo** from the selection menu, or share plain text to it. The first non-pager touch keeps the wheel in place when inside it; only a first touch outside the wheel moves its center under the finger. Later touches keep the center fixed. Move around it to select and release to execute; tap or return to the center before release to dismiss. After the first non-pager touch, a stationary touch more than 32 dp beyond the visible outer edge dismisses on release. Moving more than 32 dp beyond the visible outer edge clears the action preview; releasing there closes without executing. Moving back within this limit restores selection. Reopening allows a new first-touch anchor. Home offers a text playground and navigation. Manage action toggles and custom HTTP(S) URL templates containing `{text}` under Actions. Enabled actions are no longer capped at eight: choose 6, 8, 12 or 16 per page under Appearance (default eight), with paging arrows below. Standard mode shows icons only; dragging over an action reveals its full title in the center. New custom actions are enabled and added to later pages when needed. See the [0.7.0 PC parity record](diagnostics/pc-parity-0.7.0.md).
+Native Android 8.0+ edition, version **0.11.21**. Select text in a supported app and choose **ActionHalo** from the selection menu, or share plain text to it. The first non-pager touch keeps the wheel in place when inside it; only a first touch outside the wheel moves its center under the finger. Later touches keep the center fixed. Move around it to select and release to execute; tap or return to the center before release to dismiss. After the first non-pager touch, a stationary touch more than 32 dp beyond the visible outer edge dismisses on release. Moving more than 32 dp beyond the visible outer edge clears the action preview; releasing there closes without executing. Moving back within this limit restores selection. Reopening allows a new first-touch anchor. Home offers a text playground and navigation. Manage action toggles and custom HTTP(S) URL templates containing `{text}` under Actions. Enabled actions are no longer capped at eight: choose 6, 8, 12 or 16 per page under Appearance (default eight), with paging arrows below. Standard mode shows icons only; dragging over an action reveals its full title in the center. New custom actions are enabled and added to later pages when needed. See the [0.7.0 PC parity record](diagnostics/pc-parity-0.7.0.md).
 
 Android 8.0+ builds provide one universal APK, including for vivo X200s. Per-ABI packages are no longer produced because the native translation libraries have been removed. Installation eligibility does not establish automatic-selection compatibility with every OEM or source app; see the [compatibility regression record](diagnostics/compatibility-regression.md) for tested emulators and exclusions. The selection-menu, share and Quick Settings entries remain available as alternatives.
 

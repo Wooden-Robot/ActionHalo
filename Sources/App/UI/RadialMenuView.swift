@@ -497,7 +497,9 @@ final class RadialMenuView: NSView {
                 
                 labelLayer.bounds = CGRect(x: 0, y: 0, width: 28, height: 12)
                 labelLayer.position = labelCenter
-                labelLayer.transform = CATransform3DMakeRotation(midAngle - .pi / 2, 0, 0, 1)
+                // Keep tangential slot numbers upright on the lower half of the wheel.
+                let labelRotation = midAngle + (sin(midAngle) < 0 ? .pi / 2 : -.pi / 2)
+                labelLayer.transform = CATransform3DMakeRotation(labelRotation, 0, 0, 1)
             }
             
             labelLayer.string = String(format: "%02d", index + 1)

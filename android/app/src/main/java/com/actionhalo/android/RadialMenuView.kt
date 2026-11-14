@@ -950,7 +950,7 @@ class RadialMenuView(context: Context) : FrameLayout(context) {
         slotPositions.forEachIndexed { index, (x, y) ->
             slotPaint.color = Color.argb(if (actionButtons[index].isEnabled) 71 else 18, 255, 255, 255)
             canvas.save()
-            canvas.rotate(layout.actionAngleDegrees(index) + 90f, x, y)
+            canvas.rotate(layout.slotLabelRotationDegrees(index), x, y)
             canvas.drawText(slotLabels[index], x, y - (slotPaint.ascent() + slotPaint.descent()) / 2f, slotPaint)
             canvas.restore()
         }

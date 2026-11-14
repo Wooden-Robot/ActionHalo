@@ -53,6 +53,12 @@ internal class RadialGeometry(
         return sectorStartDegrees(index) + sectorSweepDegrees / 2f
     }
 
+    /** Keep tangential slot numbers upright on the lower half of the wheel. */
+    fun slotLabelRotationDegrees(index: Int): Float {
+        val angle = actionAngleDegrees(index)
+        return angle + if (angle > 0f && angle < 180f) -90f else 90f
+    }
+
     /** Shared centerline for the icon and its slot number, at different radii. */
     fun pointAt(index: Int, radius: Float): Pair<Float, Float> {
         val radians = Math.toRadians(actionAngleDegrees(index).toDouble())
