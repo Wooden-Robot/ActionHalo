@@ -237,6 +237,23 @@ class SelectionTriggerDiagnosticTest {
     @Test fun refiningAnOpenNativeSelectionPreservesItsWindowAndUpdatesTheText() {
         launchSelectedFixture()
         val original = currentNativeHalo() as RadialMenuView
+        val host = awaitTextNode(FIXTURE_PACKAGE).let { try { it.windowId } finally { recycle(it) } }
+        val connected = SelectionAccessibilityService::class.java.getDeclaredField("connectedService").apply { isAccessible = true }
+        val service = (connected.get(null) as java.lang.ref.WeakReference<*>).get() as SelectionAccessibilityService
+        // The first halo can precede the native toolbar and its protective repositioning.
+        await("The native toolbar and handles must be clear of the laid-out initial wheel") {
+            val toolbar = HaloSafeArea.selectionToolbarWindowId(service, host) ?: return@await false
+            val protectedAreas = HaloSafeArea.selectionControlBounds(service, host, toolbar)
+            var ready = false
+            instrumentation.runOnMainSync {
+                val position = IntArray(2).also(original::getLocationOnScreen)
+                val bounds = Rect(position[0], position[1], position[0] + original.width, position[1] + original.height)
+                val root = original.parent as View
+                ready = original.isShown && root.isLaidOut && !root.isLayoutRequested &&
+                    !bounds.isEmpty && protectedAreas.isNotEmpty() && protectedAreas.none { Rect.intersects(bounds, it) }
+            }
+            ready
+        }
         val originalPosition = IntArray(2)
         instrumentation.runOnMainSync { original.getLocationOnScreen(originalPosition) }
         for (end in listOf(18, 27)) {

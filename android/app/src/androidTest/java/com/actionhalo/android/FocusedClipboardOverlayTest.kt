@@ -1349,7 +1349,24 @@ class FocusedClipboardOverlayTest {
         val upper = metrics.heightPixels * 2 / 5
         val lower = metrics.heightPixels * 3 / 5
         fun swipe(from: Int, to: Int) {
-            val event = automation.executeAndWaitForEvent({ shell("input swipe $x $from $x $to 250") },
+            val event = automation.executeAndWaitForEvent({
+                val down = SystemClock.uptimeMillis()
+                fun touch(action: Int, y: Float) {
+                    val motion = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x.toFloat(), y, 0)
+                        .apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+                    try { assertTrue(automation.injectInputEvent(motion, true)) } finally { motion.recycle() }
+                }
+                touch(MotionEvent.ACTION_DOWN, from.toFloat())
+                try {
+                    // Complete every MOVE even when a slow frame exceeds shell input swipe's duration.
+                    for (step in 1..12) {
+                        touch(MotionEvent.ACTION_MOVE, from + (to - from) * step / 12f)
+                        SystemClock.sleep(16)
+                    }
+                } finally {
+                    touch(MotionEvent.ACTION_UP, to.toFloat())
+                }
+            },
                 { it.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED && it.packageName?.toString() == testPackage }, 3_000)
             @Suppress("DEPRECATION")
             if (Build.VERSION.SDK_INT < 33) event.recycle()

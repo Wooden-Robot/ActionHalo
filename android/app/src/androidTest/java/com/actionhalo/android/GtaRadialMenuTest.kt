@@ -1,6 +1,7 @@
 package com.actionhalo.android
 
 import android.app.Activity
+import android.app.UiAutomation
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -12,6 +13,7 @@ import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.ContextThemeWrapper
@@ -308,6 +310,7 @@ class GtaRadialMenuTest {
                 send(MotionEvent.ACTION_DOWN, menu.center)
                 send(MotionEvent.ACTION_CANCEL, menu.center)
             }
+            dismissSystemClipboardOverlay()
             val bounds = availableBounds(menu.view)
             val far = Point(bounds.exactCenterX(), bounds.bottom - 1f)
             val excursion = Point(bounds.left + 1f, bounds.bottom - 1f)
@@ -1314,6 +1317,30 @@ class GtaRadialMenuTest {
             result.set(available)
         }
         return result.get()
+    }
+
+    private fun dismissSystemClipboardOverlay() {
+        if (Build.VERSION.SDK_INT < 33) return
+        // A prior copy can leave SystemUI over the distant press; app-targeted input does not dismiss it.
+        val automation = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+        fun shell(command: String) = ParcelFileDescriptor.AutoCloseInputStream(
+            automation.executeShellCommand(command)
+        ).bufferedReader().use { it.readText() }
+        var dismissalRequested = false
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        do {
+            val windows = shell("dumpsys window windows").lineSequence().map { it.trimStart() }
+                .filter { it.startsWith("Window #") }.toList()
+            assertTrue("WindowManager must expose the current windows", windows.isNotEmpty())
+            if (windows.none { it.endsWith(" ClipboardOverlay}:") }) return
+            if (!dismissalRequested) {
+                @Suppress("DEPRECATION")
+                shell("am broadcast -p com.android.systemui -a ${Intent.ACTION_CLOSE_SYSTEM_DIALOGS}")
+                dismissalRequested = true
+            }
+            SystemClock.sleep(25)
+        } while (SystemClock.uptimeMillis() < deadline)
+        fail("The system clipboard preview must close before injecting a distant press")
     }
 
     private inner class TouchStream {
