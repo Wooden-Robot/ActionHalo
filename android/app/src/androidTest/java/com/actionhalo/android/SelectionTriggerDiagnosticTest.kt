@@ -235,22 +235,51 @@ class SelectionTriggerDiagnosticTest {
     }
 
     @Test fun refiningAnOpenNativeSelectionPreservesItsWindowAndUpdatesTheText() {
-        launchSelectedFixture()
-        val original = currentNativeHalo() as RadialMenuView
+        // This case starts with an established selection; initial selection arrival is tested separately.
+        val prefs = instrumentation.targetContext.getSharedPreferences("actionhalo_settings", Context.MODE_PRIVATE)
+        assertTrue(prefs.edit().putBoolean("auto_popup_enabled", false).commit())
+        instrumentation.waitForIdleSync()
+        shell("am start -W -S -n $FIXTURE")
+        SystemClock.sleep(800) // Older systems publish nodes before the activity entrance finishes.
+        awaitTextNode(FIXTURE_PACKAGE).let(::recycle)
+        changeFixtureSelection(1, 1)
+        instrumentation.settleInput()
+        changeFixtureSelection(0, SelectionFixtureActivity.SAMPLE_TEXT.length)
         val host = awaitTextNode(FIXTURE_PACKAGE).let { try { it.windowId } finally { recycle(it) } }
         val connected = SelectionAccessibilityService::class.java.getDeclaredField("connectedService").apply { isAccessible = true }
         val service = (connected.get(null) as java.lang.ref.WeakReference<*>).get() as SelectionAccessibilityService
-        // The first halo can precede the native toolbar and its protective repositioning.
-        await("The native toolbar and handles must be clear of the laid-out initial wheel") {
-            val toolbar = HaloSafeArea.selectionToolbarWindowId(service, host) ?: return@await false
-            val protectedAreas = HaloSafeArea.selectionControlBounds(service, host, toolbar)
+        var nativeControls = ""
+        try {
+            await("The native toolbar and handles must exist before opening the wheel") {
+                val toolbar = HaloSafeArea.selectionToolbarWindowId(service, host)
+                val areas = HaloSafeArea.selectionControlBounds(service, host, toolbar)
+                val windows = service.windows
+                val children = try { windows.firstOrNull { it.id == host }?.childCount ?: 0 } finally {
+                    @Suppress("DEPRECATION")
+                    if (Build.VERSION.SDK_INT < 33) windows.forEach { it.recycle() }
+                }
+                nativeControls = "host=$host children=$children toolbar=$toolbar controls=$areas"
+                // The menu and the union of the two handles are separate protected areas.
+                toolbar != null && children >= 3 && areas.size == 2 && areas.none(Rect::isEmpty)
+            }
+        } catch (failure: AssertionError) {
+            throw AssertionError("${failure.message}\nLast native controls: $nativeControls", failure)
+        }
+        instrumentation.settleInput()
+        assertFreshNodeRange(0, SelectionFixtureActivity.SAMPLE_TEXT.length)
+        assertFalse("Automatic popup must stay disabled while the native controls appear", overlayShown())
+        assertTrue(prefs.edit().putBoolean("auto_popup_enabled", true).commit())
+        instrumentation.waitForIdleSync()
+        shell("am start -W --activity-single-top -n $FIXTURE --ez repeat_selection_event true")
+        await("The existing selection's repeated event must open its halo") { overlayShown() }
+        instrumentation.settleInput()
+        val original = currentNativeHalo() as RadialMenuView
+        await("The initial wheel must finish its first layout") {
             var ready = false
             instrumentation.runOnMainSync {
-                val position = IntArray(2).also(original::getLocationOnScreen)
-                val bounds = Rect(position[0], position[1], position[0] + original.width, position[1] + original.height)
                 val root = original.parent as View
-                ready = original.isShown && root.isLaidOut && !root.isLayoutRequested &&
-                    !bounds.isEmpty && protectedAreas.isNotEmpty() && protectedAreas.none { Rect.intersects(bounds, it) }
+                ready = original.isShown && original.width > 0 && original.height > 0 &&
+                    root.isLaidOut && !root.isLayoutRequested
             }
             ready
         }

@@ -417,9 +417,12 @@ class FocusedClipboardOverlayTest {
             val point = IntArray(2).also(button::getLocationOnScreen)
             target.set(point[0], point[1], point[0] + button.width, point[1] + button.height)
         }
-        val frames = CopyOnWriteArrayList<Rect>()
+        data class CopyFrame(val wheel: Rect, val dimFlag: Int, val dimAmount: Float, val hasHaze: Boolean)
+        val frames = CopyOnWriteArrayList<CopyFrame>()
         val observer = android.view.ViewTreeObserver.OnDrawListener {
-            frames.add(wheelFrame())
+            val params = root.layoutParams as WindowManager.LayoutParams
+            frames.add(CopyFrame(wheelFrame(), params.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND,
+                params.dimAmount, root.background != null))
         }
         val initialFrame = AtomicReference<Rect>()
         instrumentation.runOnMainSync {
@@ -431,25 +434,22 @@ class FocusedClipboardOverlayTest {
             val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action,
                 target.exactCenterX(), target.exactCenterY(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
             try { assertTrue(automation.injectInputEvent(event, true)) } finally { event.recycle() }
-            instrumentation.waitForIdleSync()
         }
         press(MotionEvent.ACTION_DOWN)
         try {
+            // Release before waiting for idle; a busy queue must not turn this tap into a hold.
             SystemClock.sleep(80)
-            instrumentation.runOnMainSync {
-                val params = root.layoutParams as WindowManager.LayoutParams
-                assertEquals("A quick Copy press must not darken the source page", 0,
-                    params.flags and WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                assertEquals(0f, params.dimAmount, 0f)
-                assertNull("A quick Copy press must not add the GTA haze", root.background)
-            }
         } finally {
             press(MotionEvent.ACTION_UP)
+            instrumentation.waitForIdleSync()
             instrumentation.runOnMainSync { root.viewTreeObserver.removeOnDrawListener(observer) }
         }
         assertTrue("A physical Copy press must draw at least one frame", frames.isNotEmpty())
+        assertTrue("A quick Copy press must not darken any source-page frame; actual=$frames",
+            frames.all { it.dimFlag == 0 && it.dimAmount == 0f })
+        assertTrue("A quick Copy press must not add GTA haze to any frame; actual=$frames", frames.none { it.hasHaze })
         assertTrue("Every drawn Copy frame must retain ${initialFrame.get()}; actual=$frames",
-            frames.all { it == initialFrame.get() })
+            frames.all { it.wheel == initialFrame.get() })
         if (keepAfterCopy) {
             try {
                 await("Copy must retain a usable wheel") {
