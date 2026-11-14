@@ -46,7 +46,9 @@ Android 8 镜像中的旧 WebView 只提供可读标签，选文事件范围为 
 
 ## 自动化矩阵
 
-[Android 工作流](../../.github/workflows/android.yml) 日常 push / PR 运行 API **26、30、36**，分别覆盖最低支持版本、旧版选文工具条与受限剪贴板路径、当前目标版本。每周一 **03:23（台北时间，UTC 周日 19:23）**及手动运行覆盖 API **26–36** 全版本。各版使用 Google APIs 模拟器并保存设备测试报告；API 27 使用 x86，其余版本使用 x86_64。独立构建任务继续执行编译、单元测试和 Lint。矩阵最多并行 3 个任务，单个版本失败不取消其他版本。仅 Android 代码、配置或该工作流变更触发 push / PR 检查，纯 Markdown 文档修改不触发。
+[Android 工作流](../../.github/workflows/android.yml) 日常 push / PR 运行 API **26、30、36**，分别覆盖最低支持版本、旧版选文工具条与受限剪贴板路径、当前目标版本。每周一 **03:23（台北时间，UTC 周日 19:23）**及手动运行覆盖 API **26–36** 全版本。各版使用 Google APIs 模拟器并保存设备测试报告；API 27 使用 x86，其余版本使用 x86_64。独立构建任务继续执行编译、单元测试和 Lint。单个版本失败不取消其他版本。仅 Android 代码、配置或该工作流变更触发 push / PR 检查，纯 Markdown 文档修改不触发。
+
+2026-11-15 调整任务调度：API 30、36 使用 AndroidJUnitRunner 的 `numShards=3` 和 `shardIndex=0/1/2` 分配完整测试集合，其余 API 保持单片。日常共 7 个设备任务，最多并行 7 个；每周及手动全版本共 15 个设备任务，最多并行 6 个。报告名称包含 API 与分片编号。tag 推送不再重复触发检查；分支 push 与 PR 合并提交各自验证，仅取消同一 Git ref 的过时任务，不让 push 取代 PR 集成检查或让不同 PR 相互取消。每周和手动诊断各自独立，不受普通提交影响。此处记录配置，实际通过情况仍以对应运行的全部分片报告为准。
 
 使用 [Android Emulator Runner 官方配置](https://github.com/ReactiveCircus/android-emulator-runner) 启动一次性模拟器；不依赖厂商私有 API。配置的版本不能列为已通过，执行结果以对应 CI 报告为准。
 

@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: ['**']
   pull_request:
   workflow_dispatch:
   schedule:
@@ -9,6 +10,11 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  # Preserve push and PR merge checks; cancel only older checks for the same Git ref.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'push' || github.event_name == 'pull_request') && 'checks' || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   test:

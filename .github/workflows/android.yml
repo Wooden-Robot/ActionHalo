@@ -2,6 +2,7 @@ name: Android
 
 on:
   push:
+    branches: ['**']
     paths: ['android/**', '.github/workflows/android.yml', '!android/**/*.md']
   pull_request:
     paths: ['android/**', '.github/workflows/android.yml', '!android/**/*.md']
@@ -12,6 +13,11 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  # Preserve push and PR merge checks; cancel only older checks for the same Git ref.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'push' || github.event_name == 'pull_request') && 'checks' || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -44,14 +50,24 @@ jobs:
           path: android/app/build/reports/
 
   compatibility:
-    name: Android API ${{ matrix.api }}
+    name: Android API ${{ matrix.api }} / shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 6 || 7 }}
       matrix:
         api: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '[26,27,28,29,30,31,32,33,34,35,36]' || '[26,30,36]') }}
+        shard: [0]
+        include:
+          - api: 30
+            shard: 1
+          - api: 30
+            shard: 2
+          - api: 36
+            shard: 1
+          - api: 36
+            shard: 2
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -81,11 +97,11 @@ jobs:
           enable-hw-keyboard: true
           working-directory: android
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -camera-back none -skin 1080x2400
-          script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.selection_diagnostics=true -Pandroid.testInstrumentationRunnerArguments.focused_clipboard_overlay=true -Pandroid.testInstrumentationRunnerArguments.accessibility_settings_diagnostics=true --no-daemon
+          script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.selection_diagnostics=true -Pandroid.testInstrumentationRunnerArguments.focused_clipboard_overlay=true -Pandroid.testInstrumentationRunnerArguments.accessibility_settings_diagnostics=true -Pandroid.testInstrumentationRunnerArguments.numShards=${{ (matrix.api == 30 || matrix.api == 36) && 3 || 1 }} -Pandroid.testInstrumentationRunnerArguments.shardIndex=${{ matrix.shard }} --no-daemon
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Android-API-${{ matrix.api }}-reports
+          name: Android-API-${{ matrix.api }}-shard-${{ matrix.shard }}-reports
           path: |
             android/app/build/reports/androidTests/
             android/app/build/outputs/androidTest-results/

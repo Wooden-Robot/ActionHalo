@@ -15,7 +15,6 @@ import android.os.Parcel
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
-import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
 import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
@@ -575,9 +574,7 @@ class ClipboardHaloTest {
                             }.performClick())
                         }
                     }, { event ->
-                        event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED &&
-                            event.className?.toString() == "android.widget.Toast" &&
-                            event.packageName?.toString() == context.packageName
+                        event.toastTextFrom(context) != null
                     }, 5_000)
                     try {
                         scenario.onActivity { activity ->
@@ -593,7 +590,7 @@ class ClipboardHaloTest {
                             }
                             val message = activity.getString(if (mode == "allow") R.string.health_copy_done else R.string.action_not_allowed)
                             assertEquals("Copy feedback must match the system write result ($mode)", listOf(message),
-                                event.text.map(CharSequence::toString))
+                                event.toastTextFrom(context))
                         }
                     } finally { event.recycle() }
                 }

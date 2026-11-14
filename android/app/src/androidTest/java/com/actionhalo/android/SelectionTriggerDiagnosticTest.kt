@@ -16,6 +16,7 @@ import android.util.Log
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -417,18 +418,25 @@ class SelectionTriggerDiagnosticTest {
                 val character = source.extras.getParcelableArray(key)?.single() as android.graphics.RectF
                 assertFalse(character.isEmpty)
                 longPress(character.centerX(), character.centerY())
-                await("Each real long press must open the selected word without adjustment") { overlayShown() }
-                assertTrue(source.refresh())
-                assertTrue("The real long press must select the word under its character",
-                    source.textSelectionStart <= index && source.textSelectionEnd > index)
+                await("The real long press must select the word containing character $index") {
+                    source.refresh() && source.textSelectionStart >= 0 &&
+                        source.textSelectionStart <= index && source.textSelectionEnd > index
+                }
+                val selected = source.text.toString().substring(source.textSelectionStart, source.textSelectionEnd)
+                await("Each real long press must open the current word without adjustment") {
+                    if (!overlayShown()) return@await false
+                    val menu = currentNativeHalo() as RadialMenuView
+                    var matches = false
+                    instrumentation.runOnMainSync { matches = menu.isShown && menu.selectedText == selected }
+                    matches
+                }
             }
             selectWord(3)
             val firstStart = source.textSelectionStart
+            // Android 8 otherwise treats this as a double tap and keeps the first selection.
+            SystemClock.sleep(ViewConfiguration.getDoubleTapTimeout().toLong() + 1)
             selectWord(12)
             assertTrue("The second real long press must select another word", source.textSelectionStart != firstStart)
-            val menu = currentNativeHalo() as RadialMenuView
-            val selected = source.text.toString().substring(source.textSelectionStart, source.textSelectionEnd)
-            instrumentation.runOnMainSync { assertEquals(selected, menu.selectedText) }
         } finally { recycle(source) }
     }
 

@@ -45,6 +45,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+internal fun AccessibilityEvent.toastTextFrom(context: Context): List<String>? {
+    // Older Toasts report their TN class; newer system Toast icons also announce the app label.
+    val toastClass = className?.toString()
+    if (eventType != AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED ||
+        (toastClass != "android.widget.Toast" && toastClass != "android.widget.Toast\$TN") ||
+        packageName?.toString() != context.packageName) return null
+    val appLabel = context.applicationInfo.loadLabel(context.packageManager).toString()
+    return text.map(CharSequence::toString).filterNot { it == appLabel }
+}
+
 @RunWith(AndroidJUnit4::class)
 class ActionExperienceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -254,15 +264,44 @@ class ActionExperienceTest {
     private fun failureTypes(failure: Throwable?): String =
         generateSequence(failure) { it.cause }.take(6).joinToString(" -> ") { it.javaClass.name }
 
+    @Test fun toastFeedbackRecognizesPlatformVariantsWithoutAcceptingOtherNotifications() {
+        val message = context.getString(R.string.action_request_too_large)
+        val appLabel = context.applicationInfo.loadLabel(context.packageManager).toString()
+        val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED)
+        try {
+            event.packageName = context.packageName
+            for (toastClass in listOf("android.widget.Toast", "android.widget.Toast\$TN")) {
+                event.className = toastClass
+                for (labels in listOf(listOf(message), listOf(message, appLabel))) {
+                    event.text.clear()
+                    event.text.addAll(labels)
+                    assertEquals("Platform Toast variant $toastClass: $labels", listOf(message), event.toastTextFrom(context))
+                }
+            }
+            event.className = "android.widget.Toast"
+            event.text.add("Unexpected feedback")
+            assertFalse("Unexpected feedback must not be discarded", listOf(message) == event.toastTextFrom(context))
+            event.text.clear()
+            event.text.add(appLabel)
+            assertFalse("An application label is not action feedback", listOf(message) == event.toastTextFrom(context))
+            event.text.add(message)
+            event.packageName = "org.example.other"
+            assertNull(event.toastTextFrom(context))
+            event.packageName = context.packageName
+            event.className = "android.app.Notification"
+            assertNull(event.toastTextFrom(context))
+            event.className = "android.widget.Toast"
+            event.eventType = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            assertNull(event.toastTextFrom(context))
+        } finally { event.recycle() }
+    }
+
     private fun assertPayloadToast(operation: () -> Unit) {
         val event = automation.executeAndWaitForEvent({ operation() }, { event ->
-            event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED &&
-                event.className?.toString() == "android.widget.Toast" &&
-                event.packageName?.toString() == context.packageName &&
-                event.text.any { it.toString() == context.getString(R.string.action_request_too_large) }
+            event.toastTextFrom(context)?.contains(context.getString(R.string.action_request_too_large)) == true
         }, 5_000)
         try {
-            assertEquals(listOf(context.getString(R.string.action_request_too_large)), event.text.map(CharSequence::toString))
+            assertEquals(listOf(context.getString(R.string.action_request_too_large)), event.toastTextFrom(context))
         } finally { event.recycle() }
     }
 
