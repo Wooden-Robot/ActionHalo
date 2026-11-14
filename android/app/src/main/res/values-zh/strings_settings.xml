@@ -31,4 +31,6 @@
         <item>大</item>
         <item>加大</item>
     </string-array>
+    <string name="destination_limit_reached">最多可为 %1$d 个动作指定打开方式。请将其他动作设为默认后重试。</string>
+    <string name="destination_save_failed">无法保存打开方式，请关闭此对话框后重试。</string>
 </resources>

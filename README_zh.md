@@ -2,11 +2,12 @@
 
 # ActionHalo 🔥
 
-**一个在 macOS 上支持“松开后点击执行”和“松开后按下拖拽再松开执行”的丝滑圆环菜单工具。**
+**适用于 macOS 和 Android 的选文圆环菜单，支持点击执行，也支持按住、拖动、松开执行。**
 
 [English](./README.md) • [**简体中文**](./README_zh.md)
 
 [![macOS 12.0+](https://img.shields.io/badge/macOS-12.0+-000000?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com/macos)
+[![Android 8.0+](https://img.shields.io/badge/Android-8.0+-3DDC84?style=for-the-badge&logo=android&logoColor=white)](./android/README.md)
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white)](https://developer.apple.com/swift)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
@@ -14,15 +15,42 @@
 
 <img src="./Assets/demo2.gif" width="600" alt="ActionHalo 演示 2" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 12px 0 24px;"/>
 
-> ActionHalo 的灵感同时来自 GTA V 和 PopClip，并在 UI、交互与性能上基于原生 Core Animation 和 Swift Concurrency 做了大规模重构与极速优化。
+> 上方为 macOS 版演示。ActionHalo 的灵感来自 GTA V 和 PopClip；macOS 版使用 Core Animation 与 Swift Concurrency，Android 版使用 Kotlin 与原生 Android View。
 
 </div>
 
 ---
 
-## ✨ 核心特性
+## 下载
 
-> **Android 版**：仓库现提供独立的原生 Android 应用，支持选文菜单、分享入口、圆环操作与可选的无障碍自动弹出。安装、构建和兼容说明见 [Android README](./android/README.md)。下文介绍 macOS 版。
+| 平台 | 系统要求 | 安装包 |
+| --- | --- | --- |
+| macOS | macOS 12+，支持 Apple 芯片和 Intel | [ActionHalo.dmg](https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/ActionHalo.dmg) |
+| Android | Android 8.0+ / API 26+，单一通用 APK | [Android 发布列表](https://github.com/Wooden-Robot/ActionHalo/releases?q=android-v)，选择 `ActionHalo-X.Y.Z-release.apk` |
+
+两个平台独立维护版本：macOS 使用 `vX.Y.Z` 标签，Android 使用 `android-vX.Y.Z` 标签。Android 正式包使用持续沿用的专用签名密钥。本地打包方法见 [Android 构建与签名说明](./android/README.md#构建与安装)。
+
+## Android 版
+
+- 从系统选文菜单、分享文字到 ActionHalo，或复制后的 **「复制后圆环」快捷磁贴** 打开圆环。
+- 支持点击动作和按住、滑动、松开执行；可选择普通/GTA 外观、大小、背景调暗，以及每页 6、8、12 或 16 个动作。
+- 提供复制、搜索、网页翻译、打开链接、分享和编辑文字；可添加带 `{text}` 占位符的 HTTP(S) 自定义搜索动作。
+- 支持按应用配置动作和触发方式、临时暂停，以及配置导出与导入。
+- 可选的无障碍功能能在识别到受支持的选区或复制菜单时自动弹出。是否可用取决于原应用和 Android 系统公开的信息。
+
+### 安装与使用
+
+1. 在 Android 发布中下载 `release.apk` 并在手机上打开。系统提示时，允许当前浏览器或文件管理器安装应用。
+2. 打开 ActionHalo，在首页的文字体验区试用。在其他支持的应用中选中文字，从选文菜单（可能位于「更多」）选择 **ActionHalo**，也可以将文字分享到 ActionHalo。
+3. 需要自动弹出时，在「触发」中开启对应选项，并按提示授予 ActionHalo 无障碍权限。手动选文、分享和快捷磁贴入口不需要这项权限。
+
+**从 debug 包切换：**先导出配置备份，再卸载 debug 版、安装正式版并导入备份。两者签名不同，首次正式版无法覆盖安装 debug 版；后续正式版更新必须沿用同一签名密钥。
+
+权限、更新、兼容范围和构建说明见 [Android 使用指南](./android/README.md)。桌面脚本插件及 `.actionhaloext` 导入仅适用于 macOS。
+
+---
+
+## ✨ macOS 核心特性
 
 🚀 **电竞级响应速度**
 基于 `mouseDown` / `mouseDragged` / `mouseUp` 的底层命中测试，告别点击丢失。两种交互的共同前提都是：**先完成选中文字，再松开鼠标，圆环才会触发**。触发后有两种执行方式：
@@ -52,7 +80,7 @@
 
 ---
 
-## 🚀 安装指南
+## 🚀 macOS 安装指南
 
 ### 系统要求
 
@@ -70,7 +98,7 @@
 
 **从 0.3.44 或更早版本升级：**请先手动下载并安装一次最新的 [ActionHalo DMG](https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/ActionHalo.dmg)。0.3.45 将更新源改为 `appcast.xml`；此版本发布后，旧的 `actionhalo-appcast.xml` 地址不再提供。完成这次手动安装后，后续可继续自动更新。
 
-在菜单栏选择 **检查更新...**。发现已签名的新版本后，先点击 **安装更新**；下载并验证完成后，Sparkle 会按默认流程再次显示 **安装并重启** 确认，随后原子安装并重启到新版本。菜单中的自动检查开关仍可随时启用或关闭。如果插件编辑器中存在未保存内容，ActionHalo 会阻止退出，直到你保存或明确丢弃这些修改。
+在菜单栏选择 **检查更新...**。发现已签名的新版本后，先点击 **安装更新**；下载并验证完成后，Sparkle 会按默认流程再次显示 **安装并重启** 确认，随后原子安装并重启到新版本。菜单中的自动检查开关仍可随时启用或关闭。如果插件编辑器中存在未保存内容，ActionHalo 会阻止退出，直到你保存或明确丢弃这些修改。脚本、Telegram 搜索或插件修改仍在进行时，也会暂时阻止退出和重启；请等待操作完成后重试。
 
 ActionHalo 社区版目前不使用 Developer ID。更新真实性由 App 内置的 ActionHalo 独立 Ed25519 公钥保证：安装前会同时校验专用的 `appcast.xml` 更新源和下载归档。由于 ad-hoc 签名无法提供稳定的 Apple 身份，版本更新后 macOS 可能要求重新授予辅助功能或自动化权限。
 
@@ -155,7 +183,7 @@ ActionHalo 常驻在 macOS 菜单栏里，主要设置都可以直接从这里�
 - **GTA 氛围**：切换成更重、更像 GTA 5 武器轮盘的 HUD 风格
 - **菜单最大功能数**：`6 / 8 / 12 / 16`
 - **呼出菜单快捷键**：手动对当前已选中文本打开圆环。默认：`Shift + Option + D`
-- **自动触发开关快捷键**：切换“选中文字后自动弹出圆环”功能。默认：`Shift + Option + X`
+- **自动触发开关快捷键**：切换“选中文字后自动弹出圆环”功能；关闭后仍可用呼出菜单快捷键手动打开。默认：`Shift + Option + X`
 - **插件管理** 和 **黑名单应用**
 
 注意：开启 **GTA 氛围** 后，圆环会强制使用不透明渲染，因此透明度菜单会自动禁用。
@@ -251,11 +279,12 @@ My Script.actionhaloext/
 
 ## 🔨 构建与验证
 
-仓库内受版本管理的 `Makefile` 是发布构建的真源：
+仓库内受版本管理的 `Makefile` 提供两个平台的构建入口。Android 正式包需要先完成[本地签名配置](./android/README.md#正式签名与发布包)，输出为 `android/app/build/outputs/apk/release/app-release.apk`。macOS 的打包与发布门禁见下文。
 
 ```bash
 make all                 # 优化后的 universal 二进制
 make android             # Android 调试 APK
+make android-release     # Android 正式签名 APK、单元测试与 Lint
 make test                # 串行测试
 swift test --parallel    # 并行运行回归检查
 make package             # 本地验证用 .app 与 .dmg

@@ -86,6 +86,7 @@ final class PluginManager: Sendable {
         case sourceChangedSinceConfirmation
         case stagedValidationFailed
         case fileOperationFailed(String)
+        case duplicateCleanupFailed(String)
 
         func localizedMessage(sourcePath: String) -> String {
             switch self {
@@ -108,6 +109,11 @@ final class PluginManager: Sendable {
                 return String(
                     format: "Failed to copy plugin to installation directory. Check permissions.\n(%@)\n%@".localized,
                     sourcePath,
+                    message
+                )
+            case .duplicateCleanupFailed(let message):
+                return String(
+                    format: "The plugin was written, but older copies could not be removed. Check permissions and try again.\n%@".localized,
                     message
                 )
             }
@@ -193,6 +199,8 @@ final class PluginManager: Sendable {
         var userPluginsDirectoryOverride: URL?
         var latestScheduledLoadID: UInt64 = 0
         var recoveredPluginDirectoryPaths: Set<String> = []
+        var runningScriptExecutions = 0
+        var runningNativeExecutions = 0
     }
 
     private struct PluginPathWatcher {
@@ -211,6 +219,14 @@ final class PluginManager: Sendable {
     var plugins: [Plugin] {
         get { state.withLock { $0.plugins } }
         set { state.withLock { $0.plugins = newValue } }
+    }
+
+    var hasRunningPluginExecutions: Bool {
+        state.withLock { $0.runningScriptExecutions > 0 || $0.runningNativeExecutions > 0 }
+    }
+
+    var hasRunningNativePluginExecutions: Bool {
+        state.withLock { $0.runningNativeExecutions > 0 }
     }
 
     private let trustStateQueue = DispatchQueue(label: "com.actionhalo.plugin-trust-state")
@@ -364,6 +380,9 @@ final class PluginManager: Sendable {
               let scheme = components.scheme?.lowercased(),
               allowedPluginURLSchemes.contains(scheme) else {
             return false
+        }
+        if scheme == "http" || scheme == "https" {
+            return components.host?.isEmpty == false
         }
 
         return true
@@ -1510,6 +1529,7 @@ final class PluginManager: Sendable {
         }
     }
 
+    @MainActor
     private func executeStandardPlugin(
         _ action: PluginAction,
         text: String,
@@ -1533,43 +1553,75 @@ final class PluginManager: Sendable {
         case .revealPath:
             ActionExecutor.revealPathInFinder(text)
         case .nativeCommand(.telegramSearch):
-            Task { @MainActor in
-                if case .failure(let failure) = await TelegramSearch.shared.search(text) {
-                    NSLog(
-                        "[ActionHalo] Telegram search failed (stage=%@, reason=%@, effect=%@).",
-                        String(describing: failure.stage),
-                        String(describing: failure.reason),
-                        String(describing: failure.effect)
-                    )
-                }
-            }
+            executeTelegramSearch(text)
         case .shellScript, .appleScript, .keyCombo:
             assertionFailure("Protected and direct key-combo actions must be routed before standard execution.")
         }
     }
 
-    private func executeProtectedPlugin(
+    @MainActor
+    @discardableResult
+    func executeTelegramSearch(
+        _ text: String,
+        search: TelegramSearch? = nil,
+        presentFailure: @escaping @MainActor (TelegramSearchFailure) -> Void = {
+            TelegramSearch.presentFailure($0)
+        }
+    ) -> Task<Void, Never> {
+        let search = search ?? .shared
+        state.withLock { $0.runningNativeExecutions += 1 }
+        return Task { @MainActor in
+            let result = await search.search(text)
+            // Search has restored any owned clipboard state and disposed of its
+            // snapshot. Feedback no longer needs to keep the application alive.
+            state.withLock { $0.runningNativeExecutions -= 1 }
+            if case .failure(let failure) = result {
+                NSLog(
+                    "[ActionHalo] Telegram search failed (stage=%@, reason=%@, effect=%@).",
+                    String(describing: failure.stage),
+                    String(describing: failure.reason),
+                    String(describing: failure.effect)
+                )
+                presentFailure(failure)
+            }
+        }
+    }
+
+    @MainActor
+    func executeProtectedPlugin(
         _ plugin: Plugin,
         with text: String,
         targetProcessIdentifier: pid_t?,
-        keyComboTargetID: UUID?
+        keyComboTargetID: UUID?,
+        confirmTrust: (@Sendable (TrustedExecutionSnapshot) -> Bool)? = nil
     ) {
         let displayDirectoryURL = plugin.directoryURL
         let pluginID = plugin.id
+        let tracksScript = plugin.action.type == .shellScript || plugin.action.type == .applescript
+        // Register before dispatching so a quit cannot slip between the menu
+        // action and snapshot creation or its trust prompt.
+        if tracksScript {
+            state.withLock { $0.runningScriptExecutions += 1 }
+        }
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            defer {
+                if tracksScript {
+                    state.withLock { $0.runningScriptExecutions -= 1 }
+                }
+            }
             guard let snapshot = self.makeProtectedExecutionSnapshot(for: plugin) else {
                 self.discardPendingKeyComboTarget(keyComboTargetID)
                 NSLog("[ActionHalo] Refusing to execute plugin '%@': could not create a verified snapshot.", pluginID)
                 return
             }
 
-            guard self.confirmExecutionTrustIfNeeded(
+            let trusted = confirmTrust?(snapshot) ?? self.confirmExecutionTrustIfNeeded(
                 for: snapshot.plugin,
                 displayDirectoryURL: displayDirectoryURL,
                 fingerprint: snapshot.fingerprint
-            ), self.isStoredExecutionTrustValid(
+            )
+            guard trusted, self.isStoredExecutionTrustValid(
                 pluginID: snapshot.plugin.id,
                 fingerprint: snapshot.fingerprint
             ) else {
@@ -1740,6 +1792,8 @@ final class PluginManager: Sendable {
         }
     }
     
+    // Run synchronously on the protected-execution worker so its quit guard
+    // remains active through process completion and all deferred cleanup.
     private func executeShellScript(
         _ plugin: Plugin,
         source: PluginScriptActionSource,
@@ -1786,46 +1840,44 @@ final class PluginManager: Sendable {
             .appendingPathComponent(UUID().uuidString + ".sh")
         let isBundledScript = bundledScriptURL != nil
         
-        DispatchQueue.global(qos: .userInitiated).async {
-            defer { self.removeTrustedExecutionSnapshot(cleanupSnapshot) }
-            // Write selected text to a temp file for reliable Unicode/CJK support
-            let textFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
-            do {
-                try text.write(to: textFile, atomically: true, encoding: .utf8)
-            } catch {
-                NSLog("[ActionHalo] Failed to prepare selected text for shell script: \(error.localizedDescription)")
-                return
-            }
-            defer { try? FileManager.default.removeItem(at: textFile) }
-            do {
-                if isBundledScript {
-                    try Self.prepareSnapshotScriptDirectory(for: scriptFile, snapshot: cleanupSnapshot)
-                }
-                try content.write(to: scriptFile, atomically: true, encoding: .utf8)
-            } catch {
-                NSLog("[ActionHalo] Failed to prepare shell script: \(error.localizedDescription)")
-                return
-            }
-            defer { try? FileManager.default.removeItem(at: scriptFile) }
-            
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            // Keep untrusted script content out of argv. Embedded NUL and very
-            // large scripts are valid file content but unsafe Process arguments.
-            process.arguments = [scriptFile.path]
-            process.environment = Self.pluginProcessEnvironment(
-                text: text,
-                textFilePath: textFile.path
-            )
-            process.currentDirectoryURL = plugin.directoryURL
-            
-            Self.verboseLog("Launching bash process")
-            self.runProcessWithTimeout(
-                process,
-                timeout: 30,
-                logPrefix: "Shell script"
-            )
+        defer { self.removeTrustedExecutionSnapshot(cleanupSnapshot) }
+        // Write selected text to a temp file for reliable Unicode/CJK support
+        let textFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".txt")
+        do {
+            try text.write(to: textFile, atomically: true, encoding: .utf8)
+        } catch {
+            NSLog("[ActionHalo] Failed to prepare selected text for shell script: \(error.localizedDescription)")
+            return
         }
+        defer { try? FileManager.default.removeItem(at: textFile) }
+        do {
+            if isBundledScript {
+                try Self.prepareSnapshotScriptDirectory(for: scriptFile, snapshot: cleanupSnapshot)
+            }
+            try content.write(to: scriptFile, atomically: true, encoding: .utf8)
+        } catch {
+            NSLog("[ActionHalo] Failed to prepare shell script: \(error.localizedDescription)")
+            return
+        }
+        defer { try? FileManager.default.removeItem(at: scriptFile) }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        // Keep untrusted script content out of argv. Embedded NUL and very
+        // large scripts are valid file content but unsafe Process arguments.
+        process.arguments = [scriptFile.path]
+        process.environment = Self.pluginProcessEnvironment(
+            text: text,
+            textFilePath: textFile.path
+        )
+        process.currentDirectoryURL = plugin.directoryURL
+
+        Self.verboseLog("Launching bash process")
+        self.runProcessWithTimeout(
+            process,
+            timeout: 30,
+            logPrefix: "Shell script"
+        )
     }
     
     private func executeAppleScript(
@@ -1874,54 +1926,52 @@ final class PluginManager: Sendable {
         let isBundledScript = bundledScriptURL != nil
         
         // Execute via osascript passing a temporary file path
-        DispatchQueue.global(qos: .userInitiated).async {
-            defer { self.removeTrustedExecutionSnapshot(cleanupSnapshot) }
-            let tempDir = FileManager.default.temporaryDirectory
-            // Write selected text to a temp file so AppleScript can read it with proper UTF-8 encoding
-            // This avoids encoding issues with CJK characters via environment variables
-            let textFile = tempDir.appendingPathComponent(UUID().uuidString + ".txt")
-            defer {
-                try? FileManager.default.removeItem(at: tempFile)
-                try? FileManager.default.removeItem(at: textFile)
-            }
-            
-            do {
-                try text.write(to: textFile, atomically: true, encoding: .utf8)
-                
-                // Transparently replace the environment lookup with a file-based
-                // UTF-8 read so plugins receive Unicode text without extra work.
-                let fileReadExpr = Self.appleScriptUTF8FileReadExpression(
-                    path: textFile.path
-                )
-                let finalSource = Self.replacingPluginTextEnvironmentReferences(
-                    in: appleScriptSource,
-                    with: fileReadExpr
-                )
-                
-                if isBundledScript {
-                    try Self.prepareSnapshotScriptDirectory(for: tempFile, snapshot: cleanupSnapshot)
-                }
-                try finalSource.write(to: tempFile, atomically: true, encoding: .utf8)
-                Self.verboseLog("Wrote temp AppleScript file to \(tempFile.path)")
-                
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-                process.arguments = [tempFile.path]
-                process.environment = Self.pluginProcessEnvironment(
-                    text: text,
-                    textFilePath: textFile.path
-                )
-                process.currentDirectoryURL = plugin.directoryURL
+        defer { self.removeTrustedExecutionSnapshot(cleanupSnapshot) }
+        let tempDir = FileManager.default.temporaryDirectory
+        // Write selected text to a temp file so AppleScript can read it with proper UTF-8 encoding
+        // This avoids encoding issues with CJK characters via environment variables
+        let textFile = tempDir.appendingPathComponent(UUID().uuidString + ".txt")
+        defer {
+            try? FileManager.default.removeItem(at: tempFile)
+            try? FileManager.default.removeItem(at: textFile)
+        }
 
-                Self.verboseLog("Launching osascript process")
-                self.runProcessWithTimeout(
-                    process,
-                    timeout: 30,
-                    logPrefix: "AppleScript"
-                )
-            } catch {
-                NSLog("[ActionHalo] Failed to execute AppleScript via osascript: \(error.localizedDescription)")
+        do {
+            try text.write(to: textFile, atomically: true, encoding: .utf8)
+
+            // Transparently replace the environment lookup with a file-based
+            // UTF-8 read so plugins receive Unicode text without extra work.
+            let fileReadExpr = Self.appleScriptUTF8FileReadExpression(
+                path: textFile.path
+            )
+            let finalSource = Self.replacingPluginTextEnvironmentReferences(
+                in: appleScriptSource,
+                with: fileReadExpr
+            )
+
+            if isBundledScript {
+                try Self.prepareSnapshotScriptDirectory(for: tempFile, snapshot: cleanupSnapshot)
             }
+            try finalSource.write(to: tempFile, atomically: true, encoding: .utf8)
+            Self.verboseLog("Wrote temp AppleScript file to \(tempFile.path)")
+            
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = [tempFile.path]
+            process.environment = Self.pluginProcessEnvironment(
+                text: text,
+                textFilePath: textFile.path
+            )
+            process.currentDirectoryURL = plugin.directoryURL
+
+            Self.verboseLog("Launching osascript process")
+            self.runProcessWithTimeout(
+                process,
+                timeout: 30,
+                logPrefix: "AppleScript"
+            )
+        } catch {
+            NSLog("[ActionHalo] Failed to execute AppleScript via osascript: \(error.localizedDescription)")
         }
     }
 
@@ -2270,8 +2320,9 @@ final class PluginManager: Sendable {
         }
 
         if Self.sameFileURL(sourceURL, destinationURL) {
-            removeDuplicateUserPlugins(for: sourcePlugin.id, keeping: destinationURL)
+            let cleanupError = removeDuplicateUserPlugins(for: sourcePlugin.id, keeping: destinationURL)
             reloadPlugins()
+            if let cleanupError { return .failed(.duplicateCleanupFailed(cleanupError.localizedDescription)) }
             return .installed
         }
 
@@ -2321,9 +2372,10 @@ final class PluginManager: Sendable {
                 throw error
             }
 
-            removeDuplicateUserPlugins(for: sourcePlugin.id, keeping: destinationURL)
-            NSLog("[ActionHalo] Plugin installed: \(sourceURL.lastPathComponent)")
+            let cleanupError = removeDuplicateUserPlugins(for: sourcePlugin.id, keeping: destinationURL)
             reloadPlugins()
+            if let cleanupError { return .failed(.duplicateCleanupFailed(cleanupError.localizedDescription)) }
+            NSLog("[ActionHalo] Plugin installed: \(sourceURL.lastPathComponent)")
             return .installed
         } catch {
             NSLog("[ActionHalo] Failed to install plugin: \(error.localizedDescription)")

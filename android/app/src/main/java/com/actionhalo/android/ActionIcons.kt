@@ -18,6 +18,10 @@ object ActionIcons {
         "translate" to R.drawable.ic_action_translate,
         "baidu" to R.drawable.ic_action_baidu,
         "douban" to R.drawable.ic_action_douban,
+        "external_link" to R.drawable.ic_action_external_link,
+        "catalog" to R.drawable.ic_action_catalog,
+        "code" to R.drawable.ic_action_code,
+        "edit" to R.drawable.ic_action_edit,
     )
 
     fun resource(action: HaloAction): Int = when {
@@ -33,8 +37,9 @@ object ActionIcons {
         "douban" -> "douban"
         "douban_book" -> "book"
         "douban_movie" -> "film"
-        "neodb", "neodb_book" -> "books"
-        "github" -> "earth"
+        "neodb" -> "catalog"
+        "neodb_book" -> "books"
+        "github" -> "code"
         else -> when (action.type) {
             ActionType.COPY -> "copy"
             ActionType.SHARE -> "share"
@@ -42,7 +47,9 @@ object ActionIcons {
             ActionType.DOUBAN_BOOK_SEARCH -> "book"
             ActionType.DOUBAN_MOVIE_SEARCH -> "film"
             ActionType.TELEGRAM_SEARCH -> "telegram"
-            ActionType.URL, ActionType.OPEN_URL, ActionType.EDIT_TEXT -> "link"
+            ActionType.OPEN_URL -> "external_link"
+            ActionType.EDIT_TEXT -> "edit"
+            ActionType.URL -> "link"
         }
     }
 

@@ -5,7 +5,7 @@
     <string name="diagnostic_ranges">Nonempty ranges: event %1$d · control %2$d\nLatest nonempty ranges: event %3$s · control %4$s</string>
     <string name="diagnostic_range_unavailable">not provided</string>
     <string name="diagnostic_test">Check automatic display</string>
-    <string name="diagnostic_test_hint">This check resets the counters and shows an example overlay. Dismiss it, select text in your browser, wait one second, then return here to see the result. Only counts and range numbers are retained, never selected text or browsing history.</string>
+    <string name="diagnostic_test_hint">This check resets selection and menu diagnostics and shows an example overlay. Dismiss it, reproduce the issue in the target app, then return here to copy the report. Only counts, range numbers, and the latest 24 fixed reasons with relative times are retained, never selected text or app history.</string>
     <string name="diagnostic_test_unavailable">Enable automatic display and connect the accessibility service first.</string>
     <string name="diagnostic_waiting">No selection event received yet</string>
     <string name="diagnostic_received">Selection event received; waiting for a stable selection</string>

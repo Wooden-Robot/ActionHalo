@@ -2,14 +2,19 @@ package com.actionhalo.android
 
 import android.content.Context
 import android.graphics.PixelFormat
+import android.graphics.PointF
 import android.graphics.Rect
+import android.graphics.Region
 import android.os.Build
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
+import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.FrameLayout
+import kotlin.math.hypot
 
 /** Leave selection handles touchable until the user starts operating the wheel. */
 @android.annotation.SuppressLint("RtlHardcoded")
@@ -28,24 +33,68 @@ internal class SelectionHaloWindow(
     private val margin = HaloUi.dp(context, 8)
     private var frame = HaloSafeArea.initialFrame(screen, source,
         HaloUi.dp(context, HaloAppearance.menuSizeDp(context)), margin, HaloAppearance.initialPosition(context), keyboardBounds)
-    private val size = frame.width()
+    private val preferredSize = frame.width()
+    private var size = preferredSize
     private var expanded = false
     private var selectionMoving = false
     private var waitingForMenuReturn = false
     private var menuWasHidden = false
     private var placementBlocked = false
     private var protectedAreas: List<Rect> = emptyList()
+    private var appliedTouchRegion: Region? = null
+    private var pressPoint: PointF? = null
+    private var backdropShown = false
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val heldBackdrop = Runnable { showBackdrop() }
+    private val touchRegionLayout = ViewTreeObserver.OnGlobalLayoutListener { updateTouchableRegion() }
     private val viewport = Rect(screen)
     val root = object : FrameLayout(context) {
+        override fun onAttachedToWindow() {
+            super.onAttachedToWindow()
+            if (Build.VERSION.SDK_INT >= 33) {
+                viewTreeObserver.addOnGlobalLayoutListener(touchRegionLayout)
+                updateTouchableRegion()
+            }
+        }
+
+        override fun onDetachedFromWindow() {
+            removeCallbacks(heldBackdrop)
+            pressPoint = null
+            viewTreeObserver.removeOnGlobalLayoutListener(touchRegionLayout)
+            appliedTouchRegion = null
+            super.onDetachedFromWindow()
+        }
+
         override fun dispatchTouchEvent(event: MotionEvent): Boolean {
             // Hidden windows can still receive queued input, including outside-touch notifications.
             if (selectionMoving || placementBlocked) return false
             if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+                SelectionDiagnostics.trace(SelectionDiagnostics.Trace.HALO_OUTSIDE_TOUCH)
                 waitingForMenuReturn = true
                 menuWasHidden = false
                 setSelectionMoving(true)
                 onOutsideTouch()
                 return true
+            }
+            // Handle bounds can update before the window has finished moving out of their way.
+            if (!expanded && protectedAreas.any { it.contains(event.rawX.toInt(), event.rawY.toInt()) }) return false
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    pressPoint = PointF(event.rawX, event.rawY)
+                    removeCallbacks(heldBackdrop)
+                    if (!backdropShown) postDelayed(heldBackdrop, ViewConfiguration.getLongPressTimeout().toLong())
+                }
+                MotionEvent.ACTION_MOVE -> pressPoint?.let { start ->
+                    if (hypot(event.rawX - start.x, event.rawY - start.y) > touchSlop) {
+                        removeCallbacks(heldBackdrop)
+                        showBackdrop()
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL,
+                MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
+                    removeCallbacks(heldBackdrop)
+                    pressPoint = null
+                }
             }
             val origin = IntArray(2)
             if (!expanded) menu.getLocationOnScreen(origin)
@@ -92,43 +141,73 @@ internal class SelectionHaloWindow(
     init {
         menu.bindTouchSurface(root)
         menu.screenOriginForAnchor = { frame.left + menu.translationX to frame.top + menu.translationY }
-        menu.onInteractionStarted = ::expand
+        menu.onInteractionStarted = { expand(withBackdrop = false) }
     }
 
     fun updateProtectedAreas(areas: List<Rect>) {
         protectedAreas = areas.map(::Rect)
+        updateTouchableRegion()
         if (expanded || selectionMoving) return
         placementBlocked = false
-        if (areas.none { Rect.intersects(frame, it) }) return updateVisibility()
+        if (size == preferredSize && areas.none { Rect.intersects(frame, it) }) return updateVisibility()
         val source = Rect().apply { areas.forEach(::union) }
         val obstacles = keyboardBounds + areas
         val position = HaloAppearance.initialPosition(root.context)
-        fun fit(gap: Int) = HaloSafeArea.initialFrame(screen, source, size, gap, position, obstacles)
-            .takeIf { candidate -> candidate.width() == size && obstacles.none { Rect.intersects(candidate, it) } }
+        fun fit(gap: Int) = HaloSafeArea.initialFrame(screen, source, preferredSize, gap, position, obstacles)
+            .takeIf { candidate -> obstacles.none { Rect.intersects(candidate, it) } }
         // Drop the decorative gap before hiding a wheel that still fits clear of every control.
-        val next = fit(margin) ?: fit(0)
+        val spaced = fit(margin)
+        val flush = fit(0)
+        val next = spaced?.takeIf { it.width() == preferredSize }
+            ?: flush?.takeIf { it.width() == preferredSize }
+            ?: if (Build.VERSION.SDK_INT < 33) listOfNotNull(spaced, flush)
+                .filter { it.width() >= minOf(preferredSize, HaloUi.dp(root.context, 180)) }
+                .maxByOrNull { it.width() } else null
         if (next == null) {
-            // Keep the source usable when a full-size wheel cannot fit between its controls.
-            placementBlocked = true
+            // Older systems cannot exclude individual controls from the window's touch region.
+            placementBlocked = Build.VERSION.SDK_INT < 33
+            if (!placementBlocked) SelectionDiagnostics.trace(SelectionDiagnostics.Trace.HALO_HANDLE_PASSTHROUGH)
             return updateVisibility()
         }
         // The whole window, including transparent padding, must leave the handles touchable.
         frame = next
+        size = frame.width()
+        params.width = size
+        params.height = size
+        if (menu.layoutParams.width != size || menu.layoutParams.height != size) {
+            menu.layoutParams = FrameLayout.LayoutParams(size, size)
+        }
         params.x = frame.left - screen.left
         params.y = frame.top - screen.top
         if (root.isAttachedToWindow) manager.updateViewLayout(root, params)
         updateVisibility()
     }
 
-    fun updateSelectionMenu(visible: Boolean) {
+    private fun updateTouchableRegion() {
+        if (Build.VERSION.SDK_INT < 33) return
+        val surface = root.rootSurfaceControl ?: return
+        // An explicit full region avoids Android 15's null-reset crash when a window is removed.
+        val region = Region(0, 0, root.width, root.height)
+        if (!expanded && protectedAreas.isNotEmpty()) {
+            val origin = IntArray(2).also(root::getLocationOnScreen)
+            protectedAreas.forEach { area ->
+                region.op(Rect(area).apply { offset(-origin[0], -origin[1]) }, Region.Op.DIFFERENCE)
+            }
+        }
+        // The platform requests layout when the region changes; avoid a traversal loop.
+        if (region == appliedTouchRegion) return
+        surface.setTouchableRegion(region)
+        appliedTouchRegion = region
+    }
+
+    fun updateSelectionMenu(visible: Boolean, settled: Boolean = false) {
         if (expanded) return
         if (!visible) {
             menuWasHidden = true
             setSelectionMoving(true)
-        } else if (!waitingForMenuReturn || menuWasHidden) {
-            waitingForMenuReturn = false
-            menuWasHidden = false
-            setSelectionMoving(false)
+        } else if (settled || !waitingForMenuReturn || menuWasHidden) {
+            // A settled, verified menu may remain visible throughout selection adjustment.
+            resumeSelection()
         }
     }
 
@@ -146,16 +225,28 @@ internal class SelectionHaloWindow(
 
     private fun updateVisibility() {
         val hidden = selectionMoving || placementBlocked
+        if (hidden) {
+            root.removeCallbacks(heldBackdrop)
+            pressPoint = null
+        }
         val visibility = if (hidden) View.INVISIBLE else View.VISIBLE
         if (menu.visibility == visibility) return
+        SelectionDiagnostics.trace(when {
+            selectionMoving -> SelectionDiagnostics.Trace.HALO_WAITING_MENU
+            placementBlocked -> SelectionDiagnostics.Trace.HALO_NO_SPACE
+            else -> SelectionDiagnostics.Trace.HALO_VISIBLE
+        })
         menu.visibility = visibility
         params.flags = if (hidden) params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             else params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
         if (root.isAttachedToWindow) manager.updateViewLayout(root, params)
     }
 
-    fun expand() {
-        if (expanded) return
+    fun expand(withBackdrop: Boolean = true) {
+        if (expanded) {
+            if (withBackdrop) showBackdrop()
+            return
+        }
         selectionMoving = false
         waitingForMenuReturn = false
         menuWasHidden = false
@@ -164,6 +255,8 @@ internal class SelectionHaloWindow(
         if (menu.isAttachedToWindow) {
             val origin = IntArray(2)
             menu.getLocationOnScreen(origin)
+            // Freeze the targets actually drawn if a pending resize has not reached layout yet.
+            size = menu.width
             frame = Rect(origin[0], origin[1], origin[0] + menu.width, origin[1] + menu.height)
         }
         expanded = true
@@ -176,10 +269,17 @@ internal class SelectionHaloWindow(
         params.height = WindowManager.LayoutParams.MATCH_PARENT
         params.x = 0
         params.y = 0
-        params.flags = params.flags and WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH.inv() or
-            WindowManager.LayoutParams.FLAG_DIM_BEHIND
+        params.flags = params.flags and WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH.inv()
+        updateTouchableRegion()
+        if (withBackdrop) showBackdrop()
+        if (root.isAttachedToWindow) manager.updateViewLayout(root, params)
+    }
+
+    private fun showBackdrop() {
+        if (!expanded || backdropShown) return
+        backdropShown = true
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_DIM_BEHIND
         params.dimAmount = HaloAppearance.dimAmount(root.context, standardDim)
         HaloAppearance.bindBackdrop(root, params) { manager.updateViewLayout(root, it) }
-        if (root.isAttachedToWindow) manager.updateViewLayout(root, params)
     }
 }

@@ -338,6 +338,106 @@ final class AppDelegateTests: XCTestCase {
         )
     }
 
+    func testManualMenuRemainsAvailableWithAutomaticTriggerOffAndKeepsAppRestrictions() {
+        XCTAssertTrue(AppDelegate.shouldAllowMenuPresentation(
+            isEnabled: false,
+            isManualTrigger: true,
+            frontmostBundleID: "com.apple.Safari",
+            frontmostLocalizedName: "Safari",
+            isFocusedSelectionEditable: false,
+            isAppExcluded: { _ in false }
+        ))
+        XCTAssertFalse(AppDelegate.shouldAllowMenuPresentation(
+            isEnabled: false,
+            isManualTrigger: true,
+            frontmostBundleID: "com.apple.Safari",
+            frontmostLocalizedName: "Safari",
+            isFocusedSelectionEditable: true,
+            isAppExcluded: { _ in true }
+        ))
+        XCTAssertFalse(AppDelegate.shouldAllowMenuPresentation(
+            isEnabled: false,
+            isManualTrigger: true,
+            frontmostBundleID: "com.apple.finder",
+            frontmostLocalizedName: "Finder",
+            isFocusedSelectionEditable: false,
+            isAppExcluded: { _ in false }
+        ))
+    }
+
+    func testManualAcquisitionCancellationWorksWithoutAutomaticMonitoring() throws {
+        let delegate = AppDelegate()
+        delegate.setEnabled(false)
+        let generation = delegate.beginNewInteraction()
+
+        let modifierRelease = try XCTUnwrap(NSEvent.keyEvent(
+            with: .flagsChanged, location: .zero, modifierFlags: [], timestamp: 1,
+            windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+            isARepeat: false, keyCode: 56
+        ))
+        delegate.handleMenuDismissEvent(modifierRelease)
+        XCTAssertEqual(delegate.interactionGeneration, generation,
+                       "Releasing the invocation modifiers must not cancel manual acquisition")
+
+        let copy = try XCTUnwrap(CGEvent(keyboardEventSource: nil, virtualKey: 8, keyDown: true))
+        copy.setIntegerValueField(.eventSourceUserData, value: AccessibilityManager.copyFallbackEventMarker)
+        delegate.handleMenuDismissEvent(try XCTUnwrap(NSEvent(cgEvent: copy)))
+        XCTAssertEqual(delegate.interactionGeneration, generation,
+                       "The fallback's own Cmd+C must not cancel manual acquisition")
+
+        let escape = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 2,
+            windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+            isARepeat: false, keyCode: 53
+        ))
+        delegate.handleMenuDismissEvent(escape)
+        XCTAssertGreaterThan(delegate.interactionGeneration, generation,
+                             "User keyboard input must invalidate delayed manual acquisition")
+    }
+
+    func testRejectedQueuedPresentationRemovesItsInputMonitors() throws {
+        _ = NSApplication.shared
+        let delegate = AppDelegate()
+        defer { delegate.setEnabled(false) }
+        let generation = delegate.beginNewInteraction()
+        XCTAssertTrue(delegate.beginMenuDismiss())
+        delegate.scheduleMenuPresentation { /* The target context no longer permits a menu. */ }
+        delegate.finishMenuDismiss()
+
+        NSApp.sendEvent(try escapeEvent())
+
+        XCTAssertEqual(delegate.interactionGeneration, generation,
+                       "A rejected presentation must not keep observing later user input")
+    }
+
+    func testFinishingAnOlderPresentationKeepsTheNewRequestInputMonitors() throws {
+        _ = NSApplication.shared
+        let delegate = AppDelegate()
+        defer { delegate.setEnabled(false) }
+        XCTAssertTrue(delegate.beginMenuDismiss())
+        delegate.scheduleMenuPresentation {
+            delegate.beginNewInteraction()
+            delegate.scheduleMenuPresentation(pastePopupRequestID: UUID()) {
+                // The replacement popup is still awaiting its asynchronous focus check.
+            }
+        }
+        delegate.finishMenuDismiss()
+        let generation = delegate.interactionGeneration
+
+        NSApp.sendEvent(try escapeEvent())
+
+        XCTAssertGreaterThan(delegate.interactionGeneration, generation,
+                             "Finishing an older callback must leave its replacement cancellable")
+    }
+
+    private func escapeEvent() throws -> NSEvent {
+        try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 2,
+            windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+            isARepeat: false, keyCode: 53
+        ))
+    }
+
     func testMenuPresentationRespectsExcludedAppsEvenWhenEditable() {
         XCTAssertFalse(
             AppDelegate.shouldAllowMenuPresentation(
@@ -930,6 +1030,48 @@ final class AppDelegateGlobalStateTests: GlobalStateTestCase {
             XCTFail("No warning should remain after the transaction finishes")
             return .alertFirstButtonReturn
         }, .terminateNow)
+    }
+
+    func testQuitRechecksMutationStartedDuringDiscardPromptWithoutDiscardingEdits() {
+        _ = NSApplication.shared
+        let editor = PluginEditorWindow()
+        editor.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        editor.orderFront(nil)
+        let acquired = DispatchSemaphore(value: 0)
+        let resume = DispatchSemaphore(value: 0)
+        let finished = DispatchSemaphore(value: 0)
+        let acquiredMutation = LockedState(initialState: false)
+        defer {
+            resume.signal()
+            _ = finished.wait(timeout: .now() + 2)
+            editor.discardUnsavedChanges()
+            editor.close()
+        }
+        var prompts = 0
+        let reply = AppDelegate().applicationShouldTerminate(NSApplication.shared) { alert in
+            prompts += 1
+            if prompts == 1 {
+                XCTAssertEqual(alert.messageText, "Unsaved Plugin Changes".localized)
+                DispatchQueue.global().async {
+                    let ownsLock = PluginManager.tryBeginPluginMutation()
+                    acquiredMutation.withLock { $0 = ownsLock }
+                    acquired.signal()
+                    if ownsLock {
+                        _ = resume.wait(timeout: .now() + 5)
+                        PluginManager.endPluginMutation()
+                    }
+                    finished.signal()
+                }
+                XCTAssertEqual(acquired.wait(timeout: .now() + 2), .success)
+                XCTAssertTrue(acquiredMutation.withLock { $0 })
+                return .alertSecondButtonReturn
+            }
+            XCTAssertEqual(alert.messageText, "Plugin Operation in Progress".localized)
+            return .alertFirstButtonReturn
+        }
+        XCTAssertEqual(reply, .terminateCancel)
+        XCTAssertEqual(prompts, 2)
+        XCTAssertTrue(editor.hasUnsavedChanges)
     }
 
     func testQuitRejectsHiddenCleanEditorWhilePersistenceCompletionIsPending() throws {

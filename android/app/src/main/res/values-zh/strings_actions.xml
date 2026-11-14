@@ -8,6 +8,7 @@
     <string name="action_share">分享</string>
     <string name="action_baidu">百度</string>
     <string name="action_unknown">此动作已不存在。</string>
+    <string name="actions_changed">动作已更新，请重新选择。</string>
     <string name="action_title_required">请输入动作名称。</string>
     <string name="action_invalid_template">请使用 HTTP 或 HTTPS 链接，并在路径或查询中包含 {text}，例如 https://www.google.com/search?q={text}。</string>
     <string name="action_invalid_url">请选择 HTTP 或 HTTPS 链接，或 example.com 这样的域名。</string>
@@ -15,4 +16,5 @@
     <string name="action_copied">已复制文字</string>
     <string name="action_no_app">没有可以执行此动作的应用。</string>
     <string name="action_not_allowed">Android 未允许执行此动作。</string>
+    <string name="action_request_too_large">请求过大，Android 无法处理。请缩短选中的文字或链接模板。</string>
 </resources>

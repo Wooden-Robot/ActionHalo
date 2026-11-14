@@ -3,6 +3,7 @@ package com.actionhalo.android
 import android.app.UiAutomation
 import android.content.Context
 import android.graphics.Rect
+import android.os.Bundle
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
@@ -11,6 +12,8 @@ import android.view.ViewGroup
 import android.view.inspector.WindowInspector
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.Spinner
+import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
@@ -105,6 +108,56 @@ class AppRulesUiTest {
             assertEquals(original, AppRulesStore(context).profile(source).actions)
             clickDialog(restoredProfile, android.R.id.button1)
             assertEquals(listOf("translate", "google"), AppRulesStore(context).profile(source).actions)
+        }
+    }
+
+    @Test fun savingTheNextAppAtTheLimitKeepsItsDraftAndCanRetryAfterRecreation() {
+        val store = AppRulesStore(context)
+        store.setDisabledPackages((0 until AppRulesStore.MAX_PROFILES - 1).map { "com.example.full$it" }.toSet())
+        val before = prefs.all.toMap()
+        val newPackage = "com.example.pending"
+        val expected = AppRulesStore.Profile(AppRulesStore.TriggerMode.BUTTON, listOf("google", "translate"))
+        ActivityScenario.launch<MainActivity>(MainActivity.pageIntent(context, MainActivity.Page.TRIGGERS)).use { scenario ->
+            lateinit var profileRoot: View
+            scenario.onActivity { activity ->
+                AppRulesSettings(activity).restoreProfile(Bundle().apply {
+                    putString("package", newPackage)
+                    putStringArrayList("actions", ArrayList(original))
+                })
+                profileRoot = AppSettingsDrafts.dialogs(activity).last().window!!.decorView
+                descendants(profileRoot).filterIsInstance<Spinner>().single().setSelection(expected.trigger.ordinal)
+            }
+            val actionRoot = openActions(profileRoot)
+            instrumentation.runOnMainSync {
+                descendants(actionRoot).filterIsInstance<CheckBox>()
+                    .single { (it.parent as? View)?.tag == "copy" }.isChecked = false
+            }
+            clickDialog(actionRoot, android.R.id.button1)
+            clickDialog(profileRoot, android.R.id.button1)
+            assertEquals(before, prefs.all.toMap())
+            scenario.onActivity { activity ->
+                assertTrue(AppSettingsDrafts.dialogs(activity).last().isShowing)
+                val error = descendants(profileRoot).filterIsInstance<TextView>().single { it.tag == "app_rules_save_error" }
+                assertEquals(context.getString(R.string.disabled_apps_invalid), error.text.toString())
+                assertEquals(View.ACCESSIBILITY_LIVE_REGION_POLITE, error.accessibilityLiveRegion)
+                assertEquals(expected.trigger.ordinal, descendants(profileRoot).filterIsInstance<Spinner>().single().selectedItemPosition)
+            }
+
+            scenario.recreate()
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { activity ->
+                profileRoot = AppSettingsDrafts.dialogs(activity).last().window!!.decorView
+                assertEquals(expected.trigger.ordinal, descendants(profileRoot).filterIsInstance<Spinner>().single().selectedItemPosition)
+                assertTrue(descendants(profileRoot).filterIsInstance<Button>().any {
+                    it.text.toString() == context.getString(R.string.app_rules_actions_count, expected.actions!!.size)
+                })
+            }
+            assertEquals(before, prefs.all.toMap())
+            store.remove(source)
+            clickDialog(profileRoot, android.R.id.button1)
+            assertEquals(expected, store.profile(newPackage))
+            assertEquals(AppRulesStore.MAX_PROFILES, store.packages().size)
+            scenario.onActivity { activity -> assertTrue(AppSettingsDrafts.dialogs(activity).isEmpty()) }
         }
     }
 

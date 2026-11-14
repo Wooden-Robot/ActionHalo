@@ -69,51 +69,100 @@ internal object HaloSafeArea {
     }
 
     /** Geometry only: do not read text while observing a compatibility menu. */
-    fun selectionHandleBounds(context: Context, source: AccessibilityNodeInfo, range: SelectionPolicy.Range): List<Rect> {
+    fun selectionProtectionBounds(context: Context, source: AccessibilityNodeInfo, range: SelectionPolicy.Range): List<Rect> {
         val bounds = Rect().also(source::getBoundsInScreen)
         val key = AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY
         if (key !in source.availableExtraData) return emptyList()
-        val handles = mutableListOf<Rect>()
-        for (index in setOf(range.start, range.end - 1)) {
+        val selected = Rect()
+        val requestLimit = 20_000 // Android caps each character-location request at this length.
+        for (index in range.start until range.end step requestLimit) {
             val arguments = android.os.Bundle().apply {
                 putInt(AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_START_INDEX, index)
-                putInt(AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_LENGTH, 1)
+                putInt(AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_LENGTH, minOf(requestLimit, range.end - index))
             }
             if (!source.refreshWithExtraData(key, arguments)) continue
             @Suppress("DEPRECATION")
-            val location = source.extras.getParcelableArray(key)?.firstOrNull() as? RectF ?: continue
-            if (location.isEmpty || !listOf(location.left, location.top, location.right, location.bottom).all { it.isFinite() }) continue
-            val character = Rect().also(location::roundOut)
-            if (character.intersect(bounds)) {
-                character.inset(-HaloUi.dp(context, 32), -HaloUi.dp(context, 40))
-                handles.add(character)
-            }
+            val locations = source.extras.getParcelableArray(key) ?: continue
+            selected.union(characterLocationBounds(bounds,
+                locations.take(minOf(requestLimit, range.end - index)).filterIsInstance<RectF>()))
         }
-        return handles
+        if (selected.isEmpty) return emptyList()
+        selected.inset(-HaloUi.dp(context, 32), -HaloUi.dp(context, 40))
+        return listOf(selected)
     }
 
-    /** Small source child windows supply handle geometry when range events are missing. */
+    fun characterLocationBounds(sourceBounds: Rect, locations: List<RectF>): Rect {
+        val source = RectF(sourceBounds)
+        val valid = locations.filter { !it.isEmpty && it.left.isFinite() && it.top.isFinite() &&
+            it.right.isFinite() && it.bottom.isFinite() }
+        // Chromium 91 uses the whole node for missing character bounds, including ligatures.
+        // Keep coarse-only data; discard that exact placeholder only alongside finer glyph bounds.
+        val hasGlyphBounds = valid.any { it != source && RectF.intersects(it, source) && !it.contains(source) }
+        val selected = Rect()
+        val character = Rect()
+        for (location in valid) {
+            if (hasGlyphBounds && location == source) continue
+            location.roundOut(character)
+            if (character.intersect(sourceBounds)) selected.union(character)
+        }
+        return selected
+    }
+
+    /** Keep the verified app menu and source handles touchable, even when the wheel overlaps them. */
     fun selectionControlBounds(service: AccessibilityService, hostWindowId: Int, menuWindowId: Int? = null): List<Rect> {
         val windows = service.windows
         val controls = mutableListOf<Rect>()
+        val protectedAreas = mutableListOf<Rect>()
+        val maximumControlSize = HaloUi.dp(service, 96)
         try {
             for (window in windows) {
-                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION || window.id == menuWindowId) continue
+                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) continue
                 val parent = window.parent ?: continue
                 val sameHost = parent.id == hostWindowId
                 @Suppress("DEPRECATION")
                 if (Build.VERSION.SDK_INT < 33) parent.recycle()
                 if (!sameHost) continue
                 val bounds = Rect().also(window::getBoundsInScreen)
-                if (bounds.width() in 1..HaloUi.dp(service, 96) && bounds.height() in 1..HaloUi.dp(service, 96)) {
+                if (window.id == menuWindowId) {
+                    if (!bounds.isEmpty) protectedAreas.add(bounds)
+                } else if (bounds.width() in 1..maximumControlSize && bounds.height() in 1..maximumControlSize) {
+                    refreshedControlBounds(window, maximumControlSize)?.let(bounds::set)
                     bounds.inset(-HaloUi.dp(service, 16), -HaloUi.dp(service, 32))
                     controls.add(bounds)
                 }
             }
-            return controls
+            // Without character locations, the space between the handles still belongs to the selection.
+            if (controls.isNotEmpty()) protectedAreas.add(Rect().apply { controls.forEach(::union) })
+            return protectedAreas
         } finally {
             @Suppress("DEPRECATION")
             if (Build.VERSION.SDK_INT < 33) windows.forEach { it.recycle() }
+        }
+    }
+
+    private fun refreshedControlBounds(window: AccessibilityWindowInfo, maximumSize: Int): Rect? {
+        val root = try { window.root } catch (_: IllegalStateException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        } ?: return null
+        try {
+            if (root.windowId != window.id || root.isPassword ||
+                (Build.VERSION.SDK_INT >= 34 && root.isAccessibilityDataSensitive) || !root.refresh() ||
+                root.windowId != window.id || root.isPassword ||
+                (Build.VERSION.SDK_INT >= 34 && root.isAccessibilityDataSensitive)) return null
+            // A moved handle's window bounds can stay cached while its root already has the new position.
+            // Do not require visibility: the old wheel may currently cover the handle we must protect.
+            return Rect().also(root::getBoundsInScreen).takeIf {
+                it.width() in 1..maximumSize && it.height() in 1..maximumSize
+            }
+        } catch (_: IllegalStateException) {
+            return null
+        } catch (_: SecurityException) {
+            return null
+        } finally {
+            @Suppress("DEPRECATION")
+            if (Build.VERSION.SDK_INT < 33) root.recycle()
         }
     }
 
@@ -180,7 +229,7 @@ internal object HaloSafeArea {
     }
 
     /** Call after adding the menu; other interaction callbacks remain chained. */
-    fun bindInitialPlacement(root: FrameLayout, menu: RadialMenuView) {
+    fun bindInitialPlacement(root: FrameLayout, menu: RadialMenuView, screenBounds: Rect? = null) {
         var interacting = false
         val previous = menu.onInteractionStarted
         menu.onInteractionStarted = { interacting = true; previous?.invoke() }
@@ -191,8 +240,9 @@ internal object HaloSafeArea {
             val location = IntArray(2).also(root::getLocationOnScreen)
             val visible = Rect().also(root::getWindowVisibleDisplayFrame).apply { offset(-location[0], -location[1]) }
             if (!visible.isEmpty && !area.intersect(visible)) return
-            val frame = initialFrame(area, null, HaloUi.dp(root.context, HaloAppearance.menuSizeDp(root.context)),
-                HaloUi.dp(root.context, 8), HaloAppearance.initialPosition(root.context), keyboardBounds(root, location))
+            val frame = screenBounds?.let { Rect(it).apply { offset(-location[0], -location[1]) } }
+                ?: initialFrame(area, null, HaloUi.dp(root.context, HaloAppearance.menuSizeDp(root.context)),
+                    HaloUi.dp(root.context, 8), HaloAppearance.initialPosition(root.context), keyboardBounds(root, location))
             val old = menu.layoutParams as FrameLayout.LayoutParams
             val left = frame.left - root.paddingLeft
             val top = frame.top - root.paddingTop
@@ -206,13 +256,26 @@ internal object HaloSafeArea {
         val boundsListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> place() }
         root.addOnLayoutChangeListener(boundsListener)
         val layoutListener = ViewTreeObserver.OnGlobalLayoutListener { place() }
+        val drawListener = ViewTreeObserver.OnPreDrawListener {
+            if (interacting || screenBounds == null || menu.parent !== root) true else {
+                place()
+                val position = IntArray(2).also(menu::getLocationOnScreen)
+                // A handoff must finish layout before its first frame becomes visible.
+                (position[0] == screenBounds.left && position[1] == screenBounds.top &&
+                    menu.width == screenBounds.width() && menu.height == screenBounds.height()).also { ready ->
+                    if (!ready) menu.requestLayout()
+                }
+            }
+        }
         val attachmentListener = object : View.OnAttachStateChangeListener {
             override fun onViewAttachedToWindow(view: View) {
                 root.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
+                if (screenBounds != null) root.viewTreeObserver.addOnPreDrawListener(drawListener)
                 root.post { place() }
             }
             override fun onViewDetachedFromWindow(view: View) {
                 if (root.viewTreeObserver.isAlive) root.viewTreeObserver.removeOnGlobalLayoutListener(layoutListener)
+                if (root.viewTreeObserver.isAlive) root.viewTreeObserver.removeOnPreDrawListener(drawListener)
             }
         }
         root.addOnAttachStateChangeListener(attachmentListener)
@@ -222,10 +285,15 @@ internal object HaloSafeArea {
                 root.removeOnLayoutChangeListener(boundsListener)
                 root.removeOnAttachStateChangeListener(attachmentListener)
                 if (root.viewTreeObserver.isAlive) root.viewTreeObserver.removeOnGlobalLayoutListener(layoutListener)
+                if (root.viewTreeObserver.isAlive) root.viewTreeObserver.removeOnPreDrawListener(drawListener)
                 menu.removeOnAttachStateChangeListener(this)
             }
         })
-        if (root.isAttachedToWindow) root.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
+        if (root.isAttachedToWindow) {
+            root.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
+            if (screenBounds != null) root.viewTreeObserver.addOnPreDrawListener(drawListener)
+        }
+        if (screenBounds != null) place()
         root.post { place() }
     }
 

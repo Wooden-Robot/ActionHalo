@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.TransactionTooLargeException
 import android.widget.Toast
 
 object ActionExecutor {
@@ -25,15 +26,7 @@ object ActionExecutor {
         return try {
             when (action.type) {
                 ActionType.COPY -> {
-                    // ClipboardService silently ignores denied writes; this AppOps name exists from API 28.
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        @Suppress("DEPRECATION")
-                        val mode = context.getSystemService(AppOpsManager::class.java)
-                            .noteOpNoThrow("android:write_clipboard", android.os.Process.myUid(), context.packageName)
-                        if (mode != AppOpsManager.MODE_ALLOWED) return fail(R.string.action_not_allowed)
-                    }
-                    context.getSystemService(ClipboardManager::class.java)
-                        .setPrimaryClip(ClipData.newPlainText("ActionHalo", text))
+                    if (!writeClipboard(context, "ActionHalo", text)) return fail(R.string.action_not_allowed)
                     Toast.makeText(context, R.string.action_copied, Toast.LENGTH_SHORT).show()
                 }
                 ActionType.SHARE -> launch(context, Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
@@ -79,8 +72,30 @@ object ActionExecutor {
                 }
             }
             true
-        } catch (_: ActivityNotFoundException) { fail(R.string.action_no_app) }
-        catch (_: SecurityException) { fail(R.string.action_not_allowed) }
+        } catch (failure: Exception) { fail(launchFailureMessage(failure) ?: throw failure) }
+    }
+
+    internal fun launchFailureMessage(failure: Exception): Int? = when {
+        failure is ActivityNotFoundException -> R.string.action_no_app
+        failure is SecurityException -> R.string.action_not_allowed
+        failure is TransactionTooLargeException || failure.cause is TransactionTooLargeException ->
+            R.string.action_request_too_large
+        else -> null
+    }
+
+    internal fun writeClipboard(context: Context, label: String, text: String): Boolean {
+        return try {
+            // ClipboardService silently ignores denied writes; this AppOps name exists from API 28.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                @Suppress("DEPRECATION")
+                val mode = context.getSystemService(AppOpsManager::class.java)
+                    .noteOpNoThrow("android:write_clipboard", android.os.Process.myUid(), context.packageName)
+                if (mode != AppOpsManager.MODE_ALLOWED) return false
+            }
+            context.getSystemService(ClipboardManager::class.java)
+                .setPrimaryClip(ClipData.newPlainText(label, text))
+            true
+        } catch (_: SecurityException) { false }
     }
 
     internal fun webUrl(action: HaloAction, text: String): String? = when (action.type) {

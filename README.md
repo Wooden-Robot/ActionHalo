@@ -2,13 +2,12 @@
 
 # ActionHalo 🔥
 
-**Android edition:** A native Android app is now available in [`android/`](./android/README.md), with text-selection and share entry points, a radial menu, and optional accessibility-based automatic display. The documentation below covers the macOS edition.
-
-**An ultra-smooth circular menu tool for macOS with both click-to-execute and press-drag-release execution after selection.**
+**A radial menu for selected text on macOS and Android. Click an action, or press, drag and release to execute.**
 
 [**English**](./README.md) • [简体中文](./README_zh.md)
 
 [![macOS 12.0+](https://img.shields.io/badge/macOS-12.0+-000000?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com/macos)
+[![Android 8.0+](https://img.shields.io/badge/Android-8.0+-3DDC84?style=for-the-badge&logo=android&logoColor=white)](./android/README.md)
 [![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?style=for-the-badge&logo=swift&logoColor=white)](https://developer.apple.com/swift)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
@@ -16,13 +15,42 @@
 
 <img src="./Assets/demo2.gif" width="600" alt="ActionHalo Demo 2" style="border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); margin: 12px 0 24px;"/>
 
-> ActionHalo draws inspiration from both GTA V and PopClip, then massively refactors and optimizes the UI, interaction model, and performance with native Core Animation and Swift Concurrency.
+> macOS demos above. ActionHalo draws inspiration from GTA V and PopClip. The macOS edition uses Core Animation and Swift Concurrency; the Android edition uses Kotlin and native Android Views.
 
 </div>
 
 ---
 
-## ✨ Features That Wow
+## Downloads
+
+| Platform | Requirements | Download |
+| --- | --- | --- |
+| macOS | macOS 12+, Apple silicon or Intel | [ActionHalo.dmg](https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/ActionHalo.dmg) |
+| Android | Android 8.0+ / API 26+, one universal APK | [Android releases](https://github.com/Wooden-Robot/ActionHalo/releases?q=android-v), choose `ActionHalo-X.Y.Z-release.apk` |
+
+The two editions use independent versions: macOS releases use `vX.Y.Z`, and Android releases use `android-vX.Y.Z`. Android release APKs use a dedicated signing key that is retained for future updates. For local builds, see the [Android build and signing guide](./android/README.md#构建与安装).
+
+## Android
+
+- Open the wheel from the system text-selection menu, by sharing text to ActionHalo, or through the **Copied text halo** Quick Settings tile after copying.
+- Tap an action or press, slide and release. Choose the standard or GTA appearance, size, background dimming, and 6, 8, 12 or 16 actions per page.
+- Copy, search, translate on the web, open links, share or edit text. Add custom HTTP(S) search actions using `{text}` URL templates.
+- Configure actions and trigger behavior per app, pause automatic display, and export or import your settings.
+- Optional accessibility features can open the wheel automatically for supported selections or Copy menus. Availability depends on what the source app and Android system expose.
+
+### Install and use
+
+1. Download the `release.apk` from an Android release and open it on your phone. If prompted, allow that browser or file manager to install apps.
+2. Open ActionHalo and try the text playground on Home. In another supported app, select text and choose **ActionHalo** from the selection menu, sometimes under **More**, or share the text to ActionHalo.
+3. To use automatic display, enable the desired option under **Triggers** and grant ActionHalo Accessibility access when prompted. Manual selection, share and Quick Settings entries work without this access.
+
+**Switching from a debug APK:** export your configuration before uninstalling the debug app, then install the release APK and import the backup. The signatures differ, so Android cannot install the first release APK over the debug build. Later release updates must keep the same signing key.
+
+See the [Android guide](./android/README.md) for permissions, updates, compatibility and build instructions. Desktop script plugins and `.actionhaloext` imports are specific to macOS.
+
+---
+
+## ✨ macOS Features
 
 🚀 **Esports-level Response Speed**
 Bottom-layer hit testing based on `mouseDown` / `mouseDragged` / `mouseUp`. Bid farewell to missed clicks. In both workflows, the wheel is triggered only after you finish the text selection and release the mouse button. From there, ActionHalo supports two distinct execution styles:
@@ -52,7 +80,7 @@ Built-in automatic blacklist management UI. Supports dragging and dropping apps,
 
 ---
 
-## 🚀 Getting Started
+## 🚀 macOS Getting Started
 
 ### System Requirements
 
@@ -70,7 +98,7 @@ Built-in automatic blacklist management UI. Supports dragging and dropping apps,
 
 **Upgrading from 0.3.44 or earlier:** download and install the latest [ActionHalo DMG](https://github.com/Wooden-Robot/ActionHalo/releases/latest/download/ActionHalo.dmg) manually once. Version 0.3.45 switches the update feed to `appcast.xml`; after this release is published, the old `actionhalo-appcast.xml` address is no longer provided. Automatic updates continue after the manual installation.
 
-Use **Check for Updates...** from the menu bar. Choose **Install Update** when a signed update is offered; after the download is verified and ready, Sparkle asks for the standard **Install and Relaunch** confirmation, installs the app atomically, then relaunches the updated version. Automatic checks can still be enabled or disabled from the menu. If a plugin editor has unsaved changes, ActionHalo blocks the quit until you save them or explicitly discard them.
+Use **Check for Updates...** from the menu bar. Choose **Install Update** when a signed update is offered; after the download is verified and ready, Sparkle asks for the standard **Install and Relaunch** confirmation, installs the app atomically, then relaunches the updated version. Automatic checks can still be enabled or disabled from the menu. If a plugin editor has unsaved changes, ActionHalo blocks the quit until you save them or explicitly discard them. Running scripts, Telegram searches and plugin changes also temporarily block quitting or restarting; wait for them to finish, then retry.
 
 ActionHalo community builds do not use a Developer ID. Update authenticity comes from ActionHalo's own Ed25519 public key embedded in the app, which verifies both the dedicated `appcast.xml` feed and the downloaded archive before installation. Because ad-hoc signatures do not provide a stable Apple identity, macOS may ask you to grant Accessibility or Automation access again after an update.
 
@@ -155,7 +183,7 @@ ActionHalo lives in the macOS menu bar and exposes the main controls there:
 - **GTA Mode**: swaps the wheel into a heavier GTA V-style HUD presentation
 - **Max Items in Menu**: `6 / 8 / 12 / 16`
 - **Open Menu Hotkey**: manually open the wheel for the current selection. Default: `Shift + Option + D`
-- **Auto Trigger Toggle Hotkey**: turn automatic text-selection triggering on or off. Default: `Shift + Option + X`
+- **Auto Trigger Toggle Hotkey**: turn automatic text-selection triggering on or off. The Open Menu Hotkey remains available when automatic triggering is off. Default: `Shift + Option + X`
 - **Plugin Management** and **App Blacklist**
 
 Note: when **GTA Mode** is enabled, the wheel is intentionally rendered fully opaque and the opacity menu is disabled.
@@ -251,11 +279,12 @@ My Script.actionhaloext/
 
 ## 🔨 Building and Verification
 
-The tracked `Makefile` is the release source of truth:
+The tracked `Makefile` provides build commands for both platforms. Android release builds require the [local signing configuration](./android/README.md#正式签名与发布包) and write `android/app/build/outputs/apk/release/app-release.apk`. The macOS packaging and release gates are described below.
 
 ```bash
 make all                 # optimized universal binary
 make android             # Android debug APK
+make android-release     # signed Android APK, unit tests and Lint
 make test                # serial test suite
 swift test --parallel    # parallel runner regression check
 make package             # local verification .app and .dmg

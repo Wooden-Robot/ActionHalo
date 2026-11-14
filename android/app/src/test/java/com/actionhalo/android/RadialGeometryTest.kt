@@ -135,6 +135,20 @@ class RadialGeometryTest {
         }
     }
 
+    @Test fun `GTA slot numbers stay upright and tangential for every page size`() {
+        for (count in 1..16) {
+            val gta = RadialGeometry(200f, 200f, 85f, 130f, count, gtaMode = true)
+            for (index in 0 until count) {
+                val rotation = gta.slotLabelRotationDegrees(index).toDouble()
+                val detail = "count=$count slot=$index rotation=$rotation"
+                assertTrue("Text must face the reader; $detail", cos(Math.toRadians(rotation)) >= -0.000001)
+                val tangent = gta.actionAngleDegrees(index) + 90.0
+                assertEquals("Text must follow the ring; $detail", 1.0,
+                    kotlin.math.abs(cos(Math.toRadians(rotation - tangent))), 0.000001)
+            }
+        }
+    }
+
     @Test fun `selection limit scales with density in all quadrants and both modes`() {
         for (gtaMode in listOf(false, true)) for (density in listOf(1f, 2f, 3f)) {
             val layout = RadialGeometry(400f, 400f, 70f * density, 150f * density, 4, gtaMode, density)

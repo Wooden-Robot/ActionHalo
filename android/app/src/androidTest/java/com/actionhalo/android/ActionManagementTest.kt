@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.SharedPreferences
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
@@ -36,6 +38,24 @@ class ActionManagementTest {
 
     @After fun clearFixture() {
         assertTrue(preferences.edit().clear().commit())
+    }
+
+    @Test fun builtInActionsHaveDistinctIconsEvenAtTheSmallestMenuSize() = instrumentation.runOnMainSync {
+        val actions = ActionStore(context).allActions()
+        for (size in listOf(22, 30)) {
+            val silhouettes = mutableSetOf<List<Int>>()
+            for (action in actions) {
+                val drawable = requireNotNull(context.getDrawable(ActionIcons.resource(action)))
+                val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                try {
+                    drawable.setBounds(0, 0, size, size)
+                    drawable.draw(Canvas(bitmap))
+                    val pixels = IntArray(size * size)
+                    bitmap.getPixels(pixels, 0, size, 0, 0, size, size)
+                    assertTrue("Duplicate icon for ${action.id} at $size px", silhouettes.add(pixels.toList()))
+                } finally { bitmap.recycle() }
+            }
+        }
     }
 
     @Test fun translationUsesTheWebsiteAndRetainsItsSavedPositionAndEnabledState() {

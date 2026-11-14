@@ -25,6 +25,6 @@
     <string name="background_app_settings">打开应用设置</string>
     <string name="background_battery_settings">电池优化设置</string>
     <string name="health_copy_button">复制故障诊断</string>
-    <string name="health_copy_description">仅包含机型、系统、ActionHalo 与官方 Telegram 版本、服务状态与时间、退出原因、触发计数。不会包含选中文字、剪贴板内容或聊天记录，也不会自动发送。</string>
+    <string name="health_copy_description">仅包含机型、系统、ActionHalo 与官方 Telegram 版本、服务状态与时间、退出原因、触发计数及固定的识别／隐藏原因。不会包含选中文字、剪贴板内容或聊天记录，也不会自动发送。</string>
     <string name="health_copy_done">故障诊断已复制</string>
 </resources>

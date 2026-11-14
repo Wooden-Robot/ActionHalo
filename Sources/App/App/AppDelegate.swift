@@ -240,12 +240,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     static func shouldAllowMenuPresentation(
         isEnabled: Bool,
+        isManualTrigger: Bool = false,
         frontmostBundleID: String?,
         frontmostLocalizedName: String?,
         isFocusedSelectionEditable: Bool,
         isAppExcluded: (String) -> Bool = { AppExclusionStore.isExcluded($0) }
     ) -> Bool {
-        guard isEnabled else { return false }
+        guard isEnabled || isManualTrigger else { return false }
 
         if TextSelectionMonitor.shouldSuppressForFrontmostApp(
             bundleID: frontmostBundleID,
@@ -406,9 +407,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if HotkeyManager.shared.hotkey != nil || HotkeyManager.shared.toggleHotkey != nil {
             let issues = HotkeyManager.shared.registerHotkeys()
-            for issue in issues {
-                NSLog("[ActionHalo] Hotkey registration issue: \(issue.message)")
-            }
+            statusBarController.presentHotkeyRegistrationIssues(issues)
         }
     }
 
@@ -447,6 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         guard Self.shouldAllowMenuPresentation(
             isEnabled: isEnabled,
+            isManualTrigger: true,
             frontmostBundleID: expectedBundleID,
             frontmostLocalizedName: frontmostApplication?.localizedName,
             // This preflight intentionally avoids an AX lookup. Critical apps
@@ -460,9 +460,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let requestInteractionGeneration = beginNewInteraction()
         let focusRequestID = UUID()
         pendingHotkeyFocusRequestID = focusRequestID
+        // Manual acquisition still needs cancellation when automatic monitoring is off.
+        setupMenuDismissMonitors()
 
         pendingHotkeyFocusTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                if self.pendingHotkeyFocusRequestID == focusRequestID {
+                    self.pendingHotkeyFocusTask = nil
+                    self.pendingHotkeyFocusRequestID = nil
+                    self.removeIdleMenuDismissMonitors()
+                }
+            }
             let assessedFocusedElement = await AccessibilityManager.shared
                 .resolveAssessedFocusedElementWithRetry(
                     expectedProcessIdentifier: expectedProcessIdentifier,
@@ -480,8 +489,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   self.pendingHotkeyFocusRequestID == focusRequestID else {
                 return
             }
-            self.pendingHotkeyFocusTask = nil
-            self.pendingHotkeyFocusRequestID = nil
             guard AccessibilityManager.isExpectedCopyFallbackProcess(
                 expectedProcessIdentifier: expectedProcessIdentifier,
                 currentProcessIdentifier:
@@ -500,6 +507,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ) == .accept else {
                 return
             }
+            self.pendingHotkeyFocusTask = nil
+            self.pendingHotkeyFocusRequestID = nil
             self.completeHotkeyTrigger(
                 expectedProcessIdentifier: expectedProcessIdentifier,
                 expectedBundleID: expectedBundleID,
@@ -564,6 +573,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         focusedElementAssessment: AccessibilityManager.FocusedElementAssessment?,
         interactionGeneration: UInt64
     ) {
+        var copyFallbackPending = false
+        defer {
+            if !copyFallbackPending { removeIdleMenuDismissMonitors() }
+        }
         guard Self.isInteractionCurrent(
             expectedGeneration: interactionGeneration,
             currentGeneration: self.interactionGeneration
@@ -591,6 +604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let currentFrontmostApplication = NSWorkspace.shared.frontmostApplication
         guard Self.shouldAllowMenuPresentation(
             isEnabled: isEnabled,
+            isManualTrigger: true,
             frontmostBundleID: currentFrontmostApplication?.bundleIdentifier,
             frontmostLocalizedName: currentFrontmostApplication?.localizedName,
             isFocusedSelectionEditable:
@@ -624,6 +638,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AccessibilityManager.shared.recordSelectionAttemptFailure(.accessibilityEmptySelection)
         
         // If Accessibility fails, simulate Cmd+C (async to allow physical hotkeys to be released)
+        copyFallbackPending = true
         AccessibilityManager.shared.getSelectedTextViaCopy(
             expectedProcessIdentifier: expectedProcessIdentifier,
             expectedFocusedElement: expectedFocusedElement,
@@ -640,6 +655,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   ) else {
                 return
             }
+            defer { self.removeIdleMenuDismissMonitors() }
             guard AccessibilityManager.isExpectedCopyFallbackProcess(
                 expectedProcessIdentifier: expectedProcessIdentifier,
                 currentProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier
@@ -651,6 +667,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             guard self.currentContextAllowsMenuPresentation(
+                isManualTrigger: true,
                 expectedProcessIdentifier: expectedProcessIdentifier,
                 expectedFocusedElement: expectedFocusedElement,
                 expectedWindowID: expectedWindowID,
@@ -680,6 +697,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
     }
+
+    private func removeIdleMenuDismissMonitors() {
+        if radialMenuWindow == nil, pastePopupWindow == nil, pendingMenuPresentation == nil,
+           pendingHotkeyFocusRequestID == nil, pendingPastePopupRequestID == nil {
+            removeMenuDismissMonitors()
+        }
+    }
     
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         applicationShouldTerminate(sender, presentAlert: { $0.runModal() })
@@ -689,27 +713,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication,
         presentAlert: (NSAlert) -> NSApplication.ModalResponse
     ) -> NSApplication.TerminateReply {
+        if let reply = cancelTerminationForPluginOperation(sender, presentAlert: presentAlert) {
+            return reply
+        }
         let editors = sender.windows.compactMap { $0 as? PluginEditorWindow }
-        var pluginOperationInProgress = !pendingPluginInstallPaths.isEmpty ||
-            editors.contains { $0.isPersisting }
-        if !pluginOperationInProgress {
-            if PluginManager.tryBeginPluginMutation() {
-                PluginManager.endPluginMutation()
-            } else {
-                pluginOperationInProgress = true
-            }
-        }
-        if pluginOperationInProgress {
-            relaunchRequested = false
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.messageText = "Plugin Operation in Progress".localized
-            alert.informativeText = "Wait for the current plugin save, installation, or deletion to finish before quitting or restarting ActionHalo.".localized
-            alert.addButton(withTitle: "OK".localized)
-            sender.activate(ignoringOtherApps: true)
-            _ = presentAlert(alert)
-            return .terminateCancel
-        }
         let unsavedEditors = editors.filter {
             ($0.isVisible || $0.isMiniaturized) && $0.hasUnsavedChanges
         }
@@ -743,11 +750,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return .terminateCancel
         }
 
+        // The discard prompt runs a nested event loop: a plugin action or save
+        // may have started while it was open. Recheck before discarding edits.
+        if let reply = cancelTerminationForPluginOperation(sender, presentAlert: presentAlert) {
+            return reply
+        }
         let reply = prepareForTermination()
         if reply == .terminateNow {
             unsavedEditors.forEach { $0.discardUnsavedChanges() }
         }
         return reply
+    }
+
+    private func cancelTerminationForPluginOperation(
+        _ sender: NSApplication,
+        presentAlert: (NSAlert) -> NSApplication.ModalResponse
+    ) -> NSApplication.TerminateReply? {
+        let editors = sender.windows.compactMap { $0 as? PluginEditorWindow }
+        var pluginOperationInProgress = !pendingPluginInstallPaths.isEmpty ||
+            editors.contains { $0.isPersisting } || PluginManager.shared.hasRunningPluginExecutions
+        if !pluginOperationInProgress {
+            if PluginManager.tryBeginPluginMutation() {
+                PluginManager.endPluginMutation()
+            } else {
+                pluginOperationInProgress = true
+            }
+        }
+        if pluginOperationInProgress {
+            relaunchRequested = false
+            if PluginManager.shared.hasRunningNativePluginExecutions {
+                // Activating a modal warning would invalidate Telegram's target
+                // while it may still own a temporary clipboard replacement.
+                statusBarController.showTemporaryStatusMessage(
+                    "A Telegram search is still running. Wait for it to finish, then try quitting or restarting again.".localized,
+                    symbolName: "hourglass",
+                    duration: 3.0
+                )
+                return .terminateCancel
+            }
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Plugin Operation in Progress".localized
+            alert.informativeText = "Wait for running plugin actions and any plugin save, installation, or deletion to finish before quitting or restarting ActionHalo.".localized
+            alert.addButton(withTitle: "OK".localized)
+            sender.activate(ignoringOtherApps: true)
+            _ = presentAlert(alert)
+            return .terminateCancel
+        }
+        return nil
     }
 
     static func relaunchProcess(
@@ -1270,6 +1320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func currentContextAllowsMenuPresentation(
+        isManualTrigger: Bool = false,
         expectedProcessIdentifier: pid_t? = nil,
         expectedFocusedElement: AXUIElement? = nil,
         expectedWindowID: CGWindowID? = nil,
@@ -1375,6 +1426,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         return Self.shouldAllowMenuPresentation(
             isEnabled: isEnabled,
+            isManualTrigger: isManualTrigger,
             frontmostBundleID: frontmostApp?.bundleIdentifier,
             frontmostLocalizedName: frontmostApp?.localizedName,
             isFocusedSelectionEditable:
@@ -1482,6 +1534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             let resolvedFocusedElement = targetContext.focusedElement
             guard self.currentContextAllowsMenuPresentation(
+                isManualTrigger: keyboardNavigation,
                 expectedProcessIdentifier: targetContext.processIdentifier,
                 expectedFocusedElement: targetContext.focusedElement,
                 expectedWindowID: targetContext.windowID,
@@ -1755,7 +1808,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func scheduleMenuPresentation(
+    func scheduleMenuPresentation(
         pastePopupRequestID: UUID? = nil,
         _ presentation: @escaping () -> Void
     ) {
@@ -1770,12 +1823,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingHotkeyFocusRequestID = nil
         pendingMenuPresentation = presentation
         dismissAllMenus(cancelPendingPresentation: false, cancelPendingPopupWork: false)
+        if pendingMenuPresentation != nil { setupMenuDismissMonitors() }
     }
 
     private func presentPendingMenuIfNeeded() {
         guard !isDismissingMenus, let presentation = pendingMenuPresentation else { return }
         pendingMenuPresentation = nil
+        let monitorGeneration = menuDismissMonitorGeneration
         presentation()
+        if menuDismissMonitorGeneration == monitorGeneration {
+            removeIdleMenuDismissMonitors()
+        }
     }
 
     private func dismissAllMenus(
@@ -1921,6 +1979,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func handleMenuDismissEvent(_ event: NSEvent) {
+        guard !AccessibilityManager.isCopyFallbackEvent(event.cgEvent) else { return }
+        if event.type == .flagsChanged, pastePopupWindow == nil, pendingPastePopupRequestID == nil {
+            return
+        }
         if [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type),
            let cgEvent = event.cgEvent {
             let point = event.window?.convertPoint(toScreen: event.locationInWindow)
@@ -1930,6 +1992,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if Self.shouldDismissMenus(
             for: event, radialMenuWindow: radialMenuWindow, pastePopupWindow: pastePopupWindow
         ) {
+            beginNewInteraction()
             dismissAllMenus()
         }
     }

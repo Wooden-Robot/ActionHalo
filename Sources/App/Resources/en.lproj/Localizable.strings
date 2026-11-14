@@ -363,4 +363,18 @@
 "Use arrow keys or Tab to choose an action, Enter to run it, and Escape to close." = "Use arrow keys or Tab to choose an action, Enter to run it, and Escape to close.";
 "Another plugin operation is in progress. Please try again shortly." = "Another plugin operation is in progress. Please try again shortly.";
 "Plugin Operation in Progress" = "Plugin Operation in Progress";
-"Wait for the current plugin save, installation, or deletion to finish before quitting or restarting ActionHalo." = "Wait for the current plugin save, installation, or deletion to finish before quitting or restarting ActionHalo.";
+"A Telegram search is still running. Wait for it to finish, then try quitting or restarting again." = "A Telegram search is still running. Wait for it to finish, then try quitting or restarting again.";
+"Wait for running plugin actions and any plugin save, installation, or deletion to finish before quitting or restarting ActionHalo." = "Wait for running plugin actions and any plugin save, installation, or deletion to finish before quitting or restarting ActionHalo.";
+
+/* Telegram search feedback */
+"Telegram Search Failed" = "Telegram Search Failed";
+"This selection cannot be searched in Telegram. Select shorter, non-empty text and try again." = "This selection cannot be searched in Telegram. Select shorter, non-empty text and try again.";
+"The Telegram app could not be opened. Install Telegram for macOS and try again." = "The Telegram app could not be opened. Install Telegram for macOS and try again.";
+"Allow ActionHalo in System Settings > Privacy & Security > Accessibility, then try again." = "Allow ActionHalo in System Settings > Privacy & Security > Accessibility, then try again.";
+"Telegram did not become ready in time. Open Telegram and try again." = "Telegram did not become ready in time. Open Telegram and try again.";
+"The active app or Telegram search field changed. Search again when you are ready." = "The active app or Telegram search field changed. Search again when you are ready.";
+"Telegram's search field is unavailable. Open Telegram's Global Search and try again." = "Telegram's search field is unavailable. Open Telegram's Global Search and try again.";
+"The clipboard could not be used safely. Wait until other clipboard operations finish before trying again." = "The clipboard could not be used safely. Wait until other clipboard operations finish before trying again.";
+"ActionHalo could not confirm the search text in Telegram." = "ActionHalo could not confirm the search text in Telegram.";
+"The query may already have been entered. Check Telegram before trying again." = "The query may already have been entered. Check Telegram before trying again.";
+"The plugin was written, but older copies could not be removed. Check permissions and try again.\n%@" = "The plugin was written, but older copies could not be removed. Check permissions and try again.\n%@";

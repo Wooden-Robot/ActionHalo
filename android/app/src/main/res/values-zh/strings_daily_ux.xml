@@ -38,8 +38,8 @@
     <string name="advice_app_disabled_title">最近的选文被应用规则拦截</string>
     <string name="advice_app_disabled_body">这是应用规则的结果。可在「应用与规则」恢复；手动选文菜单和分享入口仍可使用。</string>
     <string name="advice_app_paused_body">本次使用暂停在离开应用后结束，计时暂停会自动到期；也可在该应用的规则页立即恢复。</string>
-    <string name="advice_initial_title">初始选区已就绪</string>
-    <string name="advice_initial_body">初次选中保持静默。拖动选区手柄，调整后松手即可直接展开圆环；也可从系统选文菜单打开 ActionHalo。</string>
+    <string name="advice_long_press_title">已收到长按提示</string>
+    <string name="advice_long_press_body">此处尚未提供有效选区事件。可使用已开启的菜单兼容，或从系统选文菜单打开 ActionHalo。</string>
     <string name="advice_filtered_title">此处的选文不能读取</string>
     <string name="advice_filtered_body">密码或受保护区域不会被处理。请换一个普通正文区域测试。</string>
     <string name="advice_source_title">来源没有提供可读取的选文</string>

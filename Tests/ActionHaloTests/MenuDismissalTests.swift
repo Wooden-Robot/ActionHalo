@@ -324,6 +324,24 @@ final class MenuDismissalTests: GlobalStateTestCase {
         }
     }
 
+    func testReleasingAtTheDeadzoneBoundaryDismissesWithoutExecutingAnAction() throws {
+        for distance: CGFloat in [15, 16, 17] {
+            let ring = makeRing()
+            defer { ring.hideMenu() }
+            let view = try XCTUnwrap(ring.contentView?.subviews.compactMap { $0 as? RadialMenuView }.first)
+            var dismissals = 0
+            var actions = 0
+            view.onDismissRequested = { dismissals += 1 }
+            view.onItemSelected = { _ in actions += 1 }
+            let point = view.convert(NSPoint(x: view.trackingCenter.x + distance, y: view.trackingCenter.y), to: nil)
+            let release = try mouseEvent(.leftMouseUp, window: ring, point: point)
+            view.mouseUp(with: release)
+            view.mouseUp(with: release)
+            XCTAssertEqual(dismissals, distance <= 16 ? 1 : 0, "Distance: \(distance)")
+            XCTAssertEqual(actions, distance > 16 ? 1 : 0, "Distance: \(distance)")
+        }
+    }
+
     private func makeRing(keyboardNavigation: Bool = false) -> RadialMenuWindow {
         let ring = RadialMenuWindow()
         ring.showMenu(at: NSPoint(x: 400, y: 300), items: [

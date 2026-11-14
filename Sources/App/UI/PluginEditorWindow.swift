@@ -1183,9 +1183,14 @@ final class PluginEditorWindow: NSWindow, NSWindowDelegate, NSTextFieldDelegate,
                     shouldKeepCustomIcon: isCustomIcon
                 )
 
-                PluginManager.shared.removeDuplicateUserPlugins(for: id, keeping: bundleURL)
+                let cleanupError = PluginManager.shared.removeDuplicateUserPlugins(for: id, keeping: bundleURL)
+                let cleanupMessage = cleanupError.map {
+                    PluginManager.PluginInstallFailure.duplicateCleanupFailed($0.localizedDescription)
+                        .localizedMessage(sourcePath: bundleURL.path)
+                }
+                if cleanupError != nil { PluginManager.shared.reloadPlugins() }
                 Task { @MainActor in
-                    finishSave(nil)
+                    finishSave(cleanupMessage)
                 }
             } catch {
                 let message = error.localizedDescription

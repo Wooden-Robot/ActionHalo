@@ -3,6 +3,25 @@ import XCTest
 
 @MainActor
 final class StatusBarControllerTests: XCTestCase {
+    func testHotkeyRegistrationFailureIsPresentedAndSuccessfulRegistrationStaysQuiet() {
+        let controller = StatusBarController()
+        var alerts: [NSAlert] = []
+        controller.presentHotkeyRegistrationIssues([]) { alerts.append($0) }
+        XCTAssertTrue(alerts.isEmpty)
+
+        let issue = HotkeyManager.RegistrationIssue(
+            kind: .registerFailed(-9878),
+            message: "The menu shortcut is already in use."
+        )
+        controller.presentHotkeyRegistrationIssues([issue]) { alerts.append($0) }
+
+        XCTAssertEqual(alerts.count, 1)
+        XCTAssertEqual(alerts.first?.messageText, "Hotkey Registration Failed".localized)
+        XCTAssertEqual(alerts.first?.informativeText, issue.message)
+        XCTAssertEqual(alerts.first?.alertStyle, .warning)
+        XCTAssertEqual(alerts.first?.buttons.first?.title, "OK".localized)
+    }
+
     func testLaunchAgentPlistUsesBundleIdentifierInsteadOfBundlePath() {
         let plist = StatusBarController.launchAgentPlist(bundleIdentifier: "com.actionhalo.app")
 

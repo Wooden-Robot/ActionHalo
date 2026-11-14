@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
@@ -81,6 +82,123 @@ class HaloIntegrationTest {
                 assertTrue(it.component == null)
             }
         } finally { instrumentation.removeMonitor(monitor) }
+    }
+
+    @Test fun sharedTextRejectsADeletedActionWhenReturningToItsOpenMenu() =
+        exerciseChangedManualAction(Intent.ACTION_SEND, edit = false)
+
+    @Test fun processedTextRequiresASecondChoiceBeforeUsingAnEditedTemplate() =
+        exerciseChangedManualAction(Intent.ACTION_PROCESS_TEXT, edit = true)
+
+    @Test fun anOpenManualMenuClosesWithoutDispatchWhenItsActionListBecomesEmpty() =
+        exerciseChangedManualAction(Intent.ACTION_SEND, edit = false, removeAll = true)
+
+    private fun exerciseChangedManualAction(entry: String, edit: Boolean, removeAll: Boolean = false) {
+        val store = ActionStore(context)
+        store.setAllEnabled(false)
+        val original = store.addCustom("Mutable action fixture", "https://example.com/old?q={text}")
+        val remaining = store.addCustom("Remaining action fixture", "https://example.com/remaining?q={text}")
+        val selected = "Retained selection 中文 &q=other"
+        val incoming = Intent(context, HaloActivity::class.java).apply {
+            action = entry
+            type = "text/plain"
+            putExtra(if (entry == Intent.ACTION_PROCESS_TEXT) Intent.EXTRA_PROCESS_TEXT else Intent.EXTRA_TEXT, selected)
+        }
+        withWebLaunchMonitor { launches ->
+            ActivityScenario.launch<HaloActivity>(incoming).use { scenario ->
+                scenario.moveToState(Lifecycle.State.CREATED)
+                val current = if (edit) store.editAction(original.id, original.title, "https://example.com/new?q={text}")
+                    else remaining.also { assertTrue(store.deleteCustom(original.id)) }
+                if (removeAll) assertTrue(store.deleteCustom(remaining.id))
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                scenario.onActivity { activity ->
+                    val menu = descendants(activity.window.decorView).filterIsInstance<RadialMenuView>().single()
+                    assertTrue(actionButton(menu, original.title).performClick())
+                    assertTrue("An old menu must not dispatch a deleted action or an earlier template", launches.isEmpty())
+                    if (removeAll) {
+                        assertTrue("An empty current action list must close the old menu", activity.isFinishing)
+                        return@onActivity
+                    }
+                    assertFalse(activity.isFinishing)
+                    assertEquals(selected, menu.selectedText)
+                    assertTrue(descendants(menu).filterIsInstance<Button>().any {
+                        it.text.toString().contains(activity.getString(R.string.actions_changed))
+                    })
+                    if (!edit) assertTrue(descendants(menu).filterIsInstance<Button>().none {
+                        it.contentDescription == original.title
+                    })
+                    assertTrue("The refreshed action must remain available for an explicit new choice",
+                        actionButton(menu, current.title).performClick())
+                    assertEquals(ActionExecutor.webUrl(current, selected), launches.single().dataString)
+                }
+            }
+        }
+    }
+
+    @Test fun sourceListChangesRejectOldChoicesButManualUseStillIgnoresAutomaticTriggerOff() {
+        val source = "com.example.manualrules"
+        val store = ActionStore(context)
+        store.setAllEnabled(false)
+        val removed = store.addCustom("Removed source action", "https://example.com/removed?q={text}")
+        val remaining = store.addCustom("Allowed manual action", "https://example.com/allowed?q={text}")
+        store.setEnabled(removed.id, false)
+        store.setEnabled(remaining.id, false)
+        val preferences = context.getSharedPreferences(AppRulesStore.PREFERENCES, Context.MODE_PRIVATE)
+        val oldProfiles = preferences.getString(AppRulesStore.PROFILES, null)
+        val rules = AppRulesStore(context)
+        val selected = "Known source selection 中文"
+        try {
+            rules.setProfile(source, AppRulesStore.Profile(AppRulesStore.TriggerMode.OFF,
+                listOf(removed.id, remaining.id)))
+            val incoming = Intent(context, EditTextActivity::class.java)
+                .putExtra(HaloActivity.EXTRA_DEMO_TEXT, selected)
+                .putExtra(EditTextActivity.EXTRA_SOURCE_PACKAGE, source)
+            withWebLaunchMonitor { launches ->
+                ActivityScenario.launch<EditTextActivity>(incoming).use { scenario ->
+                    scenario.onActivity { activity ->
+                        assertTrue(descendants(activity.window.decorView).filterIsInstance<Button>()
+                            .single { it.text == activity.getString(R.string.edit_text_continue) }.performClick())
+                    }
+                    scenario.moveToState(Lifecycle.State.CREATED)
+                    rules.setProfile(source, AppRulesStore.Profile(AppRulesStore.TriggerMode.OFF, listOf(remaining.id)))
+                    scenario.moveToState(Lifecycle.State.RESUMED)
+                    scenario.onActivity { activity ->
+                        val menu = descendants(activity.window.decorView).filterIsInstance<RadialMenuView>().single()
+                        assertTrue(actionButton(menu, removed.title).performClick())
+                        assertTrue("An action removed from this source's list must not launch", launches.isEmpty())
+                        assertFalse(activity.isFinishing)
+                        assertEquals(selected, menu.selectedText)
+                        assertTrue(descendants(menu).filterIsInstance<Button>().any {
+                            it.text.toString().contains(activity.getString(R.string.actions_changed))
+                        })
+                        assertTrue(descendants(menu).filterIsInstance<Button>().none { it.contentDescription == removed.title })
+                        assertTrue(actionButton(menu, remaining.title).performClick())
+                        assertEquals("Manual use must honor the source list even when automatic triggering and the global action are off",
+                            ActionExecutor.webUrl(remaining, selected), launches.single().dataString)
+                    }
+                }
+            }
+        } finally {
+            assertTrue(preferences.edit().apply {
+                if (oldProfiles == null) remove(AppRulesStore.PROFILES) else putString(AppRulesStore.PROFILES, oldProfiles)
+            }.commit())
+        }
+    }
+
+    private fun actionButton(menu: RadialMenuView, title: String): Button =
+        descendants(menu).filterIsInstance<Button>().single { it.contentDescription == title }
+
+    private fun withWebLaunchMonitor(block: (CopyOnWriteArrayList<Intent>) -> Unit) {
+        val launches = CopyOnWriteArrayList<Intent>()
+        val monitor = object : android.app.Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): android.app.Instrumentation.ActivityResult? {
+                if (intent.action != Intent.ACTION_VIEW) return null
+                launches.add(Intent(intent))
+                return android.app.Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)
+            }
+        }
+        instrumentation.addMonitor(monitor)
+        try { block(launches) } finally { instrumentation.removeMonitor(monitor) }
     }
 
     @Test fun processTextAndSharePreserveUnicodeAndCopyThroughTheRadialMenu() {

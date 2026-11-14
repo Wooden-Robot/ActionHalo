@@ -173,6 +173,101 @@ final class LegacyDataImporterTests: XCTestCase {
         )
     }
 
+    func testMigrationRetryPreservesHotkeysClearedAfterPartialFailure() throws {
+        let prefixes = ["hotkey", "toggleHotkey"]
+        var source: [String: Any] = [:]
+        for (index, prefix) in prefixes.enumerated() {
+            source["\(prefix)Configured"] = true
+            source["\(prefix)KeyCode"] = index + 2
+            source["\(prefix)Modifiers"] = 256
+        }
+        let store = InMemoryDefaultsDomainStore(domains: [LegacyDataImporter.sourceDefaultsDomain: source])
+        let paths = try makeImportPaths(createSourceDirectory: true)
+        try makePackage(in: paths.source, name: "Retry.openfireext", identifier: "com.openfire.hotkey-retry",
+            actionJSON: #"{ "type": "copy" }"#)
+        let importer = makeImporter(store: store, paths: paths,
+            fileManager: FailOnceCopyFileManager(failingSourceName: "Retry.openfireext"))
+
+        let firstResult = importer.importIfNeeded()
+        XCTAssertEqual(firstResult.state, .incomplete)
+        XCTAssertFalse(firstResult.markerWritten)
+        var destination = try store.persistentDomain(forName: LegacyDataImporter.destinationDefaultsDomain)
+        for (index, prefix) in prefixes.enumerated() {
+            XCTAssertEqual(destination["\(prefix)KeyCode"] as? Int, index + 2)
+            // This is the persisted state produced by HotkeyManager when the user clears a shortcut.
+            destination["\(prefix)Configured"] = true
+            destination.removeValue(forKey: "\(prefix)KeyCode")
+            destination.removeValue(forKey: "\(prefix)Modifiers")
+        }
+        try store.setPersistentDomain(destination, forName: LegacyDataImporter.destinationDefaultsDomain)
+        source["AppLanguage"] = "zh-Hans"
+        try store.setPersistentDomain(source, forName: LegacyDataImporter.sourceDefaultsDomain)
+
+        let retryResult = importer.importIfNeeded()
+        destination = try store.persistentDomain(forName: LegacyDataImporter.destinationDefaultsDomain)
+        XCTAssertEqual(retryResult.state, .completed)
+        XCTAssertTrue(retryResult.markerWritten)
+        XCTAssertEqual(retryResult.importedPlugins.map(\.identifier), ["com.actionhalo.hotkey-retry"])
+        XCTAssertEqual(destination["AppLanguage"] as? String, "zh-Hans")
+        for prefix in prefixes {
+            XCTAssertEqual(destination["\(prefix)Configured"] as? Bool, true)
+            XCTAssertNil(destination["\(prefix)KeyCode"], "Retry must not re-enable the cleared \(prefix)")
+            XCTAssertNil(destination["\(prefix)Modifiers"])
+            XCTAssertFalse(retryResult.importedPreferenceKeys.contains("\(prefix)KeyCode"))
+            XCTAssertFalse(retryResult.importedPreferenceKeys.contains("\(prefix)Modifiers"))
+        }
+    }
+
+    func testDestinationHotkeyGroupsDoNotMixWithLegacyFields() throws {
+        let prefixes = ["hotkey", "toggleHotkey"]
+        for prefix in prefixes {
+            for fields: [String: Any] in [["KeyCode": 7], ["KeyCode": 7, "Modifiers": 2048], ["Configured": false]] {
+                var source: [String: Any] = [:]
+                for candidate in prefixes {
+                    source["\(candidate)Configured"] = true
+                    source["\(candidate)KeyCode"] = 2
+                    source["\(candidate)Modifiers"] = 256
+                }
+                let initialDestination = Dictionary(uniqueKeysWithValues: fields.map { (prefix + $0.key, $0.value) })
+                let store = InMemoryDefaultsDomainStore(domains: [
+                    LegacyDataImporter.sourceDefaultsDomain: source,
+                    LegacyDataImporter.destinationDefaultsDomain: initialDestination,
+                ])
+                let result = makeImporter(store: store, paths: try makeImportPaths()).importIfNeeded()
+                let destination = try store.persistentDomain(forName: LegacyDataImporter.destinationDefaultsDomain)
+
+                XCTAssertEqual(result.state, .completed)
+                for suffix in ["Configured", "KeyCode", "Modifiers"] {
+                    XCTAssertEqual(destination[prefix + suffix] as? NSNumber,
+                        initialDestination[prefix + suffix] as? NSNumber, "Preserve \(prefix + suffix) as a group")
+                    let otherPrefix = prefixes.first { $0 != prefix }!
+                    XCTAssertEqual(destination[otherPrefix + suffix] as? NSNumber, source[otherPrefix + suffix] as? NSNumber,
+                        "An existing shortcut must not prevent importing the other shortcut")
+                }
+            }
+        }
+    }
+
+    func testAbsentDestinationHotkeysImportHistoricalPairsAndExplicitClearState() throws {
+        for cleared in [false, true] {
+            var source: [String: Any] = [:]
+            for prefix in ["hotkey", "toggleHotkey"] {
+                if cleared { source["\(prefix)Configured"] = true }
+                else {
+                    source["\(prefix)KeyCode"] = 2
+                    source["\(prefix)Modifiers"] = 256
+                }
+            }
+            let store = InMemoryDefaultsDomainStore(domains: [LegacyDataImporter.sourceDefaultsDomain: source])
+            let result = makeImporter(store: store, paths: try makeImportPaths()).importIfNeeded()
+            var destination = try store.persistentDomain(forName: LegacyDataImporter.destinationDefaultsDomain)
+            destination.removeValue(forKey: LegacyDataImporter.importMarkerKey)
+
+            XCTAssertEqual(result.state, .completed)
+            XCTAssertEqual(destination as NSDictionary, source as NSDictionary)
+        }
+    }
+
     func testImportsPluginByConvertingIdentifierConfigurationAndBundledScript() throws {
         let store = InMemoryDefaultsDomainStore()
         let paths = try makeImportPaths(createSourceDirectory: true)

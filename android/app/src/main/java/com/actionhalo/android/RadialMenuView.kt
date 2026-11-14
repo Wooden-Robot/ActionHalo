@@ -137,7 +137,12 @@ class RadialMenuView(context: Context) : FrameLayout(context) {
         textSize = 26f
         visibility = GONE
         contentDescription = context.getString(R.string.source_app_options)
-        setOnClickListener { onSourceAppOptions?.invoke() }
+        setOnClickListener {
+            if (inlinePanel != null || visibility != VISIBLE || !isEnabled) return@setOnClickListener
+            val open = onSourceAppOptions ?: return@setOnClickListener
+            startInteractionIfNeeded()
+            open()
+        }
     }
     private val pageLabel = TextView(context).apply {
         gravity = android.view.Gravity.CENTER
@@ -191,9 +196,16 @@ class RadialMenuView(context: Context) : FrameLayout(context) {
     }
 
     private fun changePage(target: Int) {
-        if (actionCommitted || target !in 0 until pageCount || target == page) return
+        if (inlinePanel != null || actionCommitted || target !in 0 until pageCount || target == page) return
+        startInteractionIfNeeded()
         page = target
         showPage()
+    }
+
+    private fun startInteractionIfNeeded() {
+        if (interactionStarted) return
+        interactionStarted = true
+        onInteractionStarted?.invoke()
     }
 
     private fun showPage() {
@@ -206,6 +218,7 @@ class RadialMenuView(context: Context) : FrameLayout(context) {
         slotLabels = actions.indices.map { String.format(Locale.ROOT, "%02d", page * actionsPerPage + it + 1) }
         actions.forEachIndexed { index, action ->
             val button = createButton(context.getDrawable(ActionIcons.resource(action))?.mutate()).apply {
+                if (inlinePanel != null) importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 contentDescription = action.title
                 tooltipText = action.title
                 setOnClickListener {
@@ -482,7 +495,8 @@ class RadialMenuView(context: Context) : FrameLayout(context) {
     private fun measureCompact(availableWidth: Int, availableHeight: Int) {
         geometry = null
         val contentWidth = (availableWidth - paddingLeft - paddingRight - dp(16f)).toInt().coerceAtLeast(1)
-        compactHeaderHeight = minOf(dp(36f).toInt(), availableHeight / 4).coerceAtLeast(1)
+        compactHeaderHeight = if (sourceOptions.visibility == VISIBLE) minOf(dp(48f).toInt(), availableHeight).coerceAtLeast(1)
+            else minOf(dp(36f).toInt(), availableHeight / 4).coerceAtLeast(1)
         compactFooterHeight = if (pageCount > 1) minOf(dp(40f).toInt(), availableHeight / 4).coerceAtLeast(1) else 0
         val rows = if (actionsPerPage > 2) 2 else 1
         val cellWidth = ((contentWidth - dp(8f)) / 2f).toInt().coerceAtLeast(1)
@@ -763,7 +777,7 @@ class RadialMenuView(context: Context) : FrameLayout(context) {
             val enabled = actions[index].type != ActionType.OPEN_URL || canOpenLink
             button.isEnabled = enabled
             button.isClickable = enabled
-            button.isFocusable = enabled
+            button.isFocusable = enabled && inlinePanel == null
             if (!enabled) button.clearFocus()
         }
         if (highlightedIndex >= 0 && !actionButtons[highlightedIndex].isEnabled) highlightedIndex = -1
@@ -788,7 +802,8 @@ class RadialMenuView(context: Context) : FrameLayout(context) {
 
     private fun activateAction(index: Int) {
         val action = actions.getOrNull(index) ?: return
-        if (actionCommitted || !actionButtons[index].isEnabled) return
+        if (inlinePanel != null || actionCommitted || !actionButtons[index].isEnabled) return
+        startInteractionIfNeeded()
         actionCommitted = true
         highlightedIndex = index
         updatePresentation()
@@ -806,16 +821,26 @@ class RadialMenuView(context: Context) : FrameLayout(context) {
         hideInlinePanel()
         cancelGesture()
         inlinePanel = panel
-        for (index in 0 until childCount) getChildAt(index).importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        for (index in 0 until childCount) getChildAt(index).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            isFocusable = false
+        }
         addView(panel)
+        if (!isInTouchMode) panel.requestFocus(FOCUS_FORWARD)
         requestLayout()
         invalidate()
     }
 
     internal fun hideInlinePanel() {
-        inlinePanel?.let(::removeView)
+        val panel = inlinePanel ?: return
+        removeView(panel)
         inlinePanel = null
-        for (index in 0 until childCount) getChildAt(index).importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        for (index in 0 until childCount) getChildAt(index).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+            isFocusable = this is Button
+        }
+        updateActionAvailability()
+        if (!isInTouchMode) sourceOptions.requestFocus()
         requestLayout()
         invalidate()
     }
@@ -925,7 +950,7 @@ class RadialMenuView(context: Context) : FrameLayout(context) {
         slotPositions.forEachIndexed { index, (x, y) ->
             slotPaint.color = Color.argb(if (actionButtons[index].isEnabled) 71 else 18, 255, 255, 255)
             canvas.save()
-            canvas.rotate(layout.actionAngleDegrees(index) + 90f, x, y)
+            canvas.rotate(layout.slotLabelRotationDegrees(index), x, y)
             canvas.drawText(slotLabels[index], x, y - (slotPaint.ascent() + slotPaint.descent()) / 2f, slotPaint)
             canvas.restore()
         }

@@ -5,6 +5,44 @@ import XCTest
 
 final class TelegramSearchTests: XCTestCase {
     @MainActor
+    func testUnavailableTelegramShowsRecoveryWithoutQueryOrAutomaticRetry() async throws {
+        let port = ScriptedTelegramSearchPort()
+        port.openResult = .failed(.applicationUnavailable)
+        let query = "private selection that must not appear in feedback"
+        let result = await TelegramSearch(port: port).search(query)
+        guard case .failure(let failure) = result else {
+            return XCTFail("An unavailable Telegram app must report failure")
+        }
+        var alerts: [NSAlert] = []
+
+        TelegramSearch.presentFailure(failure) { alerts.append($0) }
+
+        let alert = try XCTUnwrap(alerts.first)
+        XCTAssertEqual(alerts.count, 1)
+        XCTAssertEqual(alert.messageText, "Telegram Search Failed".localized)
+        XCTAssertEqual(alert.informativeText,
+                       "The Telegram app could not be opened. Install Telegram for macOS and try again.".localized)
+        XCTAssertFalse((alert.messageText + alert.informativeText).contains(query))
+        XCTAssertEqual(alert.buttons.map(\.title), ["OK".localized])
+        XCTAssertEqual(port.openCallCount, 1)
+        XCTAssertTrue(port.attemptedMethods.isEmpty)
+    }
+
+    @MainActor
+    func testUnverifiedSearchFeedbackExplainsThatTheQueryMayAlreadyBeApplied() {
+        let failure = TelegramSearchFailure(
+            stage: .verify, reason: .textMismatch, effect: .queryMayHaveBeenApplied
+        )
+        TelegramSearch.presentFailure(failure) { alert in
+            XCTAssertEqual(alert.informativeText,
+                           "ActionHalo could not confirm the search text in Telegram.".localized + "\n\n" +
+                           "The query may already have been entered. Check Telegram before trying again.".localized)
+            XCTAssertEqual(alert.alertStyle, .warning)
+            XCTAssertEqual(alert.buttons.count, 1)
+        }
+    }
+
+    @MainActor
     func testUnicodeInputEventsPreserveSurrogatePairsAtChunkBoundaries() throws {
         let queries = [
             String(repeating: "a", count: 19) + "😀",

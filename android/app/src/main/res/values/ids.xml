@@ -1,0 +1,4 @@
+<resources>
+    <item name="settings_scroll" type="id" />
+    <item name="backup_settings_scroll" type="id" />
+</resources>

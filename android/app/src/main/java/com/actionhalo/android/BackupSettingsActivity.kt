@@ -62,7 +62,7 @@ class BackupSettingsActivity : Activity() {
             accessibilityLiveRegion = android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
         content.addView(status)
-        val scroll = ScrollView(this).apply { setBackgroundColor(HaloUi.background); addView(content) }
+        val scroll = ScrollView(this).apply { id = R.id.backup_settings_scroll; setBackgroundColor(HaloUi.background); addView(content) }
         setContentView(scroll)
         HaloUi.applyInsets(this, scroll)
         pendingToken = savedInstanceState?.getString(PENDING)

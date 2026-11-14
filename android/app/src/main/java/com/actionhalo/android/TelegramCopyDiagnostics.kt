@@ -76,8 +76,13 @@ internal object TelegramCopyDiagnostics {
         appendLine("telegram_copy_clicks=$copyClicks")
         appendLine("telegram_copy_stage=${stage.name}")
         appendLine("telegram_recent_stages=" + stages.joinToString(">") { it.name })
-        appendLine("copy_stages_scope=telegram_and_authorized_standard_selection_menus")
-        appendLine("standard_menu_policy=same_package_child_window_and_android_floating_popup_container")
+        appendLine("selection_events=${SelectionDiagnostics.selectionEvents}")
+        appendLine("selection_result=${SelectionDiagnostics.result.name}")
+        appendLine("selection_event_ranges=${SelectionDiagnostics.nonemptyEventRanges}")
+        appendLine("selection_node_ranges=${SelectionDiagnostics.nonemptyNodeRanges}")
+        append(SelectionDiagnostics.triggerReport())
+        appendLine("copy_stages_scope=telegram_and_authorized_selection_menus")
+        appendLine("standard_menu_policy=same_package_child_window_and_framework_toolbar_or_verified_context_commands")
         for (packageName in listOf("org.telegram.messenger", "org.telegram.messenger.web")) {
             val version = try {
                 @Suppress("DEPRECATION")

@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.ClipData
 import android.content.Context
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -34,11 +35,11 @@ internal class ClipboardHaloOverlay(
     val sourceWindowId: Int? get() = current?.sourceWindowId
 
     fun show(startedUptime: Long, startedWall: Long, finishedWall: Long, action: HaloAction, hostWindowId: Int,
-        sourcePackage: String? = null) {
+        sourcePackage: String? = null, menuBounds: Rect? = null) {
         dismiss()
         if (!canOperate() || hostWindowId < 0 ||
             !TelegramCopyPolicy.isRecentEvent(startedUptime, SystemClock.uptimeMillis())) return
-        val session = Session(startedWall, finishedWall, action, hostWindowId, sourcePackage)
+        val session = Session(startedWall, finishedWall, action, hostWindowId, sourcePackage, menuBounds?.let(::Rect))
         current = session
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
@@ -73,7 +74,7 @@ internal class ClipboardHaloOverlay(
 
     private inner class Session(
         val startedWall: Long, val finishedWall: Long, var action: HaloAction, val sourceWindowId: Int,
-        val sourcePackage: String?,
+        val sourcePackage: String?, val menuBounds: Rect?,
     ) : FrameLayout(HaloUi.localizedContext(service)) {
         var copiedText: String? = null
         var readAttempts = 0
@@ -131,7 +132,7 @@ internal class ClipboardHaloOverlay(
             val size = HaloUi.dp(context, HaloAppearance.menuSizeDp(context))
             addView(menu, LayoutParams(size, size, Gravity.CENTER))
             menu.bindTouchSurface(this)
-            HaloSafeArea.bindInitialPlacement(this, menu)
+            HaloSafeArea.bindInitialPlacement(this, menu, menuBounds)
             return menu
         }
 

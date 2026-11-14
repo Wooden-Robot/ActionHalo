@@ -37,7 +37,7 @@ DMG_BACKGROUND = $(BUILD_DIR)/dmg-background.png
 
 .DEFAULT_GOAL := help
 
-.PHONY: help all android clean force dependencies package release generate-appcast publish-release-assets verify-release-repository verify-release-version verify-release-entitlements verify-sparkle-update run test
+.PHONY: help all android android-release clean force dependencies package release generate-appcast publish-release-assets verify-release-repository verify-release-version verify-release-entitlements verify-sparkle-update run test
 
 help:
 	@echo "ActionHalo 可用 make 命令："
@@ -45,6 +45,7 @@ help:
 	@echo "  make / make help  显示本说明，不执行构建。"
 	@echo "  make all          编译 universal ActionHalo 二进制到 $(OUTPUT)。"
 	@echo "  make android      编译 Android 调试 APK 到 android/app/build/outputs/apk/debug/app-debug.apk。"
+	@echo "  make android-release  验证并编译正式签名 APK；需先配置 android/signing/keystore.properties。"
 	@echo "  make package      创建 ad-hoc 签名的社区版 $(APP_NAME).app 和 $(DMG_NAME)。"
 	@echo "  make release      校验版本/tag 后打包，并生成签名的 appcast.xml。"
 	@echo "  make publish-release-assets  将 DMG 与 appcast.xml 上传到草稿 GitHub Release。"
@@ -72,6 +73,10 @@ all: dependencies $(OUTPUT)
 android:
 	cd android && ./gradlew :app:assembleDebug
 	@echo "✅ Android build succeeded: android/app/build/outputs/apk/debug/app-debug.apk"
+
+android-release:
+	cd android && ./gradlew :app:assembleRelease :app:testDebugUnitTest :app:lintRelease --no-daemon
+	@echo "✅ Signed Android release: android/app/build/outputs/apk/release/app-release.apk"
 
 $(OUTPUT): force $(SWIFT_FILES) Makefile Package.swift Package.resolved
 	@mkdir -p $(BUILD_DIR)

@@ -2,6 +2,8 @@ package com.actionhalo.android
 
 import android.content.Context
 import android.graphics.Rect
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -74,7 +76,7 @@ class AppearanceUxTest {
         assertTrue(small.contains(smallFrame))
     }
 
-    @Test fun selectionControlsNeverShrinkTheWheelAndFreeSpaceRestoresIt() {
+    @Test fun selectionControlsHideAnUnusableWindowAndFreeSpaceRestoresIt() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             val manager = context.getSystemService(android.view.WindowManager::class.java)
             val menu = RadialMenuView(context)
@@ -87,12 +89,133 @@ class AppearanceUxTest {
             assertEquals("The full-size wheel must fit just below the protected area", exactFit.bottom, window.params.y)
             window.updateProtectedAreas(listOf(Rect(0, 280, 500, 320)))
             assertEquals("The setting must remain stable when no full-size placement fits", originalSize, window.params.width)
-            assertEquals(View.INVISIBLE, menu.visibility)
-            assertTrue(window.params.flags and android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0)
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                assertEquals("A protected area must not hide the entire wheel when regional touch pass-through is available",
+                    View.VISIBLE, menu.visibility)
+                assertEquals(0, window.params.flags and android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+            } else {
+                assertEquals(View.INVISIBLE, menu.visibility)
+                assertTrue(window.params.flags and android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0)
+            }
             window.updateProtectedAreas(emptyList())
             assertEquals(originalSize, window.params.width)
             assertEquals(View.VISIBLE, menu.visibility)
             assertEquals(0, window.params.flags and android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+        }
+    }
+
+    @Test fun olderWindowsFitACompactMenuAndFreezeItsSizeForNonTouchControls() {
+        org.junit.Assume.assumeTrue(android.os.Build.VERSION.SDK_INT < 33)
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            fun dp(value: Int) = HaloUi.dp(context, value)
+            val manager = context.getSystemService(android.view.WindowManager::class.java)
+            val screen = Rect(0, 0, dp(600), dp(800))
+            val obstacle = Rect(0, dp(220), screen.right, dp(580))
+            HaloAppearance.setActionsPerPage(context, 16)
+            for (trigger in listOf(R.string.radial_next_page, R.string.source_app_options)) {
+                val menu = RadialMenuView(context).apply {
+                    setActions((1..18).map { HaloAction("compact-$it", "Compact $it", "", ActionType.COPY) })
+                }
+                SourceAppControls.bind(menu, "com.example.compact") { }
+                val window = SelectionHaloWindow(context, manager, screen, Rect(), menu)
+                val originalSize = window.params.width
+                window.updateProtectedAreas(listOf(obstacle))
+                val compactSize = window.params.width
+                assertTrue(compactSize < originalSize)
+                assertTrue(compactSize >= dp(180))
+                assertEquals(View.VISIBLE, menu.visibility)
+                assertFalse(Rect.intersects(obstacle, Rect(window.params.x, window.params.y,
+                    window.params.x + compactSize, window.params.y + compactSize)))
+                fun layout() {
+                    window.root.measure(View.MeasureSpec.makeMeasureSpec(window.params.width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(window.params.height, View.MeasureSpec.EXACTLY))
+                    window.root.layout(0, 0, window.params.width, window.params.height)
+                }
+                layout()
+                val actions = (0 until menu.childCount).map(menu::getChildAt).filterIsInstance<Button>()
+                    .filter { it.contentDescription?.startsWith("Compact ") == true }
+                assertEquals(4, actions.size)
+                val options = (0 until menu.childCount).map(menu::getChildAt).filterIsInstance<Button>()
+                    .single { it.contentDescription == context.getString(R.string.source_app_options) }
+                val optionsBounds = Rect(options.left, options.top, options.right, options.bottom)
+                assertTrue(Rect(0, 0, menu.width, menu.height).contains(optionsBounds))
+                assertTrue(actions.all { it.height >= dp(40) && !Rect.intersects(optionsBounds,
+                    Rect(it.left, it.top, it.right, it.bottom)) })
+                window.updateProtectedAreas(emptyList())
+                assertEquals(originalSize, window.params.width)
+                window.updateProtectedAreas(listOf(Rect(0, dp(170), screen.right, dp(630))))
+                assertEquals(View.INVISIBLE, menu.visibility)
+                assertTrue(window.params.flags and android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0)
+                window.updateProtectedAreas(listOf(obstacle))
+                layout()
+                val button = (0 until menu.childCount).map(menu::getChildAt).filterIsInstance<Button>()
+                    .single { it.contentDescription == context.getString(trigger) }
+                button.performClick()
+                assertEquals(android.view.WindowManager.LayoutParams.MATCH_PARENT, window.params.width)
+                val frozen = menu.layoutParams as FrameLayout.LayoutParams
+                val frozenBounds = Rect(frozen.leftMargin, frozen.topMargin,
+                    frozen.leftMargin + frozen.width, frozen.topMargin + frozen.height)
+                window.updateProtectedAreas(emptyList())
+                val after = menu.layoutParams as FrameLayout.LayoutParams
+                assertEquals(frozenBounds, Rect(after.leftMargin, after.topMargin,
+                    after.leftMargin + after.width, after.topMargin + after.height))
+                assertEquals(compactSize, after.width)
+                assertEquals(16, HaloAppearance.actionsPerPage(context))
+                assertEquals(HaloAppearance.MENU_SIZE_DP, HaloAppearance.menuSizeDp(context))
+            }
+        }
+    }
+
+    @Test fun hiddenSelectionWheelRejectsQueuedTouchesWithoutMovingOrExpanding() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val menu = RadialMenuView(context)
+            var outsideTouches = 0
+            val window = SelectionHaloWindow(context, context.getSystemService(android.view.WindowManager::class.java),
+                Rect(0, 0, 1080, 2340), Rect(0, 0, 300, 100), menu, onOutsideTouch = { outsideTouches++ })
+            val size = window.params.width
+            window.root.measure(View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY))
+            window.root.layout(0, 0, size, size)
+            window.updateSelectionMenu(false)
+            val origin = IntArray(2).also(menu::getLocationOnScreen)
+            val down = android.os.SystemClock.uptimeMillis()
+            for (action in listOf(MotionEvent.ACTION_OUTSIDE, MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE,
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_OUTSIDE)) {
+                val event = MotionEvent.obtain(down, down, action, origin[0] + size / 2f, origin[1] + size / 2f, 0)
+                    .apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+                try { window.root.dispatchTouchEvent(event) } finally { event.recycle() }
+            }
+            assertEquals("A queued handle touch must not expand the hidden wheel", size, window.params.width)
+            assertEquals(View.INVISIBLE, menu.visibility)
+            assertEquals(0f, menu.translationX, 0f)
+            assertEquals(0f, menu.translationY, 0f)
+            assertEquals("Outside events arriving after hide must not restart menu checks", 0, outsideTouches)
+        }
+    }
+
+    @Test fun queuedSelectionHandleTouchBeforeRelayoutDoesNotRepositionTheWheel() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val menu = RadialMenuView(context).apply { setActions(ActionStore(context).actions()) }
+            val window = SelectionHaloWindow(context, context.getSystemService(android.view.WindowManager::class.java),
+                Rect(0, 0, 1080, 2340), Rect(0, 0, 300, 100), menu)
+            val size = window.params.width
+            window.root.measure(View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(size, View.MeasureSpec.EXACTLY))
+            window.root.layout(0, 0, size, size)
+            val origin = IntArray(2).also(menu::getLocationOnScreen)
+            val x = origin[0] + size * .2f
+            val y = origin[1] + size * .2f
+            window.updateProtectedAreas(listOf(Rect(x.toInt() - 16, y.toInt() - 16, x.toInt() + 16, y.toInt() + 16)))
+            assertEquals("The wheel can remain visible at its newly requested safe position", View.VISIBLE, menu.visibility)
+            val down = android.os.SystemClock.uptimeMillis()
+            for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP)) {
+                val event = MotionEvent.obtain(down, down, action, x, y, 0)
+                    .apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+                try { window.root.dispatchTouchEvent(event) } finally { event.recycle() }
+            }
+            assertEquals("A queued selection-handle touch must not activate the action surface", size, window.params.width)
+            assertEquals(0f, menu.translationX, 0f)
+            assertEquals(0f, menu.translationY, 0f)
         }
     }
 

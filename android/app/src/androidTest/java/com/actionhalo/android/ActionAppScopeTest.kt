@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.SharedPreferences
+import android.os.SystemClock
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
@@ -101,6 +103,40 @@ class ActionAppScopeTest {
         assertEquals(selected, intent.data?.getQueryParameter("q"))
         assertEquals(setOf("q"), intent.data?.queryParameterNames)
         assertNull(intent.data?.fragment)
+    }
+
+    @Test fun denseScopesPreserveProfileOrderAndRecheckChangedRules() {
+        val store = ActionStore(context)
+        val snapshot = store.snapshot()
+        val ids = List(200) { "custom:scope$it" }
+        val packages = JSONArray(List(199) { "com.example.app$it" } + "com.example.allowed")
+        snapshot.put("custom", JSONArray().apply {
+            ids.forEachIndexed { index, id ->
+                put(JSONObject().put("id", id).put("title", "Scope $index")
+                    .put("template", "https://example.com/$index?q={text}"))
+                snapshot.getJSONArray("order").put(id)
+                snapshot.getJSONObject("enabled").put(id, true)
+                snapshot.getJSONObject("appScopes").put(id, JSONObject()
+                    .put("mode", if (index % 2 == 0) "ONLY" else "EXCEPT").put("packages", packages))
+            }
+        })
+        store.restoreSnapshot(snapshot)
+        val rules = AppRulesStore(context)
+        val ordered = ids.reversed()
+        rules.setProfile("com.example.allowed", AppRulesStore.Profile(actions = ordered))
+        val catalog = store.allActions()
+        fun available(source: String?): List<String> {
+            val started = SystemClock.elapsedRealtime()
+            return rules.actionsFor(source, catalog).map { it.id }.also {
+                Log.i("ActionScopeTiming", "dense scopes: ${SystemClock.elapsedRealtime() - started} ms")
+            }
+        }
+        assertEquals(ids.filterIndexed { index, _ -> index % 2 == 0 }.reversed(), available("com.example.allowed"))
+        store.setAppScope(ordered.first(), ActionStore.AppScope())
+        assertEquals(listOf(ordered.first()) + ids.filterIndexed { index, _ -> index % 2 == 0 }.reversed(),
+            available("com.example.allowed"))
+        assertEquals(ids.filterIndexed { index, _ -> index % 2 != 0 },
+            available(null).filter { it.startsWith("custom:") })
     }
 
     @Test fun snapshotsPreserveScopesAcrossDeleteUndoResetAndOldFormatRestore() {

@@ -8,7 +8,13 @@ import java.util.UUID
 /** Stores action configuration only. Selected or shared text is never persisted. */
 class ActionStore(private val context: Context, initializeDefaults: Boolean = true) {
     enum class AppScopeMode { ALL, ONLY, EXCEPT }
-    data class AppScope(val mode: AppScopeMode = AppScopeMode.ALL, val packages: List<String> = emptyList())
+    data class AppScope(val mode: AppScopeMode = AppScopeMode.ALL, val packages: List<String> = emptyList()) {
+        fun allows(packageName: String?): Boolean = when (mode) {
+            AppScopeMode.ALL -> true
+            AppScopeMode.ONLY -> packageName != null && packageName in packages
+            AppScopeMode.EXCEPT -> packageName == null || packageName !in packages
+        }
+    }
     private val preferences = context.getSharedPreferences("halo_actions", Context.MODE_PRIVATE)
 
     init {
@@ -46,8 +52,15 @@ class ActionStore(private val context: Context, initializeDefaults: Boolean = tr
         }.apply()
     }
 
-    internal fun appScope(id: String): AppScope = try {
-        appScopes().optJSONObject(id)?.let(::decodeAppScope) ?: AppScope()
+    internal fun appScope(id: String): AppScope = appScope(id, appScopes())
+
+    internal fun appScopes(ids: Iterable<String>): Map<String, AppScope> {
+        val saved = appScopes()
+        return ids.associateWith { appScope(it, saved) }
+    }
+
+    private fun appScope(id: String, saved: JSONObject): AppScope = try {
+        saved.optJSONObject(id)?.let(::decodeAppScope) ?: AppScope()
     } catch (_: Exception) { AppScope() }
 
     internal fun setAppScope(id: String, scope: AppScope) {
@@ -61,14 +74,7 @@ class ActionStore(private val context: Context, initializeDefaults: Boolean = tr
         preferences.edit().putString(APP_SCOPES, scopes.toString()).apply()
     }
 
-    internal fun isAllowedInApp(id: String, packageName: String?): Boolean {
-        val scope = appScope(id)
-        return when (scope.mode) {
-            AppScopeMode.ALL -> true
-            AppScopeMode.ONLY -> packageName != null && packageName in scope.packages
-            AppScopeMode.EXCEPT -> packageName == null || packageName !in scope.packages
-        }
-    }
+    internal fun isAllowedInApp(id: String, packageName: String?): Boolean = appScope(id).allows(packageName)
 
     fun reset() {
         preferences.edit().clear().apply()

@@ -6,7 +6,6 @@ import android.app.StatusBarManager
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.drawable.Icon
@@ -98,6 +97,7 @@ class MainActivity : Activity() {
         val oldModels = java.io.File(noBackupFilesDir, "com.google.mlkit.translate.models")
         if (oldModels.exists()) Thread({ oldModels.deleteRecursively() }, "ActionHalo-model-cleanup").start()
         scroll = ScrollView(this).apply {
+            id = R.id.settings_scroll
             setBackgroundColor(HaloUi.background)
             isFillViewport = true
             isFocusableInTouchMode = true
@@ -685,8 +685,8 @@ class MainActivity : Activity() {
         val report = AccessibilityHealthDiagnostics.renderReport(AccessibilityHealthDiagnostics.snapshot(this,
             SelectionAccessibilityService.isConnected())) +
             "\n" + TelegramCopyDiagnostics.report(this)
-        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("ActionHalo diagnostics", report))
-        toast(R.string.health_copy_done)
+        val copied = ActionExecutor.writeClipboard(this, "ActionHalo diagnostics", report)
+        toast(if (copied) R.string.health_copy_done else R.string.action_not_allowed)
         updateMode()
     }
 
@@ -767,6 +767,8 @@ class MainActivity : Activity() {
     private fun renderActions() {
         actionList.removeAllViews()
         val actions = store.allActions()
+        val enabledIds = store.actions().map { it.id }.toSet()
+        val scopes = store.appScopes(actions.map { it.id })
         val matches = actions.withIndex().filter { (_, action) -> action.title.contains(actionQuery.trim(), true) ||
             action.template.orEmpty().contains(actionQuery.trim(), true) }
         if (matches.isEmpty()) actionList.addView(HaloUi.label(this, getString(R.string.action_search_empty), 14f, HaloUi.secondary))
@@ -788,7 +790,7 @@ class MainActivity : Activity() {
                 setTextColor(HaloUi.text)
                 textSize = 15f
                 minHeight = dp(56)
-                isChecked = store.isEnabled(action.id)
+                isChecked = action.id in enabledIds
                 setOnLongClickListener { startActionDrag(row) }
                 setOnCheckedChangeListener { button, checked ->
                     try { clearUndo.run(); store.setEnabled(action.id, checked) }
@@ -799,7 +801,7 @@ class MainActivity : Activity() {
                 }
             }
             row.addView(toggle, android.widget.RelativeLayout.LayoutParams(-1, -2).apply { marginEnd = dp(48) })
-            row.addView(HaloUi.label(this, actionSummary(action), 12f, HaloUi.secondary).apply {
+            row.addView(HaloUi.label(this, actionSummary(action, scopes.getValue(action.id)), 12f, HaloUi.secondary).apply {
                 setPadding(dp(34), 0, 0, dp(12))
                 setOnLongClickListener { startActionDrag(row) }
             }, android.widget.RelativeLayout.LayoutParams(-1, -2).apply { addRule(android.widget.RelativeLayout.BELOW, toggle.id); marginEnd = dp(48) })
@@ -922,7 +924,7 @@ class MainActivity : Activity() {
                         putString("icon", ActionIcons.key(action))
                         putString("copy_source", action.id)
                     })
-                    5 -> ActionDestinations(this@MainActivity).choose(this@MainActivity, action) { renderActions() }
+                    5 -> ActionDestinations(this@MainActivity).choose(this@MainActivity, action) { clearUndo.run(); renderActions() }
                     6 -> ActionAppScopeSettings(this@MainActivity).show(action) { clearUndo.run(); renderActions() }
                     4 -> AlertDialog.Builder(this@MainActivity)
                         .setTitle(getString(R.string.remove_title, action.title))
@@ -935,8 +937,7 @@ class MainActivity : Activity() {
         }.show()
     }
 
-    private fun actionSummary(action: HaloAction): String {
-        val scope = store.appScope(action.id)
+    private fun actionSummary(action: HaloAction, scope: ActionStore.AppScope): String {
         fun appName(pkg: String): String = try {
             packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
         } catch (_: android.content.pm.PackageManager.NameNotFoundException) { pkg }
@@ -1041,14 +1042,26 @@ class MainActivity : Activity() {
         form.addView(HaloUi.button(this, getString(R.string.action_test_preview)).apply { setOnClickListener { testUrl() } })
         form.addView(testResult)
         form.addView(openTest)
+        val saveError = HaloUi.label(this, "", 13f, HaloUi.accent).apply {
+            tag = "action_editor_save_error"
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        form.addView(saveError)
         openTest.setOnClickListener {
             val target = testUrl() ?: return@setOnClickListener
             try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target))) }
-            catch (_: ActivityNotFoundException) { toast(R.string.action_no_app) }
-            catch (_: SecurityException) { toast(R.string.action_not_allowed) }
+            catch (failure: Exception) { toast(ActionExecutor.launchFailureMessage(failure) ?: throw failure) }
         }
 
         val editorScroll = ScrollView(this).apply { addView(form) }
+        val revealSaveError = object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (saveError.isLayoutRequested || editorScroll.isLayoutRequested) return true
+                saveError.viewTreeObserver.removeOnPreDrawListener(this)
+                saveError.requestRectangleOnScreen(android.graphics.Rect(0, 0, saveError.width, saveError.height), true)
+                return true
+            }
+        }
         val dialog = AlertDialog.Builder(this).setTitle(if (action == null) R.string.custom_title else R.string.edit_action).setView(editorScroll)
             .setNegativeButton(R.string.cancel, null).setPositiveButton(R.string.save, null).create()
         editorDialog = dialog
@@ -1060,25 +1073,35 @@ class MainActivity : Activity() {
             putString("sample", sample.text.toString())
             putString("copy_source", restored?.getString("copy_source"))
         } }
-        dialog.setOnDismissListener { if (editorDialog === dialog) { editorDialog = null; editorDraft = null } }
+        dialog.setOnDismissListener {
+            if (saveError.viewTreeObserver.isAlive) saveError.viewTreeObserver.removeOnPreDrawListener(revealSaveError)
+            if (editorDialog === dialog) { editorDialog = null; editorDraft = null }
+        }
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 try {
+                    saveError.text = ""
                     val icon = iconKeys[iconPicker.selectedItemPosition]
-                    clearUndo.run()
                     if (action == null) {
+                        val destinations = ActionDestinations(this@MainActivity)
+                        val source = restored?.getString("copy_source")?.takeIf { id -> store.allActions().any { it.id == id } }
+                        val sourceRoute = source?.let(destinations::route)
+                        sourceRoute?.let(destinations::validateAdditionalRoute)
                         val created = store.addCustom(name.text.toString(), url.text.toString(), icon)
-                        restored?.getString("copy_source")?.let { source ->
-                            if (store.allActions().any { it.id == source }) {
-                                store.setEnabled(created.id, store.isEnabled(source))
-                                store.setAppScope(created.id, store.appScope(source))
-                                ActionDestinations(this@MainActivity).route(source)?.let { ActionDestinations(this@MainActivity).setRoute(created.id, it) }
-                            }
+                        source?.let {
+                            store.setEnabled(created.id, store.isEnabled(it))
+                            store.setAppScope(created.id, store.appScope(it))
+                            sourceRoute?.let { route -> destinations.setRoute(created.id, route) }
                         }
                     } else store.editAction(action.id, name.text.toString(), url.text.toString(), icon)
+                    clearUndo.run()
                     renderActions()
                     toast(if (action == null) R.string.custom_saved else R.string.custom_updated)
                     dialog.dismiss()
+                } catch (_: ActionDestinations.RouteLimitException) {
+                    saveError.text = getString(R.string.destination_limit_reached, ActionDestinations.MAX_ROUTES)
+                    saveError.viewTreeObserver.removeOnPreDrawListener(revealSaveError)
+                    saveError.viewTreeObserver.addOnPreDrawListener(revealSaveError)
                 } catch (_: IllegalArgumentException) {
                     if (name.text.isNullOrBlank()) name.error = getString(R.string.action_title_required)
                     else url.error = getString(R.string.custom_invalid)
